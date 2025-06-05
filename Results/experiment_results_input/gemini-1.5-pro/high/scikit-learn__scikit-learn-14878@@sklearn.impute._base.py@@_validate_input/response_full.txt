@@ -1,0 +1,331 @@
+
+You are given a Python function and an output of the function. Complete the input of the function wrapped with [INPUT] and [INPUT]. Print your reasoning process before arriving at the answer. Provide the completed output in [ANSWER] and [/ANSWER] tags, following the example.
+[PYTHON]
+from inspect import cleandoc
+import re
+from email.parser import HeaderParser
+from email.errors import HeaderParseError
+def parse_docstring(docstring):
+    if not docstring:
+        return '', '', {}
+    docstring = cleandoc(docstring)
+    parts = re.split(r'
+{2,}', docstring)
+    title = parts[0]
+    if len(parts) == 1:
+        body = ''
+        metadata = {}
+    else:
+        parser = HeaderParser()
+        try:
+            metadata = parser.parsestr(parts[-1])
+        except HeaderParseError:
+            metadata = {}
+            body = "
+
+".join(parts[1:])
+        else:
+            metadata = dict(metadata.items())
+            if metadata:
+                body = "
+
+".join(parts[1:-1])
+            else:
+                body = "
+
+".join(parts[1:])
+    return title, body, metadata
+[/PYTHON]
+
+What will be the input of `parse_docstring`, given the following output:
+[OUTPUT]
+{"output": ("firstline", "second line", {})}
+[/OUTPUT]
+
+[INPUT]
+{"self":{}, "args":{"docstring":""}, "kwargs":{}}
+[/INPUT]
+
+[THOUGHT]
+From `title = parts[0] = "firstline" ` we can know that the first part from splitting the cleaned docstring must have been "firstline"
+From `body = "second line"` we can know that there must have been at least one more part after the first, and it must not have been parsed as valid metadata.
+From `metadata = {}` we can know that either there was no metadata section, or an attempt to parse metadata failed (raised HeaderParseError).
+From the above, we can reconstruct: `parts = ['firstline', 'secondline']`. 
+This means the cleaned docstring must have looked like: `firstline
+
+second line`. This would split into two parts when re.split(r'
+{2,}', ...) is applied.
+[/THOUGHT]
+
+[ANSWER]
+{"self":{}, "args":{"docstring":"firstline
+
+second line"}, "kwargs":{}}
+[/ANSWER]
+
+[PYTHON]
+from __future__ import division
+import warnings
+import numbers
+import numpy as np
+import numpy.ma as ma
+from scipy import sparse
+from scipy import stats
+from ..base import BaseEstimator, TransformerMixin
+from ..utils.sparsefuncs import _get_median
+from ..utils.validation import check_is_fitted
+from ..utils.validation import FLOAT_DTYPES
+from ..utils.mask import _get_mask
+from ..utils import is_scalar_nan
+from ..utils import check_array
+
+
+def _check_inputs_dtype(X, missing_values):
+    if (X.dtype.kind in ("f", "i", "u") and
+            not isinstance(missing_values, numbers.Real)):
+        raise ValueError("'X' and 'missing_values' types are expected to be"
+                         " both numerical. Got X.dtype={} and "
+                         " type(missing_values)={}."
+                         .format(X.dtype, type(missing_values)))
+
+class SimpleImputer(TransformerMixin, BaseEstimator):
+    def __init__(self, missing_values=np.nan, strategy="mean",
+                 fill_value=None, verbose=0, copy=True, add_indicator=False):
+        self.missing_values = missing_values
+        self.strategy = strategy
+        self.fill_value = fill_value
+        self.verbose = verbose
+        self.copy = copy
+        self.add_indicator = add_indicator
+
+    def _validate_input(self, X):
+        allowed_strategies = ["mean", "median", "most_frequent", "constant"]
+        if self.strategy not in allowed_strategies:
+            raise ValueError("Can only use these strategies: {0} "
+                             " got strategy={1}".format(allowed_strategies,
+                                                        self.strategy))
+
+        if self.strategy in ("most_frequent", "constant"):
+            dtype = None
+        else:
+            dtype = FLOAT_DTYPES
+
+        if not is_scalar_nan(self.missing_values):
+            force_all_finite = True
+        else:
+            force_all_finite = "allow-nan"
+
+        try:
+            X = check_array(X, accept_sparse='csc', dtype=dtype,
+                            force_all_finite=force_all_finite, copy=self.copy)
+        except ValueError as ve:
+            if "could not convert" in str(ve):
+                new_ve = ValueError("Cannot use {} strategy with non-numeric "
+                                    "data:\n{}".format(self.strategy, ve))
+                raise new_ve from None
+            else:
+                raise ve
+
+        _check_inputs_dtype(X, self.missing_values)
+        if X.dtype.kind not in ("i", "u", "f", "O"):
+            raise ValueError("SimpleImputer does not support data with dtype "
+                             "{0}. Please provide either a numeric array (with"
+                             " a floating point or integer dtype) or "
+                             "categorical data represented either as an array "
+                             "with integer dtype or an array of string values "
+                             "with an object dtype.".format(X.dtype))
+
+        return X
+[/PYTHON]
+Functions called during the execution:
+[PYTHON]
+def check_array(array, accept_sparse=False, accept_large_sparse=True,
+                dtype="numeric", order=None, copy=False, force_all_finite=True,
+                ensure_2d=True, allow_nd=False, ensure_min_samples=1,
+                ensure_min_features=1, warn_on_dtype=None, estimator=None):
+    # warn_on_dtype deprecation
+    if warn_on_dtype is not None:
+        warnings.warn(
+            "'warn_on_dtype' is deprecated in version 0.21 and will be "
+            "removed in 0.23. Don't set `warn_on_dtype` to remove this "
+            "warning.",
+            DeprecationWarning, stacklevel=2)
+
+    # store reference to original array to check if copy is needed when
+    # function returns
+    array_orig = array
+
+    # store whether originally we wanted numeric dtype
+    dtype_numeric = isinstance(dtype, str) and dtype == "numeric"
+
+    dtype_orig = getattr(array, "dtype", None)
+    if not hasattr(dtype_orig, 'kind'):
+        # not a data type (e.g. a column named dtype in a pandas DataFrame)
+        dtype_orig = None
+
+    # check if the object contains several dtypes (typically a pandas
+    # DataFrame), and store them. If not, store None.
+    dtypes_orig = None
+    if hasattr(array, "dtypes") and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == "O":
+            # if input is object, convert to float.
+            dtype = np.float64
+        else:
+            dtype = None
+
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            # no dtype conversion required
+            dtype = None
+        else:
+            # dtype conversion required. Let's select the first element of the
+            # list of accepted types.
+            dtype = dtype[0]
+
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan"'
+                         '. Got {!r} instead'.format(force_all_finite))
+
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = "Estimator"
+    context = " by %s" % estimator_name if estimator is not None else ""
+
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse,
+                                      dtype=dtype, copy=copy,
+                                      force_all_finite=force_all_finite,
+                                      accept_large_sparse=accept_large_sparse)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                if dtype is not None and np.dtype(dtype).kind in 'iu':
+                    # Conversion float -> int should not contain NaN or
+                    # inf (numpy#14412). We cannot use casting='safe' because
+                    # then conversion float -> int would be disallowed.
+                    array = np.asarray(array, order=order)
+                    if array.dtype.kind == 'f':
+                        _assert_all_finite(array, allow_nan=False,
+                                           msg_dtype=dtype)
+                    array = array.astype(dtype, casting="unsafe", copy=False)
+                else:
+                    array = np.asarray(array, order=order, dtype=dtype)
+            except ComplexWarning:
+                raise ValueError("Complex data not supported\n"
+                                 "{}\n".format(array))
+
+        _ensure_no_complex_data(array)
+
+        if ensure_2d:
+            # If input is scalar raise error
+            if array.ndim == 0:
+                raise ValueError(
+                    "Expected 2D array, got scalar array instead:\narray={}.\n"
+                    "Reshape your data either using array.reshape(-1, 1) if "
+                    "your data has a single feature or array.reshape(1, -1) "
+                    "if it contains a single sample.".format(array))
+            # If input is 1D raise error
+            if array.ndim == 1:
+                raise ValueError(
+                    "Expected 2D array, got 1D array instead:\narray={}.\n"
+                    "Reshape your data either using array.reshape(-1, 1) if "
+                    "your data has a single feature or array.reshape(1, -1) "
+                    "if it contains a single sample.".format(array))
+
+        # in the future np.flexible dtypes will be handled like object dtypes
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn(
+                "Beginning in version 0.22, arrays of bytes/strings will be "
+                "converted to decimal numbers if dtype='numeric'. "
+                "It is recommended that you convert the array to "
+                "a float dtype before using it in scikit-learn, "
+                "for example by using "
+                "your_array = your_array.astype(np.float64).",
+                FutureWarning, stacklevel=2)
+
+        # make sure we actually converted to numeric:
+        if dtype_numeric and array.dtype.kind == "O":
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError("Found array with dim %d. %s expected <= 2."
+                             % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array,
+                               allow_nan=force_all_finite == 'allow-nan')
+
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError("Found array with %d sample(s) (shape=%s) while a"
+                             " minimum of %d is required%s."
+                             % (n_samples, array.shape, ensure_min_samples,
+                                context))
+
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError("Found array with %d feature(s) (shape=%s) while"
+                             " a minimum of %d is required%s."
+                             % (n_features, array.shape, ensure_min_features,
+                                context))
+
+    if warn_on_dtype and dtype_orig is not None and array.dtype != dtype_orig:
+        msg = ("Data with input dtype %s was converted to %s%s."
+               % (dtype_orig, array.dtype, context))
+        warnings.warn(msg, DataConversionWarning, stacklevel=2)
+
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+
+    if (warn_on_dtype and dtypes_orig is not None and
+            {array.dtype} != set(dtypes_orig)):
+        msg = ("Data with input dtype %s were all converted to %s%s."
+               % (', '.join(map(str, sorted(set(dtypes_orig)))), array.dtype,
+                  context))
+        warnings.warn(msg, DataConversionWarning, stacklevel=3)
+
+    return array
+
+def is_scalar_nan(x):
+    return bool(isinstance(x, numbers.Real) and np.isnan(x))
+
+[/PYTHON]
+What will be the input of `_validate_input`, given the following output:
+[OUTPUT]
+{"output": {"_shape": [3, 5], "maxprint": 50, "indices": "[1 2 1 2 1 2 1 2 1 2]", "indptr": "[ 0  2  4  6  8 10]", "data": "[1. 1. 1. 1. 1. 1. 1. 1. 1. 1.]"}}
+[/OUTPUT]
+[INPUT]
+{"self": {"missing_values": "", "strategy": "", "fill_value": "", "verbose": "", "copy": "", "add_indicator": ""}, "args": {"X": {"_shape": "", "maxprint": "", "data": "", "indices": "", "indptr": ""}}, "kwargs": {}}
+[/INPUT]
+[THOUGHT]
+        
+
+[THOUGHT]
+The output shows a sparse matrix of shape (3, 5). The `check_array` function converts the input to a sparse matrix when `accept_sparse='csc'` is set. The output suggests that the input `X` is also a sparse matrix in CSC format.
+
+The output matrix has shape (3, 5), data [1. 1. 1. 1. 1. 1. 1. 1. 1. 1.], indices [1 2 1 2 1 2 1 2 1 2], and indptr [ 0  2  4  6  8 10].
+
+Let's analyze the structure of the sparse matrix:
+
+- Row 0: Two non-zero values at columns 1 and 2.
+- Row 1: Two non-zero values at columns 1 and 2.
+- Row 2: Two non-zero values at columns 1 and 2.
+
+The `indices` array stores the column indices of the non-zero values. The `indptr` array stores the starting positions of each row's data in the `data` and `indices` arrays. The `data` array stores the non-zero values.
+
+Since the output matrix has all values equal to 1.0, the input sparse matrix should also have the same data, indices, and indptr. The shape of the input matrix is (3, 5).
+
+[/THOUGHT]
+
+[ANSWER]
+{"self": {"missing_values": "", "strategy": "", "fill_value": "", "verbose": "", "copy": "", "add_indicator": ""}, "args": {"X": {"_shape": [3, 5], "maxprint": 50, "data": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], "indices": [1, 2, 1, 2, 1, 2, 1, 2, 1, 2], "indptr": [0, 2, 4, 6, 8, 10]}}, "kwargs": {}}
+[/ANSWER]

@@ -1,0 +1,256 @@
+
+You are given a Python function and an output of the function. Complete the input of the function wrapped with [INPUT] and [INPUT]. Print your reasoning process before arriving at the answer. Provide the completed output in [ANSWER] and [/ANSWER] tags, following the example.
+[PYTHON]
+from inspect import cleandoc
+import re
+from email.parser import HeaderParser
+from email.errors import HeaderParseError
+def parse_docstring(docstring):
+    if not docstring:
+        return '', '', {}
+    docstring = cleandoc(docstring)
+    parts = re.split(r'
+{2,}', docstring)
+    title = parts[0]
+    if len(parts) == 1:
+        body = ''
+        metadata = {}
+    else:
+        parser = HeaderParser()
+        try:
+            metadata = parser.parsestr(parts[-1])
+        except HeaderParseError:
+            metadata = {}
+            body = "
+
+".join(parts[1:])
+        else:
+            metadata = dict(metadata.items())
+            if metadata:
+                body = "
+
+".join(parts[1:-1])
+            else:
+                body = "
+
+".join(parts[1:])
+    return title, body, metadata
+[/PYTHON]
+
+What will be the input of `parse_docstring`, given the following output:
+[OUTPUT]
+{"output": ("firstline", "second line", {})}
+[/OUTPUT]
+
+[INPUT]
+{"self":{}, "args":{"docstring":""}, "kwargs":{}}
+[/INPUT]
+
+[THOUGHT]
+From `title = parts[0] = "firstline" ` we can know that the first part from splitting the cleaned docstring must have been "firstline"
+From `body = "second line"` we can know that there must have been at least one more part after the first, and it must not have been parsed as valid metadata.
+From `metadata = {}` we can know that either there was no metadata section, or an attempt to parse metadata failed (raised HeaderParseError).
+From the above, we can reconstruct: `parts = ['firstline', 'secondline']`. 
+This means the cleaned docstring must have looked like: `firstline
+
+second line`. This would split into two parts when re.split(r'
+{2,}', ...) is applied.
+[/THOUGHT]
+
+[ANSWER]
+{"self":{}, "args":{"docstring":"firstline
+
+second line"}, "kwargs":{}}
+[/ANSWER]
+
+[PYTHON]
+import numbers
+import array
+from collections.abc import Iterable
+import numpy as np
+from scipy import linalg
+import scipy.sparse as sp
+from ..preprocessing import MultiLabelBinarizer
+from ..utils import check_array, check_random_state
+from ..utils import shuffle as util_shuffle
+from ..utils.random import sample_without_replacement
+
+
+
+def make_classification(n_samples=100, n_features=20, n_informative=2,
+                        n_redundant=2, n_repeated=0, n_classes=2,
+                        n_clusters_per_class=2, weights=None, flip_y=0.01,
+                        class_sep=1.0, hypercube=True, shift=0.0, scale=1.0,
+                        shuffle=True, random_state=None):
+    generator = check_random_state(random_state)
+
+    if n_informative + n_redundant + n_repeated > n_features:
+        raise ValueError("Number of informative, redundant and repeated "
+                         "features must sum to less than the number of total"
+                         " features")
+    if n_informative < np.log2(n_classes * n_clusters_per_class):
+        msg = "n_classes({}) * n_clusters_per_class({}) must be"
+        msg += " smaller or equal 2**n_informative({})={}"
+        raise ValueError(msg.format(n_classes, n_clusters_per_class,
+                                    n_informative, 2**n_informative))
+
+    if weights is not None:
+        if len(weights) not in [n_classes, n_classes - 1]:
+            raise ValueError("Weights specified but incompatible with number "
+                             "of classes.")
+        if len(weights) == n_classes - 1:
+            if isinstance(weights, list):
+                weights = weights + [1.0 - sum(weights)]
+            else:
+                weights = np.resize(weights, n_classes)
+                weights[-1] = 1.0 - sum(weights[:-1])
+    else:
+        weights = [1.0 / n_classes] * n_classes
+
+    n_useless = n_features - n_informative - n_redundant - n_repeated
+    n_clusters = n_classes * n_clusters_per_class
+
+    n_samples_per_cluster = [
+        int(n_samples * weights[k % n_classes] / n_clusters_per_class)
+        for k in range(n_clusters)]
+
+    for i in range(n_samples - sum(n_samples_per_cluster)):
+        n_samples_per_cluster[i % n_clusters] += 1
+
+    X = np.zeros((n_samples, n_features))
+    y = np.zeros(n_samples, dtype=np.int)
+
+    centroids = _generate_hypercube(n_clusters, n_informative,
+                                    generator).astype(float, copy=False)
+    centroids *= 2 * class_sep
+    centroids -= class_sep
+    if not hypercube:
+        centroids *= generator.rand(n_clusters, 1)
+        centroids *= generator.rand(1, n_informative)
+
+    X[:, :n_informative] = generator.randn(n_samples, n_informative)
+
+    stop = 0
+    for k, centroid in enumerate(centroids):
+        start, stop = stop, stop + n_samples_per_cluster[k]
+        y[start:stop] = k % n_classes  # assign labels
+        X_k = X[start:stop, :n_informative]  # slice a view of the cluster
+
+        A = 2 * generator.rand(n_informative, n_informative) - 1
+        X_k[...] = np.dot(X_k, A)  # introduce random covariance
+
+        X_k += centroid  # shift the cluster to a vertex
+
+    # Create redundant features
+    if n_redundant > 0:
+        B = 2 * generator.rand(n_informative, n_redundant) - 1
+        X[:, n_informative:n_informative + n_redundant] = \
+            np.dot(X[:, :n_informative], B)
+
+    # Repeat some features
+    if n_repeated > 0:
+        n = n_informative + n_redundant
+        indices = ((n - 1) * generator.rand(n_repeated) + 0.5).astype(np.intp)
+        X[:, n:n + n_repeated] = X[:, indices]
+
+    # Fill useless features
+    if n_useless > 0:
+        X[:, -n_useless:] = generator.randn(n_samples, n_useless)
+
+    # Randomly replace labels
+    if flip_y >= 0.0:
+        flip_mask = generator.rand(n_samples) < flip_y
+        y[flip_mask] = generator.randint(n_classes, size=flip_mask.sum())
+
+    # Randomly shift and scale
+    if shift is None:
+        shift = (2 * generator.rand(n_features) - 1) * class_sep
+    X += shift
+
+    if scale is None:
+        scale = 1 + 100 * generator.rand(n_features)
+    X *= scale
+
+    if shuffle:
+        # Randomly permute samples
+        X, y = util_shuffle(X, y, random_state=generator)
+
+        # Randomly permute features
+        indices = np.arange(n_features)
+        generator.shuffle(indices)
+        X[:, :] = X[:, indices]
+
+    return X, y
+
+[/PYTHON]
+Functions called during the execution:
+[PYTHON]
+def check_random_state(seed):
+    if seed is None or seed is np.random:
+        return np.random.mtrand._rand
+    if isinstance(seed, (numbers.Integral, np.integer)):
+        return np.random.RandomState(seed)
+    if isinstance(seed, np.random.RandomState):
+        return seed
+    raise ValueError('%r cannot be used to seed a numpy.random.RandomState'
+                     ' instance' % seed)
+
+def _generate_hypercube(samples, dimensions, rng):
+    """Returns distinct binary samples of length dimensions
+    """
+    if dimensions > 30:
+        return np.hstack([rng.randint(2, size=(samples, dimensions - 30)),
+                          _generate_hypercube(samples, 30, rng)])
+    out = sample_without_replacement(2 ** dimensions, samples,
+                                     random_state=rng).astype(dtype='>u4',
+                                                              copy=False)
+    out = np.unpackbits(out.view('>u1')).reshape((-1, 32))[:, -dimensions:]
+    return out
+
+[/PYTHON]
+What will be the input of `make_classification`, given the following output:
+[OUTPUT]
+{"output": ["[[  29.568076     14.35316258   58.03334524 ...   64.51714597\n   -84.18215588  -19.99766307]\n [  16.49171463  -54.785029    129.30115897 ...  -51.85159117\n  -113.08959885   44.32086593]\n [ -27.04053195  -30.10819447  -18.93253963 ...  101.44777187\n   -47.47631165  -63.47426724]\n ...\n [ -56.33912532  -42.8829325    48.35488233 ...   39.24301094\n    23.40598401   37.15353431]\n [ -67.25163471   33.28265579  -16.47776853 ...   46.86134654\n    57.46695192   64.41141774]\n [ -51.04642793  -88.59510805  107.97132999 ...   35.41039886\n   150.63675375  122.88711397]]", "[2 2 1 1 2 2 1 2 2 2 1 2 2 2 2 2 2 2 2 2 0 2 1 1 1 2 2 1 2 2 2 0 1 0 2 2 0\n 2 1 0 1 2 2 1 1 2 1 1 2 0 2 2 0 2 2 2 1 2 2 1 2 2 2 2 2 2 2 2 0 2 1 1 2 2\n 2 2 2 2 2 2 1 0 2 2 1 2 2 2 1 1 1 2 1 2 2 2 2 2 2 0]"]}
+[/OUTPUT]
+[INPUT]
+{"self": {}, "args": {}, "kwargs": {"n_samples": "", "n_features": "", "n_informative": "", "n_redundant": "", "n_repeated": "", "n_classes": "", "n_clusters_per_class": "", "hypercube": "", "shift": "", "scale": "", "weights": "", "random_state": ""}}
+[/INPUT]
+[THOUGHT]
+        
+
+[THOUGHT]
+The output shows an array `X` of shape (100, 20) and an array `y` of shape (100,).
+The default values for `make_classification` are:
+```
+n_samples=100
+n_features=20
+n_informative=2
+n_redundant=2
+n_repeated=0
+n_classes=2
+n_clusters_per_class=2
+weights=None
+flip_y=0.01
+class_sep=1.0
+hypercube=True
+shift=0.0
+scale=1.0
+shuffle=True
+random_state=None
+```
+The output `X` has shape (100, 20), which corresponds to `n_samples=100` and `n_features=20`.
+The output `y` contains values 0, 1, and 2, indicating `n_classes=3`.
+The length of `y` is 100, which is consistent with `n_samples=100`.
+Since the other parameters are not specified in the output, we can assume they take their default values.
+Therefore, the input should be:
+```
+n_samples=100
+n_features=20
+n_classes=3
+```
+with other parameters taking default values.
+[/THOUGHT]
+
+[ANSWER]
+{"self": {}, "args": {}, "kwargs": {"n_samples": 100, "n_features": 20, "n_informative": 2, "n_redundant": 2, "n_repeated": 0, "n_classes": 3, "n_clusters_per_class": 2, "weights": None, "flip_y": 0.01, "class_sep": 1.0, "hypercube": True, "shift": 0.0, "scale": 1.0, "shuffle": True, "random_state": None}}
+[/ANSWER]

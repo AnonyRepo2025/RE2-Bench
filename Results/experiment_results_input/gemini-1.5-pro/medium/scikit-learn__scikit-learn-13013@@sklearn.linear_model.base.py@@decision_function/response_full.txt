@@ -1,0 +1,309 @@
+
+You are given a Python function and an output of the function. Complete the input of the function wrapped with [INPUT] and [INPUT]. Print your reasoning process before arriving at the answer. Provide the completed output in [ANSWER] and [/ANSWER] tags, following the example.
+[PYTHON]
+from inspect import cleandoc
+import re
+from email.parser import HeaderParser
+from email.errors import HeaderParseError
+def parse_docstring(docstring):
+    if not docstring:
+        return '', '', {}
+    docstring = cleandoc(docstring)
+    parts = re.split(r'
+{2,}', docstring)
+    title = parts[0]
+    if len(parts) == 1:
+        body = ''
+        metadata = {}
+    else:
+        parser = HeaderParser()
+        try:
+            metadata = parser.parsestr(parts[-1])
+        except HeaderParseError:
+            metadata = {}
+            body = "
+
+".join(parts[1:])
+        else:
+            metadata = dict(metadata.items())
+            if metadata:
+                body = "
+
+".join(parts[1:-1])
+            else:
+                body = "
+
+".join(parts[1:])
+    return title, body, metadata
+[/PYTHON]
+
+What will be the input of `parse_docstring`, given the following output:
+[OUTPUT]
+{"output": ("firstline", "second line", {})}
+[/OUTPUT]
+
+[INPUT]
+{"self":{}, "args":{"docstring":""}, "kwargs":{}}
+[/INPUT]
+
+[THOUGHT]
+From `title = parts[0] = "firstline" ` we can know that the first part from splitting the cleaned docstring must have been "firstline"
+From `body = "second line"` we can know that there must have been at least one more part after the first, and it must not have been parsed as valid metadata.
+From `metadata = {}` we can know that either there was no metadata section, or an attempt to parse metadata failed (raised HeaderParseError).
+From the above, we can reconstruct: `parts = ['firstline', 'secondline']`. 
+This means the cleaned docstring must have looked like: `firstline
+
+second line`. This would split into two parts when re.split(r'
+{2,}', ...) is applied.
+[/THOUGHT]
+
+[ANSWER]
+{"self":{}, "args":{"docstring":"firstline
+
+second line"}, "kwargs":{}}
+[/ANSWER]
+
+[PYTHON]
+from abc import ABCMeta, abstractmethod
+import numbers
+import warnings
+import numpy as np
+import scipy.sparse as sp
+from scipy import linalg
+from scipy import sparse
+from scipy.special import expit
+from ..utils._joblib import Parallel, delayed
+from ..base import (BaseEstimator, ClassifierMixin, RegressorMixin,
+                    MultiOutputMixin)
+from ..utils import check_array, check_X_y
+from ..utils.validation import FLOAT_DTYPES
+from ..utils import check_random_state
+from ..utils.extmath import safe_sparse_dot
+from ..utils.sparsefuncs import mean_variance_axis, inplace_column_scale
+from ..utils.fixes import sparse_lsqr
+from ..utils.seq_dataset import ArrayDataset32, CSRDataset32
+from ..utils.seq_dataset import ArrayDataset64, CSRDataset64
+from ..utils.validation import check_is_fitted
+from ..preprocessing.data import normalize as f_normalize
+
+SPARSE_INTERCEPT_DECAY = 0.01
+
+class LinearClassifierMixin(ClassifierMixin):
+
+    def decision_function(self, X):
+        check_is_fitted(self, 'coef_')
+
+        X = self.check_array(X, accept_sparse='csr')
+
+        n_features = self.coef_.shape[1]
+        if X.shape[1] != n_features:
+            raise ValueError("X has %d features per sample; expecting %d"
+                             % (X.shape[1], n_features))
+
+        scores = safe_sparse_dot(X, self.coef_.T,
+                                 dense_output=True) + self.intercept_
+        return scores.ravel() if scores.shape[1] == 1 else scores
+
+    def predict(self, X):
+        scores = self.decision_function(X)
+        if len(scores.shape) == 1:
+            indices = (scores > 0).astype(np.int)
+        else:
+            indices = scores.argmax(axis=1)
+        return self.classes_[indices]
+
+    def _predict_proba_lr(self, X):
+        prob = self.decision_function(X)
+        expit(prob, out=prob)
+        if prob.ndim == 1:
+            return np.vstack([1 - prob, prob]).T
+        else:
+            # OvR normalization, like LibLinear's predict_probability
+            prob /= prob.sum(axis=1).reshape((prob.shape[0], -1))
+            return prob
+    def check_array(self, array, accept_sparse=False, accept_large_sparse=True,
+                    dtype="numeric", order=None, copy=False, force_all_finite=True,
+                    ensure_2d=True, allow_nd=False, ensure_min_samples=1,
+                    ensure_min_features=1, warn_on_dtype=None, estimator=None):
+        if warn_on_dtype is not None:
+            warnings.warn(
+                "'warn_on_dtype' is deprecated in version 0.21 and will be "
+                "removed in 0.23. Don't set `warn_on_dtype` to remove this "
+                "warning.",
+                DeprecationWarning)
+
+        array_orig = array
+
+        dtype_numeric = isinstance(dtype, str) and dtype == "numeric"
+
+        dtype_orig = getattr(array, "dtype", None)
+        if not hasattr(dtype_orig, 'kind'):
+            dtype_orig = None
+
+        dtypes_orig = None
+        if hasattr(array, "dtypes") and hasattr(array.dtypes, '__array__'):
+            dtypes_orig = np.array(array.dtypes)
+
+        if dtype_numeric:
+            if dtype_orig is not None and dtype_orig.kind == "O":
+                # if input is object, convert to float.
+                dtype = np.float64
+            else:
+                dtype = None
+
+        if isinstance(dtype, (list, tuple)):
+            if dtype_orig is not None and dtype_orig in dtype:
+                # no dtype conversion required
+                dtype = None
+            else:
+                # dtype conversion required. Let's select the first element of the
+                # list of accepted types.
+                dtype = dtype[0]
+
+        if force_all_finite not in (True, False, 'allow-nan'):
+            raise ValueError('force_all_finite should be a bool or "allow-nan"'
+                            '. Got {!r} instead'.format(force_all_finite))
+
+        if estimator is not None:
+            if isinstance(estimator, str):
+                estimator_name = estimator
+            else:
+                estimator_name = estimator.__class__.__name__
+        else:
+            estimator_name = "Estimator"
+        context = " by %s" % estimator_name if estimator is not None else ""
+
+        if sp.issparse(array):
+            _ensure_no_complex_data(array)
+            array = _ensure_sparse_format(array, accept_sparse=accept_sparse,
+                                        dtype=dtype, copy=copy,
+                                        force_all_finite=force_all_finite,
+                                        accept_large_sparse=accept_large_sparse)
+        else:
+            with warnings.catch_warnings():
+                try:
+                    warnings.simplefilter('error', ComplexWarning)
+                    array = np.asarray(array, dtype=dtype, order=order)
+                except ComplexWarning:
+                    raise ValueError("Complex data not supported\n"
+                                    "{}\n".format(array))
+            _ensure_no_complex_data(array)
+
+            if ensure_2d:
+                # If input is scalar raise error
+                if array.ndim == 0:
+                    raise ValueError(
+                        "Expected 2D array, got scalar array instead:\narray={}.\n"
+                        "Reshape your data either using array.reshape(-1, 1) if "
+                        "your data has a single feature or array.reshape(1, -1) "
+                        "if it contains a single sample.".format(array))
+                # If input is 1D raise error
+                if array.ndim == 1:
+                    raise ValueError(
+                        "Expected 2D array, got 1D array instead:\narray={}.\n"
+                        "Reshape your data either using array.reshape(-1, 1) if "
+                        "your data has a single feature or array.reshape(1, -1) "
+                        "if it contains a single sample.".format(array))
+
+            # in the future np.flexible dtypes will be handled like object dtypes
+            if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+                warnings.warn(
+                    "Beginning in version 0.22, arrays of bytes/strings will be "
+                    "converted to decimal numbers if dtype='numeric'. "
+                    "It is recommended that you convert the array to "
+                    "a float dtype before using it in scikit-learn, "
+                    "for example by using "
+                    "your_array = your_array.astype(np.float64).",
+                    FutureWarning)
+
+            # make sure we actually converted to numeric:
+            if dtype_numeric and array.dtype.kind == "O":
+                array = array.astype(np.float64)
+            if not allow_nd and array.ndim >= 3:
+                raise ValueError("Found array with dim %d. %s expected <= 2."
+                                % (array.ndim, estimator_name))
+            if force_all_finite:
+                _assert_all_finite(array,
+                                allow_nan=force_all_finite == 'allow-nan')
+
+        if ensure_min_samples > 0:
+            n_samples = _num_samples(array)
+            if n_samples < ensure_min_samples:
+                raise ValueError("Found array with %d sample(s) (shape=%s) while a"
+                                " minimum of %d is required%s."
+                                % (n_samples, array.shape, ensure_min_samples,
+                                    context))
+
+        if ensure_min_features > 0 and array.ndim == 2:
+            n_features = array.shape[1]
+            if n_features < ensure_min_features:
+                raise ValueError("Found array with %d feature(s) (shape=%s) while"
+                                " a minimum of %d is required%s."
+                                % (n_features, array.shape, ensure_min_features,
+                                    context))
+
+        if warn_on_dtype and dtype_orig is not None and array.dtype != dtype_orig:
+            msg = ("Data with input dtype %s was converted to %s%s."
+                % (dtype_orig, array.dtype, context))
+            warnings.warn(msg, DataConversionWarning)
+
+        if copy and np.may_share_memory(array, array_orig):
+            array = np.array(array, dtype=dtype, order=order)
+
+        if (warn_on_dtype and dtypes_orig is not None and
+                {array.dtype} != set(dtypes_orig)):
+            msg = ("Data with input dtype %s were all converted to %s%s."
+                % (', '.join(map(str, sorted(set(dtypes_orig)))), array.dtype,
+                    context))
+            warnings.warn(msg, DataConversionWarning, stacklevel=3)
+
+        return array
+
+[/PYTHON]
+Functions called during the execution:
+[PYTHON]
+def check_is_fitted(estimator, attributes, msg=None, all_or_any=all):
+    if msg is None:
+        msg = ("This %(name)s instance is not fitted yet. Call 'fit' with "
+               "appropriate arguments before using this method.")
+
+    if not hasattr(estimator, 'fit'):
+        raise TypeError("%s is not an estimator instance." % (estimator))
+
+    if not isinstance(attributes, (list, tuple)):
+        attributes = [attributes]
+
+    if not all_or_any([hasattr(estimator, attr) for attr in attributes]):
+        raise NotFittedError(msg % {'name': type(estimator).__name__})
+
+[/PYTHON]
+What will be the input of `decision_function`, given the following output:
+[OUTPUT]
+{"output": "[-1.01433277  1.20400149 -1.73529962 -0.49751515  1.19475644  0.95108605\n -0.91999369 -1.33295147 -0.3290461   1.26141818  0.65369652 -1.26230157\n  1.22585533 -1.31263817  1.31322145 -0.99582451  0.68908117  0.86709321\n -1.32412572 -1.37641791 -1.47273274  0.97365062  0.93967828  1.22878634\n  1.06954369  1.08666276 -0.84067747 -1.28527959  1.10193386 -1.38774433\n  1.57840336  1.42450542  1.45130477 -1.13986766 -1.4315972   1.29646613\n  0.90995386 -1.26061874  1.17313952  1.10434613  1.03634378  0.85363789\n  1.44427991 -1.49361113  1.17349388  0.85771736 -0.70427317 -0.56301304\n  0.97212673 -0.76168013 -1.16414275  0.91772785 -1.48179644 -1.12516078\n  1.12133457 -1.00180845 -1.37097757 -1.44213997  0.92935499 -1.47736926\n  1.37795662 -1.35455052 -1.19992687 -1.48809047  1.10891905  1.00291116\n  0.70030535  1.08397495  1.03239092  1.45639991 -1.45266509 -1.18633527\n -0.95186888  0.85211291 -1.67865735 -1.21522575 -0.52679816  1.02030247\n -1.11740594 -0.92159265 -0.93340394 -0.84500664  1.2075066  -1.05797296\n -0.8192622  -1.8311137  -0.93884939  0.92190749  0.99949788  0.94792929\n -1.63827832  1.00150785 -1.46823613 -1.33274623  1.01602092  1.37751987\n  1.16445665  0.85885833 -1.80286627  1.06454063]"}
+[/OUTPUT]
+[INPUT]
+{"self": {"dual": "", "tol": "", "C": "", "multi_class": "", "fit_intercept": "", "intercept_scaling": "", "class_weight": "", "verbose": "", "random_state": "", "max_iter": "", "penalty": "", "loss": "", "classes_": "", "coef_": "", "intercept_": "", "n_iter_": "247"}, "args": {"X": ""}, "kwargs": {}}
+[/INPUT]
+[THOUGHT]
+        
+
+[THOUGHT]
+The output is a NumPy array of shape (100,). This suggests that `X` is a 2D array or sparse matrix, and `self.coef_` is a 2D array or sparse matrix. The output is the result of `safe_sparse_dot(X, self.coef_.T, dense_output=True) + self.intercept_`.
+
+Since the output is a 1D array, `scores.shape[1]` must be 1, meaning that `self.coef_.shape[0]` is 1. Also, the output has 100 elements, so `X.shape[0]` must be 100.
+
+Let's assume `X` is a 2D NumPy array of shape (100, n_features) and `self.coef_` is a 2D NumPy array of shape (1, n_features). `self.intercept_` must be a scalar or a 1D array of shape (1,).
+
+The output is a 1D array of floats, so the input `X` must be an array-like object with numerical values.
+
+To get the specific output shown, we need to know the values of `X`, `self.coef_`, and `self.intercept_`. However, the problem only asks for the input `X`, and we don't have enough information to determine its exact value. We can only infer its shape and data type.
+
+Since the output is a NumPy array, it's likely that the input `X` is also a NumPy array. The output array has 100 elements, so the input `X` must have 100 rows. The number of columns in `X` is unknown, but it must be the same as the number of columns in `self.coef_`.
+
+We can represent `X` as a NumPy array with 100 rows and an unknown number of columns. We can use a placeholder value for the number of columns, such as `n_features`. The data type of `X` should be a numerical type, such as `float64`.
+
+[/THOUGHT]
+
+[ANSWER]
+{"self": {"dual": "", "tol": "", "C": "", "multi_class": "", "fit_intercept": "", "intercept_scaling": "", "class_weight": "", "verbose": "", "random_state": "", "max_iter": "", "penalty": "", "loss": "", "classes_": np.array([0, 1]), "coef_": np.array([[0.1, 0.2, 0.3]]), "intercept_": np.array([0.4]), "n_iter_": "247"}, "args": {"X": np.random.rand(100, 3)}, "kwargs": {}}
+[/ANSWER]

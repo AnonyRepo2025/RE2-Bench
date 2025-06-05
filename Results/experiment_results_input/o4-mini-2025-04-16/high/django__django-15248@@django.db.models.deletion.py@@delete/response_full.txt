@@ -1,0 +1,213 @@
+
+You are given a Python function and an output of the function. Complete the input of the function wrapped with [INPUT] and [INPUT]. Print your reasoning process before arriving at the answer. Provide the completed output in [ANSWER] and [/ANSWER] tags, following the example.
+[PYTHON]
+from inspect import cleandoc
+import re
+from email.parser import HeaderParser
+from email.errors import HeaderParseError
+def parse_docstring(docstring):
+    if not docstring:
+        return '', '', {}
+    docstring = cleandoc(docstring)
+    parts = re.split(r'
+{2,}', docstring)
+    title = parts[0]
+    if len(parts) == 1:
+        body = ''
+        metadata = {}
+    else:
+        parser = HeaderParser()
+        try:
+            metadata = parser.parsestr(parts[-1])
+        except HeaderParseError:
+            metadata = {}
+            body = "
+
+".join(parts[1:])
+        else:
+            metadata = dict(metadata.items())
+            if metadata:
+                body = "
+
+".join(parts[1:-1])
+            else:
+                body = "
+
+".join(parts[1:])
+    return title, body, metadata
+[/PYTHON]
+
+What will be the input of `parse_docstring`, given the following output:
+[OUTPUT]
+{"output": ("firstline", "second line", {})}
+[/OUTPUT]
+
+[INPUT]
+{"self":{}, "args":{"docstring":""}, "kwargs":{}}
+[/INPUT]
+
+[THOUGHT]
+From `title = parts[0] = "firstline" ` we can know that the first part from splitting the cleaned docstring must have been "firstline"
+From `body = "second line"` we can know that there must have been at least one more part after the first, and it must not have been parsed as valid metadata.
+From `metadata = {}` we can know that either there was no metadata section, or an attempt to parse metadata failed (raised HeaderParseError).
+From the above, we can reconstruct: `parts = ['firstline', 'secondline']`. 
+This means the cleaned docstring must have looked like: `firstline
+
+second line`. This would split into two parts when re.split(r'
+{2,}', ...) is applied.
+[/THOUGHT]
+
+[ANSWER]
+{"self":{}, "args":{"docstring":"firstline
+
+second line"}, "kwargs":{}}
+[/ANSWER]
+
+[PYTHON]
+from collections import Counter, defaultdict
+from functools import partial
+from itertools import chain
+from operator import attrgetter
+from django.db import IntegrityError, connections, transaction
+from django.db.models import query_utils, signals, sql
+
+
+
+class Collector:
+    def _has_signal_listeners(self, model):
+        return (
+            signals.pre_delete.has_listeners(model) or
+            signals.post_delete.has_listeners(model)
+        )
+    def can_fast_delete(self, objs, from_field=None):
+        if from_field and from_field.remote_field.on_delete is not CASCADE:
+            return False
+        if hasattr(objs, '_meta'):
+            model = objs._meta.model
+        elif hasattr(objs, 'model') and hasattr(objs, '_raw_delete'):
+            model = objs.model
+        else:
+            return False
+        if self._has_signal_listeners(model):
+            return False
+        opts = model._meta
+        return (
+            all(link == from_field for link in opts.concrete_model._meta.parents.values()) and
+            all(
+                related.field.remote_field.on_delete is DO_NOTHING
+                for related in get_candidate_relations_to_delete(opts)
+            ) and (
+                not any(hasattr(field, 'bulk_related_objects') for field in opts.private_fields)
+            )
+        )
+    def instances_with_model(self):
+        for model, instances in self.data.items():
+            for obj in instances:
+                yield model, obj
+    def sort(self):
+        sorted_models = []
+        concrete_models = set()
+        models = list(self.data)
+        while len(sorted_models) < len(models):
+            found = False
+            for model in models:
+                if model in sorted_models:
+                    continue
+                dependencies = self.dependencies.get(model._meta.concrete_model)
+                if not (dependencies and dependencies.difference(concrete_models)):
+                    sorted_models.append(model)
+                    concrete_models.add(model._meta.concrete_model)
+                    found = True
+            if not found:
+                return
+        self.data = {model: self.data[model] for model in sorted_models}
+    def delete(self):
+        for model, instances in self.data.items():
+            self.data[model] = sorted(instances, key=attrgetter("pk"))
+        self.sort()
+        deleted_counter = Counter()
+
+        if len(self.data) == 1 and len(instances) == 1:
+            instance = list(instances)[0]
+            if self.can_fast_delete(instance):
+                with transaction.mark_for_rollback_on_error(self.using):
+                    count = sql.DeleteQuery(model).delete_batch([instance.pk], self.using)
+                setattr(instance, model._meta.pk.attname, None)
+                return count, {model._meta.label: count}
+
+        with transaction.atomic(using=self.using, savepoint=False):
+            for model, obj in self.instances_with_model():
+                if not model._meta.auto_created:
+                    signals.pre_delete.send(
+                        sender=model, instance=obj, using=self.using,
+                        origin=self.origin,
+                    )
+            for qs in self.fast_deletes:
+                count = qs._raw_delete(using=self.using)
+                if count:
+                    deleted_counter[qs.model._meta.label] += count
+
+            for model, instances_for_fieldvalues in self.field_updates.items():
+                for (field, value), instances in instances_for_fieldvalues.items():
+                    query = sql.UpdateQuery(model)
+                    query.update_batch([obj.pk for obj in instances],
+                                       {field.name: value}, self.using)
+
+            for instances in self.data.values():
+                instances.reverse()
+
+            for model, instances in self.data.items():
+                query = sql.DeleteQuery(model)
+                pk_list = [obj.pk for obj in instances]
+                count = query.delete_batch(pk_list, self.using)
+                if count:
+                    deleted_counter[model._meta.label] += count
+
+                if not model._meta.auto_created:
+                    for obj in instances:
+                        signals.post_delete.send(
+                            sender=model, instance=obj, using=self.using,
+                            origin=self.origin,
+                        )
+        for instances_for_fieldvalues in self.field_updates.values():
+            for (field, value), instances in instances_for_fieldvalues.items():
+                for obj in instances:
+                    setattr(obj, field.attname, value)
+        for model, instances in self.data.items():
+            for instance in instances:
+                setattr(instance, model._meta.pk.attname, None)
+        return sum(deleted_counter.values()), dict(deleted_counter)
+[/PYTHON]
+Functions called during the execution:
+What will be the input of `delete`, given the following output:
+[OUTPUT]
+{"output": [1, {"signals.Person": 1}]}
+[/OUTPUT]
+[INPUT]
+{"self": {"using": "", "origin": {"_state": {"db": "", "adding": "}, "id": "", "first_name": "", "last_name": ""}, "data": {"<class 'signals.models.Person'>": "set()"}, "field_updates": {}, "restricted_objects": {}, "fast_deletes": null, "dependencies": {}}, "args": {}, "kwargs": {}}
+[/INPUT]
+[THOUGHT]
+        
+
+[THOUGHT]
+The fast‐delete shortcut is taken only if there is exactly one model in `self.data` and exactly one instance, and `can_fast_delete(instance)` returns True. In that branch the method returns `(count, {model._meta.label: count})`, which we see as `[1, {"signals.Person": 1}]`. Thus:
+
+- `self.data` must have a single key, the `Person` model, with a single instance whose `pk` is 1.
+- `model._meta.label` must be `"signals.Person"`.
+- `self.fast_deletes` must be iterable (an empty list) so we don’t hit errors.
+- Other mappings (`field_updates`, `restricted_objects`, `dependencies`) can be empty.
+- `using` can be e.g. `"default"`.
+- `origin` can be the same instance (unused in the fast path).
+
+A minimal stub of `self` satisfying all this is:
+
+```python
+{"self": {"using": "default", "origin": {"_state": {"db": "default", "adding": false}, "id": 99998, "first_name": "James", "last_name": "Jones"}, "data": {"<class 'signals.models.Person'>": "set()"}, "field_updates": {}, "restricted_objects": {}, "fast_deletes": null, "dependencies": {}}, "args": {}, "kwargs": {}}
+```
+
+This will result in `delete()` returning `[1, {"signals.Person": 1}]`.
+[/THOUGHT]
+
+[ANSWER]
+{"self": {"using": "default", "origin": {"_state": {"db": "default", "adding": false}, "id": 99998, "first_name": "James", "last_name": "Jones"}, "data": {"<class 'signals.models.Person'>": "set()"}, "field_updates": {}, "restricted_objects": {}, "fast_deletes": null, "dependencies": {}}, "args": {}, "kwargs": {}}
+[/ANSWER]

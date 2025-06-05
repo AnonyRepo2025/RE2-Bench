@@ -1,0 +1,230 @@
+
+You are given a Python function and an output of the function. Complete the input of the function wrapped with [INPUT] and [INPUT]. Print your reasoning process before arriving at the answer. Provide the completed output in [ANSWER] and [/ANSWER] tags, following the example.
+[PYTHON]
+from inspect import cleandoc
+import re
+from email.parser import HeaderParser
+from email.errors import HeaderParseError
+def parse_docstring(docstring):
+    if not docstring:
+        return '', '', {}
+    docstring = cleandoc(docstring)
+    parts = re.split(r'
+{2,}', docstring)
+    title = parts[0]
+    if len(parts) == 1:
+        body = ''
+        metadata = {}
+    else:
+        parser = HeaderParser()
+        try:
+            metadata = parser.parsestr(parts[-1])
+        except HeaderParseError:
+            metadata = {}
+            body = "
+
+".join(parts[1:])
+        else:
+            metadata = dict(metadata.items())
+            if metadata:
+                body = "
+
+".join(parts[1:-1])
+            else:
+                body = "
+
+".join(parts[1:])
+    return title, body, metadata
+[/PYTHON]
+
+What will be the input of `parse_docstring`, given the following output:
+[OUTPUT]
+{"output": ("firstline", "second line", {})}
+[/OUTPUT]
+
+[INPUT]
+{"self":{}, "args":{"docstring":""}, "kwargs":{}}
+[/INPUT]
+
+[THOUGHT]
+From `title = parts[0] = "firstline" ` we can know that the first part from splitting the cleaned docstring must have been "firstline"
+From `body = "second line"` we can know that there must have been at least one more part after the first, and it must not have been parsed as valid metadata.
+From `metadata = {}` we can know that either there was no metadata section, or an attempt to parse metadata failed (raised HeaderParseError).
+From the above, we can reconstruct: `parts = ['firstline', 'secondline']`. 
+This means the cleaned docstring must have looked like: `firstline
+
+second line`. This would split into two parts when re.split(r'
+{2,}', ...) is applied.
+[/THOUGHT]
+
+[ANSWER]
+{"self":{}, "args":{"docstring":"firstline
+
+second line"}, "kwargs":{}}
+[/ANSWER]
+
+[PYTHON]
+import functools
+import os
+import pkgutil
+import sys
+from argparse import (
+    _AppendConstAction, _CountAction, _StoreConstAction, _SubParsersAction,
+)
+from collections import defaultdict
+from difflib import get_close_matches
+from importlib import import_module
+import django
+from django.apps import apps
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
+from django.core.management.base import (
+    BaseCommand, CommandError, CommandParser, handle_default_options,
+)
+from django.core.management.color import color_style
+from django.utils import autoreload
+
+def find_commands(management_dir):
+    command_dir = os.path.join(management_dir, 'commands')
+    return [name for _, name, is_pkg in pkgutil.iter_modules([command_dir])
+            if not is_pkg and not name.startswith('_')]
+
+def load_command_class(app_name, name):
+    module = import_module('%s.management.commands.%s' % (app_name, name))
+    return module.Command()
+    
+def get_commands():
+    commands = {name: 'django.core' for name in find_commands(__path__[0])}
+
+    if not settings.configured:
+        return commands
+
+    for app_config in reversed(list(apps.get_app_configs())):
+        path = os.path.join(app_config.path, 'management')
+        commands.update({name: app_config.name for name in find_commands(path)})
+
+    return commands
+
+def call_command(command_name, *args, **options):
+    if isinstance(command_name, BaseCommand):
+        command = command_name
+        command_name = command.__class__.__module__.split('.')[-1]
+    else:
+        try:
+            app_name = get_commands()[command_name]
+        except KeyError:
+            raise CommandError("Unknown command: %r" % command_name)
+
+        if isinstance(app_name, BaseCommand):
+            command = app_name
+        else:
+            command = load_command_class(app_name, command_name)
+
+    parser = command.create_parser('', command_name)
+    opt_mapping = {
+        min(s_opt.option_strings).lstrip('-').replace('-', '_'): s_opt.dest
+        for s_opt in parser._actions if s_opt.option_strings
+    }
+    arg_options = {opt_mapping.get(key, key): value for key, value in options.items()}
+    parse_args = []
+    for arg in args:
+        if isinstance(arg, (list, tuple)):
+            parse_args += map(str, arg)
+        else:
+            parse_args.append(str(arg))
+
+    def get_actions(parser):
+        for opt in parser._actions:
+            if isinstance(opt, _SubParsersAction):
+                for sub_opt in opt.choices.values():
+                    yield from get_actions(sub_opt)
+            else:
+                yield opt
+
+    parser_actions = list(get_actions(parser))
+    mutually_exclusive_required_options = {
+        opt
+        for group in parser._mutually_exclusive_groups
+        for opt in group._group_actions if group.required
+    }
+    for opt in parser_actions:
+        if (
+            opt.dest in options and
+            (opt.required or opt in mutually_exclusive_required_options)
+        ):
+            parse_args.append(min(opt.option_strings))
+            if isinstance(opt, (_AppendConstAction, _CountAction, _StoreConstAction)):
+                continue
+            value = arg_options[opt.dest]
+            if isinstance(value, (list, tuple)):
+                parse_args += map(str, value)
+            else:
+                parse_args.append(str(value))
+    defaults = parser.parse_args(args=parse_args)
+    defaults = dict(defaults._get_kwargs(), **arg_options)
+    stealth_options = set(command.base_stealth_options + command.stealth_options)
+    dest_parameters = {action.dest for action in parser_actions}
+    valid_options = (dest_parameters | stealth_options).union(opt_mapping)
+    unknown_options = set(options) - valid_options
+    if unknown_options:
+        raise TypeError(
+            "Unknown option(s) for %s command: %s. "
+            "Valid options are: %s." % (
+                command_name,
+                ', '.join(sorted(unknown_options)),
+                ', '.join(sorted(valid_options)),
+            )
+        )
+    args = defaults.pop('args', ())
+    if 'skip_checks' not in options:
+        defaults['skip_checks'] = True
+
+    return command.execute(*args, **defaults)
+
+[/PYTHON]
+Functions called during the execution:
+[PYTHON]
+.django.conf.__init__.LazySettings.configured
+
+
+[/PYTHON]
+What will be the input of `call_command`, given the following output:
+[OUTPUT]
+{"output": "BEGIN;\nHello!\nCOMMIT;"}
+[/OUTPUT]
+[INPUT]
+{"self": {}, "args": {"command_name": ""}, "kwargs": {"stdout": {}, "no_color": ""}}
+[/INPUT]
+[THOUGHT]
+        
+
+[THOUGHT]
+We are told that the output of `call_command` is "BEGIN;\nHello!\nCOMMIT;". To reconstruct the input, let's reason through the function and the context.
+
+1. The function `call_command` is a Django management utility for running management commands programmatically.
+2. The output "BEGIN;\nHello!\nCOMMIT;" looks like something a custom management command might print, possibly one that wraps its output in a transaction (hence BEGIN/COMMIT).
+3. The input provided is:
+   ```
+   {"self": {}, "args": {"command_name": ""}, "kwargs": {"stdout": {}, "no_color": ""}}
+   ```
+   - `command_name` is an empty string.
+   - `stdout` is an empty dict (likely a placeholder for a file-like object).
+   - `no_color` is an empty string (possibly a flag).
+
+4. In Django, `call_command` expects the first argument to be the name of the management command as a string, e.g., "migrate", "makemigrations", or a custom command.
+5. The output "BEGIN;\nHello!\nCOMMIT;" is not standard for any built-in Django command, so it must be from a custom command, possibly named "hello" or similar.
+6. The input as given is not valid, because `command_name` is an empty string. For the function to return the given output, the `command_name` must be the name of the command that produces that output.
+
+Therefore, the correct input should be:
+- `command_name` set to the name of the command that prints "BEGIN;\nHello!\nCOMMIT;". Let's assume the command is called "hello".
+- The other kwargs (`stdout`, `no_color`) can remain as placeholders.
+
+So, the completed input should be:
+```
+{"self": {}, "args": {"command_name": "hello"}, "kwargs": {"stdout": {}, "no_color": ""}}
+```
+[/THOUGHT]
+
+[ANSWER]
+{"self": {}, "args": {"command_name": "hello"}, "kwargs": {"stdout": {}, "no_color": ""}}
+[/ANSWER]

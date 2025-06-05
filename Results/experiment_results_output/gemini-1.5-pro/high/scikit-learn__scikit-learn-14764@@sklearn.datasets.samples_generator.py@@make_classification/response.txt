@@ -1,0 +1,107 @@
+```python
+import numpy as np
+import numbers
+from ..utils.random import sample_without_replacement
+
+def check_random_state(seed):
+    if seed is None or seed is np.random:
+        return np.random.mtrand._rand
+    if isinstance(seed, (numbers.Integral, np.integer)):
+        return np.random.RandomState(seed)
+    if isinstance(seed, np.random.RandomState):
+        return seed
+    raise ValueError('%r cannot be used to seed a numpy.random.RandomState'
+                     ' instance' % seed)
+
+def _generate_hypercube(samples, dimensions, rng):
+    """Returns distinct binary samples of length dimensions
+    """
+    if dimensions > 30:
+        return np.hstack([rng.randint(2, size=(samples, dimensions - 30)),
+                          _generate_hypercube(samples, 30, rng)])
+    out = sample_without_replacement(2 ** dimensions, samples,
+                                     random_state=rng).astype(dtype='>u4',
+                                                              copy=False)
+    out = np.unpackbits(out.view('>u1')).reshape((-1, 32))[:, -dimensions:]
+    return out
+
+def make_classification(n_samples=100, n_features=20, n_informative=2,
+                        n_redundant=2, n_repeated=0, n_classes=2,
+                        n_clusters_per_class=2, weights=None, flip_y=0.01,
+                        class_sep=1.0, hypercube=True, shift=0.0, scale=1.0,
+                        shuffle=True, random_state=None):
+    generator = check_random_state(random_state)
+
+    weights = [1.0 / n_classes] * n_classes
+
+    n_useless = n_features - n_informative - n_redundant - n_repeated
+    n_clusters = n_classes * n_clusters_per_class
+
+    n_samples_per_cluster = [
+        int(n_samples * weights[k % n_classes] / n_clusters_per_class)
+        for k in range(n_clusters)]
+
+    for i in range(n_samples - sum(n_samples_per_cluster)):
+        n_samples_per_cluster[i % n_clusters] += 1
+
+    X = np.zeros((n_samples, n_features))
+    y = np.zeros(n_samples, dtype=np.int)
+
+    centroids = _generate_hypercube(n_clusters, n_informative,
+                                    generator).astype(float, copy=False)
+    centroids *= 2 * class_sep
+    centroids -= class_sep
+    if not hypercube:
+        centroids *= generator.rand(n_clusters, 1)
+        centroids *= generator.rand(1, n_informative)
+
+    X[:, :n_informative] = generator.randn(n_samples, n_informative)
+
+    stop = 0
+    for k, centroid in enumerate(centroids):
+        start, stop = stop, stop + n_samples_per_cluster[k]
+        y[start:stop] = k % n_classes
+        X_k = X[start:stop, :n_informative]
+
+        A = 2 * generator.rand(n_informative, n_informative) - 1
+        X_k[...] = np.dot(X_k, A)
+
+        X_k += centroid
+
+    if n_redundant > 0:
+        B = 2 * generator.rand(n_informative, n_redundant) - 1
+        X[:, n_informative:n_informative + n_redundant] = \
+            np.dot(X[:, :n_informative], B)
+
+    if n_repeated > 0:
+        n = n_informative + n_redundant
+        indices = ((n - 1) * generator.rand(n_repeated) + 0.5).astype(np.intp)
+        X[:, n:n + n_repeated] = X[:, indices]
+
+    if n_useless > 0:
+        X[:, -n_useless:] = generator.randn(n_samples, n_useless)
+
+    if flip_y >= 0.0:
+        flip_mask = generator.rand(n_samples) < flip_y
+        y[flip_mask] = generator.randint(n_classes, size=flip_mask.sum())
+
+    if shift is None:
+        shift = (2 * generator.rand(n_features) - 1) * class_sep
+    X += shift
+
+    if scale is None:
+        scale = 1 + 100 * generator.rand(n_features)
+    X *= scale
+
+    if shuffle:
+        X, y = util_shuffle(X, y, random_state=generator)
+        indices = np.arange(n_features)
+        generator.shuffle(indices)
+        X[:, :] = X[:, indices]
+
+    return X, y
+```
+
+```json
+{"output": "(array([[-1.04198121,  0.28775515,  0.07777699, ...,  0.77859577, -0.17405777,  0.21298135],\n       [-0.0896951 , -0.20486379,  0.27053931, ..., -0.0015046 , -0.00235791,  0.00110562],\n       [-0.23375494,  0.01475777,  0.02599433, ...,  0.0027953 , -0.00018761,  0.00052872],\n       ...,\n       [-0.12970574,  0.01771708,  0.01423974, ...,  0.00159844, -0.00010604,  0.00030322],\n       [-0.04779871, -0.0011885 ,  0.00044568, ...,  0.00005007, -0.00000332,  0.0000095 ],\n       [-0.00813724, -0.00020129,  0.00007548, ...,  0.00000848, -0.00000056,  0.00000161]]),\n array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,\n       1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,\n       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,\n       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2,\n       2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,\n       2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,\n       2, 2]))"}
+```

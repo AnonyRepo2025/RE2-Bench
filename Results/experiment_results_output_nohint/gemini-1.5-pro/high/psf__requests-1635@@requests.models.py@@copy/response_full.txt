@@ -1,0 +1,276 @@
+
+You are given a Python function and an input to the function. Execute the program step by step and print your reasoning process before arriving at an answer, complete the output of the function wrapped with [OUTPUT] and [OUTPUT]. Provide the completed output in [ANSWER] and [/ANSWER] tags in the form of a json string, following the example.
+[PYTHON]
+import re
+import string
+
+def normalize_text(text, remove_punctuation=True):
+    text = text.lower().strip()
+    text = re.sub(r'\s+', ' ', text)
+    if remove_punctuation:
+        text = text.translate(str.maketrans('', '', string.punctuation))
+    return text
+[/PYTHON]
+
+What will be the output of `normalize_text`, given the following input:
+[INPUT]
+```{"args": { "text":"  Hello, World!  This is   a test...
+"}}```
+[/INPUT]
+
+[THOUGHT]
+Let's execute the code step by step.
+1. Since `remove_punctuation=True` by default, we proceed with that.
+2. `.lower()` converts all characters to lowercase. `.strip()` removes leading and trailing whitespace (including the 
+ newline at the end). So the input `text` becomes "hello, world!  this is   a test..."
+3. `text = re.sub(r'\s+', ' ', text)`  replaces any sequence of whitespace characters (spaces, tabs, newlines) with a single space. The `text` will be transformed into: "hello, world! this is a test...".
+4. Since `remove_punctuation` is True, the code inside the if branch removes all characters found in string.punctuation, which includes: "!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~". It removes the comma, exclamation mark, and periods, resulting in: "hello world this is a test".
+5. The return value will be "hello world this is a test".
+[/THOUGHT]
+
+[ANSWER]
+{"output": "hello world this is a test."}
+[/ANSWER]
+
+[PYTHON]
+import collections
+import logging
+import datetime
+from io import BytesIO, UnsupportedOperation
+from .hooks import default_hooks
+from .structures import CaseInsensitiveDict
+from .auth import HTTPBasicAuth
+from .cookies import cookiejar_from_dict, get_cookie_header
+from .packages.urllib3.filepost import encode_multipart_formdata
+from .packages.urllib3.util import parse_url
+from .exceptions import (
+    HTTPError, RequestException, MissingSchema, InvalidURL,
+    ChunkedEncodingError)
+from .utils import (
+    guess_filename, get_auth_from_url, requote_uri,
+    stream_decode_response_unicode, to_key_val_list, parse_header_links,
+    iter_slices, guess_json_utf, super_len, to_native_string)
+from .compat import (
+    cookielib, urlunparse, urlsplit, urlencode, str, bytes, StringIO,
+    is_py2, chardet, json, builtin_str, basestring, IncompleteRead)
+
+CONTENT_CHUNK_SIZE = 10 * 1024
+ITER_CHUNK_SIZE = 512
+log = logging.getLogger(__name__)
+
+class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+    def __init__(self):
+        #: HTTP verb to send to the server.
+        self.method = None
+        #: HTTP URL to send the request to.
+        self.url = None
+        #: dictionary of HTTP headers.
+        self.headers = None
+        #: request body to send to the server.
+        self.body = None
+        #: dictionary of callback hooks, for internal usage.
+        self.hooks = default_hooks()
+
+    def prepare(self, method=None, url=None, headers=None, files=None,
+                data=None, params=None, auth=None, cookies=None, hooks=None):
+
+        self.prepare_method(method)
+        self.prepare_url(url, params)
+        self.prepare_headers(headers)
+        self.prepare_cookies(cookies)
+        self.prepare_body(data, files)
+        self.prepare_auth(auth, url)
+        self.prepare_hooks(hooks)
+
+    def __repr__(self):
+        return '<PreparedRequest [%s]>' % (self.method)
+
+    def copy(self):
+        p = PreparedRequest()
+        p.method = self.method
+        p.url = self.url
+        p.headers = self.headers.copy()
+        p.body = self.body
+        p.hooks = self.hooks
+        return p
+
+    def prepare_method(self, method):
+        self.method = method
+        if self.method is not None:
+            self.method = self.method.upper()
+
+    def prepare_url(self, url, params):
+        try:
+            url = unicode(url)
+        except NameError:
+            url = str(url)
+        except UnicodeDecodeError:
+            pass
+
+        scheme, auth, host, port, path, query, fragment = parse_url(url)
+
+        if not scheme:
+            raise MissingSchema("Invalid URL %r: No schema supplied" % url)
+
+        if not host:
+            raise InvalidURL("Invalid URL %r: No host supplied" % url)
+
+        try:
+            host = host.encode('idna').decode('utf-8')
+        except UnicodeError:
+            raise InvalidURL('URL has an invalid label.')
+
+        netloc = auth or ''
+        if netloc:
+            netloc += '@'
+        netloc += host
+        if port:
+            netloc += ':' + str(port)
+
+        if not path:
+            path = '/'
+
+        if is_py2:
+            if isinstance(scheme, str):
+                scheme = scheme.encode('utf-8')
+            if isinstance(netloc, str):
+                netloc = netloc.encode('utf-8')
+            if isinstance(path, str):
+                path = path.encode('utf-8')
+            if isinstance(query, str):
+                query = query.encode('utf-8')
+            if isinstance(fragment, str):
+                fragment = fragment.encode('utf-8')
+
+        enc_params = self._encode_params(params)
+        if enc_params:
+            if query:
+                query = '%s&%s' % (query, enc_params)
+            else:
+                query = enc_params
+
+        url = requote_uri(urlunparse([scheme, netloc, path, None, query, fragment]))
+        self.url = url
+
+    def prepare_headers(self, headers):
+
+        if headers:
+            self.headers = CaseInsensitiveDict((to_native_string(name), value) for name, value in headers.items())
+        else:
+            self.headers = CaseInsensitiveDict()
+
+    def prepare_body(self, data, files):
+        body = None
+        content_type = None
+        length = None
+
+        is_stream = all([
+            hasattr(data, '__iter__'),
+            not isinstance(data, basestring),
+            not isinstance(data, list),
+            not isinstance(data, dict)
+        ])
+
+        try:
+            length = super_len(data)
+        except (TypeError, AttributeError, UnsupportedOperation):
+            length = None
+
+        if is_stream:
+            body = data
+
+            if files:
+                raise NotImplementedError('Streamed bodies and files are mutually exclusive.')
+
+            if length is not None:
+                self.headers['Content-Length'] = str(length)
+            else:
+                self.headers['Transfer-Encoding'] = 'chunked'
+        else:
+            if files:
+                (body, content_type) = self._encode_files(files, data)
+            else:
+                if data:
+                    body = self._encode_params(data)
+                    if isinstance(data, str) or isinstance(data, builtin_str) or hasattr(data, 'read'):
+                        content_type = None
+                    else:
+                        content_type = 'application/x-www-form-urlencoded'
+
+            self.prepare_content_length(body)
+
+            if (content_type) and (not 'content-type' in self.headers):
+                self.headers['Content-Type'] = content_type
+
+        self.body = body
+
+    def prepare_content_length(self, body):
+        if hasattr(body, 'seek') and hasattr(body, 'tell'):
+            body.seek(0, 2)
+            self.headers['Content-Length'] = str(body.tell())
+            body.seek(0, 0)
+        elif body is not None:
+            l = super_len(body)
+            if l:
+                self.headers['Content-Length'] = str(l)
+        elif self.method not in ('GET', 'HEAD'):
+            self.headers['Content-Length'] = '0'
+
+    def prepare_auth(self, auth, url=''):
+        if auth is None:
+            url_auth = get_auth_from_url(self.url)
+            auth = url_auth if any(url_auth) else None
+
+        if auth:
+            if isinstance(auth, tuple) and len(auth) == 2:
+                auth = HTTPBasicAuth(*auth)
+
+            r = auth(self)
+
+            self.__dict__.update(r.__dict__)
+
+            self.prepare_content_length(self.body)
+
+    def prepare_cookies(self, cookies):
+        if isinstance(cookies, cookielib.CookieJar):
+            cookies = cookies
+        else:
+            cookies = cookiejar_from_dict(cookies)
+
+        if 'cookie' not in self.headers:
+            cookie_header = get_cookie_header(cookies, self)
+            if cookie_header is not None:
+                self.headers['Cookie'] = cookie_header
+
+    def prepare_hooks(self, hooks):
+        for event in hooks:
+            self.register_hook(event, hooks[event])
+
+[/PYTHON]
+Functions called during the execution:
+What will be the output of `copy`, given the following input:
+[INPUT]
+```{"self": {"method": "GET", "url": "http://httpbin.org/digest-auth/auth/user/pass", "headers": {"_store": {"user-agent": ["User-Agent", "python-requests/2.0.0 CPython/3.9.21 Linux/6.8.0-57-generic"], "accept-encoding": ["Accept-Encoding", "gzip, deflate, compress"], "accept": ["Accept", "*/*"]}}, "body": null, "hooks": {"response": null}}, "args": {}, "kwargs": {}}```
+[/INPUT]
+[THOUGHT]
+        
+
+[THOUGHT]
+Let's trace the execution of the `copy` method given the input `self`.
+
+1. **Initialization:** A new `PreparedRequest` object `p` is created.
+
+2. **Copying Attributes:**
+   - `p.method = self.method`: `p.method` becomes "GET".
+   - `p.url = self.url`: `p.url` becomes "http://httpbin.org/digest-auth/auth/user/pass".
+   - `p.headers = self.headers.copy()`: `p.headers` becomes a copy of `self.headers`.  Importantly, this creates a *new* `CaseInsensitiveDict` object, so modifications to `p.headers` won't affect `self.headers`. The content of the copied headers will be the same: `{"_store": {"user-agent": ["User-Agent", "python-requests/2.0.0 CPython/3.9.21 Linux/6.8.0-57-generic"], "accept-encoding": ["Accept-Encoding", "gzip, deflate, compress"], "accept": ["Accept", "*/*"]}}`.
+   - `p.body = self.body`: `p.body` becomes `None`.
+   - `p.hooks = self.hooks`: `p.hooks` becomes the same dictionary as `self.hooks`, which is `{"response": null}`.  Note that this is a *shallow* copy. If the hooks dictionary contained mutable objects (like lists), modifying those objects in `p.hooks` would also modify them in `self.hooks`.
+
+3. **Return:** The function returns the newly created `PreparedRequest` object `p`.
+
+[/THOUGHT]
+
+[ANSWER]
+{"output": {"method": "GET", "url": "http://httpbin.org/digest-auth/auth/user/pass", "headers": {"_store": {"user-agent": ["User-Agent", "python-requests/2.0.0 CPython/3.9.21 Linux/6.8.0-57-generic"], "accept-encoding": ["Accept-Encoding", "gzip, deflate, compress"], "accept": ["Accept", "*/*"]}}, "body": null, "hooks": {"response": null}}}
+[/ANSWER]

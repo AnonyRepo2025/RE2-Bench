@@ -1,0 +1,293 @@
+You are an AI programming assistant, utilizing the DeepSeek Coder model, developed by DeepSeek Company, and you only answer questions related to computer science. For politically sensitive questions, security and privacy issues, and other non-computer science questions, you will refuse to answer.
+### Instruction:
+
+You are given a Python function and an output of the function. Complete the input of the function wrapped with [INPUT] and [INPUT]. Print your reasoning process before arriving at the answer. Provide the completed output in [ANSWER] and [/ANSWER] tags, following the example.
+[PYTHON]
+from inspect import cleandoc
+import re
+from email.parser import HeaderParser
+from email.errors import HeaderParseError
+def parse_docstring(docstring):
+    if not docstring:
+        return '', '', {}
+    docstring = cleandoc(docstring)
+    parts = re.split(r'
+{2,}', docstring)
+    title = parts[0]
+    if len(parts) == 1:
+        body = ''
+        metadata = {}
+    else:
+        parser = HeaderParser()
+        try:
+            metadata = parser.parsestr(parts[-1])
+        except HeaderParseError:
+            metadata = {}
+            body = "
+
+".join(parts[1:])
+        else:
+            metadata = dict(metadata.items())
+            if metadata:
+                body = "
+
+".join(parts[1:-1])
+            else:
+                body = "
+
+".join(parts[1:])
+    return title, body, metadata
+[/PYTHON]
+
+What will be the input of `parse_docstring`, given the following output:
+[OUTPUT]
+{"output": ("firstline", "second line", {})}
+[/OUTPUT]
+
+[INPUT]
+{"self":{}, "args":{"docstring":""}, "kwargs":{}}
+[/INPUT]
+
+[THOUGHT]
+From `title = parts[0] = "firstline" ` we can know that the first part from splitting the cleaned docstring must have been "firstline"
+From `body = "second line"` we can know that there must have been at least one more part after the first, and it must not have been parsed as valid metadata.
+From `metadata = {}` we can know that either there was no metadata section, or an attempt to parse metadata failed (raised HeaderParseError).
+From the above, we can reconstruct: `parts = ['firstline', 'secondline']`. 
+This means the cleaned docstring must have looked like: `firstline
+
+second line`. This would split into two parts when re.split(r'
+{2,}', ...) is applied.
+[/THOUGHT]
+
+[ANSWER]
+{"self":{}, "args":{"docstring":"firstline
+
+second line"}, "kwargs":{}}
+[/ANSWER]
+
+[PYTHON]
+import logging
+import re
+import string
+from collections import defaultdict
+from urllib.parse import urlparse
+from django.conf import settings
+from django.core.exceptions import DisallowedHost, ImproperlyConfigured
+from django.urls import get_callable
+from django.utils.cache import patch_vary_headers
+from django.utils.crypto import constant_time_compare, get_random_string
+from django.utils.deprecation import MiddlewareMixin
+from django.utils.functional import cached_property
+from django.utils.http import is_same_domain
+from django.utils.log import log_response
+
+logger = logging.getLogger('django.security.csrf')
+REASON_BAD_ORIGIN = "Origin checking failed - %s does not match any trusted origins."
+REASON_NO_REFERER = "Referer checking failed - no Referer."
+REASON_BAD_REFERER = "Referer checking failed - %s does not match any trusted origins."
+REASON_NO_CSRF_COOKIE = "CSRF cookie not set."
+REASON_BAD_TOKEN = "CSRF token missing or incorrect."
+REASON_MALFORMED_REFERER = "Referer checking failed - Referer is malformed."
+REASON_INSECURE_REFERER = "Referer checking failed - Referer is insecure while host is secure."
+CSRF_SECRET_LENGTH = 32
+CSRF_TOKEN_LENGTH = 2 * CSRF_SECRET_LENGTH
+CSRF_ALLOWED_CHARS = string.ascii_letters + string.digits
+CSRF_SESSION_KEY = '_csrftoken'
+
+class CsrfViewMiddleware(MiddlewareMixin):
+    @cached_property
+    def csrf_trusted_origins_hosts(self):
+        return [
+            urlparse(origin).netloc.lstrip('*')
+            for origin in settings.CSRF_TRUSTED_ORIGINS
+        ]
+    def _get_token(self, request):
+        if settings.CSRF_USE_SESSIONS:
+            try:
+                return request.session.get(CSRF_SESSION_KEY)
+            except AttributeError:
+                raise ImproperlyConfigured(
+                    'CSRF_USE_SESSIONS is enabled, but request.session is not '
+                    'set. SessionMiddleware must appear before CsrfViewMiddleware '
+                    'in MIDDLEWARE.'
+                )
+        else:
+            try:
+                cookie_token = request.COOKIES[settings.CSRF_COOKIE_NAME]
+            except KeyError:
+                return None
+
+            csrf_token = _sanitize_token(cookie_token)
+            if csrf_token != cookie_token:
+                request.csrf_cookie_needs_reset = True
+            return csrf_token
+    def _origin_verified(self, request):
+        request_origin = request.META['HTTP_ORIGIN']
+        good_origin = '%s://%s' % (
+            'https' if request.is_secure() else 'http',
+            request.get_host(),
+        )
+        if request_origin == good_origin:
+            return True
+        if request_origin in self.allowed_origins_exact:
+            return True
+        try:
+            parsed_origin = urlparse(request_origin)
+        except ValueError:
+            return False
+        request_scheme = parsed_origin.scheme
+        request_netloc = parsed_origin.netloc
+        return any(
+            is_same_domain(request_netloc, host)
+            for host in self.allowed_origin_subdomains.get(request_scheme, ())
+        )
+    def process_view(self, request, callback, callback_args, callback_kwargs):
+        if getattr(request, 'csrf_processing_done', False):
+            return None
+
+        if getattr(callback, 'csrf_exempt', False):
+            return None
+
+        if request.method not in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+            if getattr(request, '_dont_enforce_csrf_checks', False):
+                return self._accept(request)
+
+            if 'HTTP_ORIGIN' in request.META:
+                if not self._origin_verified(request):
+                    return self._reject(request, REASON_BAD_ORIGIN % request.META['HTTP_ORIGIN'])
+            elif request.is_secure():
+                referer = request.META.get('HTTP_REFERER')
+                if referer is None:
+                    return self._reject(request, REASON_NO_REFERER)
+
+                try:
+                    referer = urlparse(referer)
+                except ValueError:
+                    return self._reject(request, REASON_MALFORMED_REFERER)
+
+                if '' in (referer.scheme, referer.netloc):
+                    return self._reject(request, REASON_MALFORMED_REFERER)
+
+                if referer.scheme != 'https':
+                    return self._reject(request, REASON_INSECURE_REFERER)
+
+                good_referer = (
+                    settings.SESSION_COOKIE_DOMAIN
+                    if settings.CSRF_USE_SESSIONS
+                    else settings.CSRF_COOKIE_DOMAIN
+                )
+                if good_referer is not None:
+                    server_port = request.get_port()
+                    if server_port not in ('443', '80'):
+                        good_referer = '%s:%s' % (good_referer, server_port)
+                else:
+                    try:
+                        good_referer = request.get_host()
+                    except DisallowedHost:
+                        pass
+
+                good_hosts = list(self.csrf_trusted_origins_hosts)
+                if good_referer is not None:
+                    good_hosts.append(good_referer)
+
+                if not any(is_same_domain(referer.netloc, host) for host in good_hosts):
+                    reason = REASON_BAD_REFERER % referer.geturl()
+                    return self._reject(request, reason)
+
+            csrf_token = self._get_token(request)
+            if csrf_token is None:
+                return self._reject(request, REASON_NO_CSRF_COOKIE)
+
+            request_csrf_token = ""
+            if request.method == "POST":
+                try:
+                    request_csrf_token = request.POST.get('csrfmiddlewaretoken', '')
+                except OSError:
+                    pass
+
+            if request_csrf_token == "":
+                request_csrf_token = request.META.get(settings.CSRF_HEADER_NAME, '')
+
+            request_csrf_token = _sanitize_token(request_csrf_token)
+            if not _compare_masked_tokens(request_csrf_token, csrf_token):
+                return self._reject(request, REASON_BAD_TOKEN)
+
+        return self._accept(request)
+[/PYTHON]
+Functions called during the execution:
+[PYTHON]
+## django.http.request.HttpRequest.get_host
+def get_host(self):
+    host = self._get_raw_host()
+
+    # Allow variants of localhost if ALLOWED_HOSTS is empty and DEBUG=True.
+    allowed_hosts = settings.ALLOWED_HOSTS
+    if settings.DEBUG and not allowed_hosts:
+        allowed_hosts = ['.localhost', '127.0.0.1', '[::1]']
+
+    domain, port = split_domain_port(host)
+    if domain and validate_host(domain, allowed_hosts):
+        return host
+    else:
+        msg = "Invalid HTTP_HOST header: %r." % host
+        if domain:
+            msg += " You may need to add %r to ALLOWED_HOSTS." % domain
+        else:
+            msg += " The domain name provided is not valid according to RFC 1034/1035."
+        raise DisallowedHost(msg)
+
+## django.http.request.HttpRequest._get_raw_host
+def _get_raw_host(self):
+    if settings.USE_X_FORWARDED_HOST and (
+            'HTTP_X_FORWARDED_HOST' in self.META):
+        host = self.META['HTTP_X_FORWARDED_HOST']
+    elif 'HTTP_HOST' in self.META:
+        host = self.META['HTTP_HOST']
+    else:
+        # Reconstruct the host using the algorithm from PEP 333.
+        host = self.META['SERVER_NAME']
+        server_port = self.get_port()
+        if server_port != ('443' if self.is_secure() else '80'):
+            host = '%s:%s' % (host, server_port)
+    return host
+
+## django.http.request.split_domain_port
+def split_domain_port(host):
+    host = host.lower()
+
+    if not host_validation_re.match(host):
+        return '', ''
+
+    if host[-1] == ']':
+        # It's an IPv6 address without a port.
+        return host, ''
+    bits = host.rsplit(':', 1)
+    domain, port = bits if len(bits) == 2 else (bits[0], '')
+    # Remove a trailing dot (if present) from the domain.
+    domain = domain[:-1] if domain.endswith('.') else domain
+    return domain, port
+[/PYTHON]
+What will be the input of `process_view`, given the following output:
+[OUTPUT]
+{"output": {"headers": {"_store": {"content-type": ["Content-Type", "text/html"]}}, "_charset": null, "_resource_closers": null, "_handler_class": null, "cookies": {}, "closed": false, "_reason_phrase": null, "_container": null, "_has_been_logged": true}}
+[/OUTPUT]
+[INPUT]
+{"self": {"get_response": {}}, "args": {"request": {"GET": {"_encoding": "", "_mutable": ""}, "_post": {"_encoding": "", "_mutable": ""}, "COOKIES": {"csrftoken": ""}, "META": {"CSRF_COOKIE": ""}, "FILES": {}, "path": "", "path_info": "", "method": "", "resolver_match": null, "content_type": null, "content_params": null, "raise_error": true, "session": {"_csrftoken": ""}}, "callback": {}, "callback_args": [], "callback_kwargs": {}}, "kwargs": {}}
+[/INPUT]
+[THOUGHT]
+        
+### Response:
+
+
+The `process_view` function is a middleware function that is called before the view (and later middleware) is called. It checks if the request is a non-safe method (POST, PUT, DELETE, etc.) and if it is, it checks if the CSRF token is valid.
+
+From the output, we can see that the request method is not a safe method (GET, HEAD, OPTIONS, TRACE), and the CSRF token is not valid. This means that the request is not valid and should be rejected.
+
+The CSRF token is retrieved from the request's cookies (`request.COOKIES['csrftoken']`), and it is compared to the CSRF token in the session (`request.session['_csrftoken']`). If they do not match, the request is rejected.
+
+The input for `process_view` should be a request that is not a safe method and has an invalid CSRF token. The request should also have a `callback` that is not marked as `csrf_exempt`.
+
+Here is the input:
+[INPUT]
+{"self": {"get_response": {}}, "args": {"request": {"GET": {"_encoding": "", "_mutable": ""}, "_post": {"_encoding": "", "_mutable": ""}, "COOKIES": {"csrftoken": "invalid"}, "META": {"CSRF_COOKIE": ""}, "FILES": {}, "path": "", "path_info": "", "method": "POST", "resolver_match": null, "content_type": null, "content_params": null, "raise_error": true, "session": {"_csrftoken": "valid"}}, "callback": {}, "callback_args": [], "callback_kwargs": {}}, "kwargs": {}}
+[/INPUT]

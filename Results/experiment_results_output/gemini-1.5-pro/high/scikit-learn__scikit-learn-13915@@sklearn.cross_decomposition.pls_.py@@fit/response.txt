@@ -1,0 +1,362 @@
+```python
+import re
+import string
+import warnings
+from abc import ABCMeta, abstractmethod
+import numpy as np
+from scipy.linalg import pinv2, svd
+from scipy.sparse.linalg import svds
+# from ..base import BaseEstimator, RegressorMixin, TransformerMixin
+# from ..base import MultiOutputMixin
+# from ..utils import check_array, check_consistent_length
+# from ..utils.extmath import svd_flip
+# from ..utils.validation import check_is_fitted, FLOAT_DTYPES
+# from ..exceptions import ConvergenceWarning
+
+__all__ = ['PLSCanonical', 'PLSRegression', 'PLSSVD']
+
+class BaseEstimator:
+    pass
+class RegressorMixin:
+    pass
+class TransformerMixin:
+    pass
+class MultiOutputMixin:
+    pass
+
+def check_array(array, dtype=np.float64, copy=True, ensure_2d=True, ensure_min_samples=1):
+    if copy:
+        array = np.array(array, dtype=dtype, copy=True)
+    else:
+        array = np.asarray(array, dtype=dtype)
+    if ensure_2d and array.ndim == 1:
+        if ensure_min_samples > 1:
+            raise ValueError("Expected 2D array, got 1D array instead:\narray={}.\n"
+                             "Reshape your data either using array.reshape(-1, 1) if "
+                             "your data has a single feature or array.reshape(1, -1) "
+                             "if it contains a single sample.".format(array))
+        array = np.reshape(array, (-1, 1))
+    return array
+
+def check_consistent_length(*arrays):
+    lengths = [_num_samples(X) for X in arrays if X is not None]
+    uniques = np.unique(lengths)
+    if len(uniques) > 1:
+        raise ValueError("Found input variables with inconsistent numbers of"
+                         " samples: %r" % [int(l) for l in lengths])
+
+def _num_samples(x):
+    message = "Expected sequence or array-like, got %s" % type(x)
+    if hasattr(x, 'fit') and callable(x.fit):
+        # Don't get num_samples from an ensembles length!
+        raise TypeError(message)
+
+    if not hasattr(x, '__len__') and not hasattr(x, 'shape'):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError(message)
+
+    if hasattr(x, 'shape') and x.shape is not None:
+        if len(x.shape) == 0:
+            raise TypeError("Singleton array %r cannot be considered"
+                            " a valid collection." % x)
+        # Check that shape is returning an integer or default to len
+        # Dask dataframes may not return numeric shape[0] value
+        if isinstance(x.shape[0], int):
+            return x.shape[0]
+        elif np.isscalar(x.shape[0]):
+            return int(x.shape[0])
+        else:
+            return len(x)
+    else:
+        return len(x)
+
+def svd_flip(u, v, u_based_decision=True):
+    if u_based_decision:
+        # columns of u, rows of v
+        max_abs_cols = np.argmax(np.abs(u), axis=0)
+        signs = np.sign(u[max_abs_cols, range(u.shape[1])])
+        u *= signs
+        v *= signs[:, np.newaxis]
+    else:
+        # rows of v, columns of u
+        max_abs_rows = np.argmax(np.abs(v), axis=1)
+        signs = np.sign(v[range(v.shape[0]), max_abs_rows])
+        u *= signs
+        v *= signs[:, np.newaxis]
+    return u, v
+
+def _center_scale_xy(X, Y, scale=True):
+    """ Center X, Y and scale if the scale parameter==True
+    Returns
+    -------
+        X, Y, x_mean, y_mean, x_std, y_std
+    """
+    x_mean = X.mean(axis=0)
+    X -= x_mean
+    y_mean = Y.mean(axis=0)
+    Y -= y_mean
+    if scale:
+        x_std = X.std(axis=0, ddof=1)
+        x_std[x_std == 0.0] = 1.0
+        X /= x_std
+        y_std = Y.std(axis=0, ddof=1)
+        y_std[y_std == 0.0] = 1.0
+        Y /= y_std
+    else:
+        x_std = np.ones(X.shape[1])
+        y_std = np.ones(Y.shape[1])
+    return X, Y, x_mean, y_mean, x_std, y_std
+
+def _nipals_twoblocks_inner_loop(X, Y, mode="A", max_iter=500, tol=1e-06,
+                                 norm_y_weights=False):
+    """Inner loop of the iterative NIPALS algorithm.
+    Provides an alternative to the svd(X'Y) step in the main loop.
+    It does not matter whether X and Y are centered or not.
+    Parameters
+    ----------
+    X : array-like of shape (n_samples, n_features)
+        Training vectors, where n_samples is the number of samples and
+        n_features is the number of predictors.
+    Y : array-like of shape (n_samples, n_targets)
+        Target vectors, where n_samples is the number of samples and
+        n_targets is the number of response variables.
+    mode : {"A", "B"}, default="A"
+        Mode of the NIPALS algorithm. See notes.
+    max_iter : int, default=500
+        Maximum number of iterations.
+    tol : float, default=1e-06
+        Tolerance for stopping iteration.
+    norm_y_weights : bool, default=False
+        Whether to normalize the y weights to one.
+    Returns
+    -------
+    x_weights : ndarray of shape (n_features,)
+    y_weights : ndarray of shape (n_targets,)
+    n_iter : int
+    """
+    p = X.shape[1]
+    q = Y.shape[1]
+    x_weights = np.ones(p) / np.sqrt(p)
+    y_weights = np.ones(q) / np.sqrt(q)
+    u = np.dot(X, x_weights)
+    n_iter = 0
+    # Inner loop of the NIPALS algorithm
+    for n_iter in range(max_iter):
+        if mode == "B":
+            y_weights = np.dot(Y.T, u)
+            if norm_y_weights:
+                y_weights /= np.sqrt(np.dot(y_weights.T, y_weights))
+            t = np.dot(Y, y_weights)
+            t -= t.mean()
+        else:  # mode A
+            t = u
+        x_weights = np.dot(X.T, t)
+        x_weights /= np.sqrt(np.dot(x_weights.T, x_weights))
+        u_old = u
+        u = np.dot(X, x_weights)
+        if mode == "B":
+            if abs(np.dot(t.T, t) - np.dot(u.T, u)) < tol:
+                break
+        else:
+            if np.linalg.norm(u - u_old) < tol:
+                break
+    if mode == "A" and norm_y_weights:
+        y_weights = np.dot(Y.T, u)
+        y_weights /= np.sqrt(np.dot(y_weights.T, y_weights))
+    if n_iter == max_iter:
+        warnings.warn('Maximum number of iterations reached',
+                      ConvergenceWarning)
+    return x_weights, y_weights, n_iter + 1
+
+def _svd_cross_product(X, Y):
+    C = np.dot(X.T, Y)
+    U, s, V = svd(C, full_matrices=False)
+    return U[:, [0]], V[[0], :].T
+
+
+class _PLS(BaseEstimator, TransformerMixin, RegressorMixin, MultiOutputMixin,
+           metaclass=ABCMeta):
+
+    @abstractmethod
+    def __init__(self, n_components=2, scale=True, deflation_mode="regression",
+                 mode="A", algorithm="nipals", norm_y_weights=False,
+                 max_iter=500, tol=1e-06, copy=True):
+        self.n_components = n_components
+        self.deflation_mode = deflation_mode
+        self.mode = mode
+        self.norm_y_weights = norm_y_weights
+        self.scale = scale
+        self.algorithm = algorithm
+        self.max_iter = max_iter
+        self.tol = tol
+        self.copy = copy
+
+    def fit(self, X, Y):
+        check_consistent_length(X, Y)
+        X = check_array(X, dtype=np.float64, copy=self.copy,
+                        ensure_min_samples=2)
+        Y = check_array(Y, dtype=np.float64, copy=self.copy, ensure_2d=False)
+        if Y.ndim == 1:
+            Y = Y.reshape(-1, 1)
+
+        n = X.shape[0]
+        p = X.shape[1]
+        q = Y.shape[1]
+
+        if self.n_components < 1 or self.n_components > p:
+            raise ValueError('Invalid number of components: %d' %
+                             self.n_components)
+        if self.algorithm not in ("svd", "nipals"):
+            raise ValueError("Got algorithm %s when only 'svd' "
+                             "and 'nipals' are known" % self.algorithm)
+        if self.algorithm == "svd" and self.mode == "B":
+            raise ValueError('Incompatible configuration: mode B is not '
+                             'implemented with svd algorithm')
+        if self.deflation_mode not in ["canonical", "regression"]:
+            raise ValueError('The deflation mode is unknown')
+        X, Y, self.x_mean_, self.y_mean_, self.x_std_, self.y_std_ = (
+            _center_scale_xy(X, Y, self.scale))
+        Xk = X
+        Yk = Y
+        self.x_scores_ = np.zeros((n, self.n_components))
+        self.y_scores_ = np.zeros((n, self.n_components))
+        self.x_weights_ = np.zeros((p, self.n_components))
+        self.y_weights_ = np.zeros((q, self.n_components))
+        self.x_loadings_ = np.zeros((p, self.n_components))
+        self.y_loadings_ = np.zeros((q, self.n_components))
+        self.n_iter_ = []
+
+        Y_eps = np.finfo(Yk.dtype).eps
+        for k in range(self.n_components):
+            if np.all(np.dot(Yk.T, Yk) < np.finfo(np.double).eps):
+                warnings.warn('Y residual constant at iteration %s' % k)
+                break
+
+            if self.algorithm == "nipals":
+                Yk_mask = np.all(np.abs(Yk) < 10 * Y_eps, axis=0)
+                Yk[:, Yk_mask] = 0.0
+
+                x_weights, y_weights, n_iter_ = \
+                    _nipals_twoblocks_inner_loop(
+                        X=Xk, Y=Yk, mode=self.mode, max_iter=self.max_iter,
+                        tol=self.tol, norm_y_weights=self.norm_y_weights)
+                self.n_iter_.append(n_iter_)
+            elif self.algorithm == "svd":
+                x_weights, y_weights = _svd_cross_product(X=Xk, Y=Yk)
+            x_weights, y_weights = svd_flip(x_weights, y_weights.T)
+            y_weights = y_weights.T
+            x_scores = np.dot(Xk, x_weights)
+            if self.norm_y_weights:
+                y_ss = 1
+            else:
+                y_ss = np.dot(y_weights.T, y_weights)
+            y_scores = np.dot(Yk, y_weights) / y_ss
+            if np.dot(x_scores.T, x_scores) < np.finfo(np.double).eps:
+                warnings.warn('X scores are null at iteration %s' % k)
+                break
+            x_loadings = np.dot(Xk.T, x_scores) / np.dot(x_scores.T, x_scores)
+            Xk -= np.dot(x_scores, x_loadings.T)
+            if self.deflation_mode == "canonical":
+                y_loadings = (np.dot(Yk.T, y_scores)
+                              / np.dot(y_scores.T, y_scores))
+                Yk -= np.dot(y_scores, y_loadings.T)
+            if self.deflation_mode == "regression":
+                y_loadings = (np.dot(Yk.T, x_scores)
+                              / np.dot(x_scores.T, x_scores))
+                Yk -= np.dot(x_scores, y_loadings.T)
+            self.x_scores_[:, k] = x_scores.ravel()  # T
+            self.y_scores_[:, k] = y_scores.ravel()  # U
+            self.x_weights_[:, k] = x_weights.ravel()  # W
+            self.y_weights_[:, k] = y_weights.ravel()  # C
+            self.x_loadings_[:, k] = x_loadings.ravel()  # P
+            self.y_loadings_[:, k] = y_loadings.ravel()  # Q
+
+        self.x_rotations_ = np.dot(
+            self.x_weights_,
+            pinv2(np.dot(self.x_loadings_.T, self.x_weights_),
+                  check_finite=False))
+        if Y.shape[1] > 1:
+            self.y_rotations_ = np.dot(
+                self.y_weights_,
+                pinv2(np.dot(self.y_loadings_.T, self.y_weights_),
+                      check_finite=False))
+        else:
+            self.y_rotations_ = np.ones(1)
+
+        if True or self.deflation_mode == "regression":
+            self.coef_ = np.dot(self.x_rotations_, self.y_loadings_.T)
+            self.coef_ = self.coef_ * self.y_std_
+        return self
+
+    def transform(self, X, Y=None, copy=True):
+        pass
+
+X = np.array(eval("[[  5. 162.  60.]\n [  2. 110.  60.]\n [ 12. 101. 101.]\n [ 12. 105.  37.]\n [ 13. 155.  58.]\n [  4. 101.  42.]\n [  8. 101.  38.]\n [  6. 125.  40.]\n [ 15. 200.  40.]\n [ 17. 251. 250.]\n [ 17. 120.  38.]\n [ 13. 210. 115.]\n [ 14. 215. 105.]\n [  1.  50.  50.]\n [  6.  70.  31.]\n [ 12. 210. 120.]\n [  4.  60.  25.]\n [ 11. 230.  80.]\n [ 15. 225.  73.]\n [  2. 110.  43.]]"))
+Y = np.array(eval("[[191.  36.  50.]\n [189.  37.  52.]\n [193.  38.  58.]\n [162.  35.  62.]\n [189.  35.  46.]\n [182.  36.  56.]\n [211.  38.  56.]\n [167.  34.  60.]\n [176.  31.  74.]\n [154.  33.  56.]\n [169.  34.  50.]\n [166.  33.  52.]\n [154.  34.  64.]\n [247.  46.  50.]\n [193.  36.  46.]\n [202.  37.  62.]\n [176.  37.  54.]\n [157.  32.  52.]\n [156.  33.  54.]\n [138.  33.  68.]]"))
+
+pls = _PLS(n_components=3, deflation_mode="canonical", mode="A", norm_y_weights=True, scale=True, algorithm="nipals", max_iter=500, tol=1e-06, copy=True)
+output = pls.fit(X, Y)
+
+print({"output": output.__dict__})
+```
+
+[ANSWER]
+{"output": {"n_components": 3, "deflation_mode": "canonical", "mode": "A", "norm_y_weights": true, "scale": true, "algorithm": "nipals", "max_iter": 500, "tol": 1e-06, "copy": true, "x_mean_": array([ 9.1 ,137.45, 64.25]), "y_mean_": array([180.15,  35.6 ,  55.45]), "x_std_": array([5.11858579, 58.16791332, 36.98511753]), "y_std_": array([24.93181565,  4.43377517,  7.93725393]), "x_scores_": array([[-1.21192054,  0.00737509, -0.20323865],
+       [-1.62899377, -0.4277778 ,  0.01117547],
+       [ 0.01792197,  0.72628271, -0.02872376],
+       [-0.2011779 , -0.60313171, -0.26308371],
+       [-0.03329944,  0.15877744,  0.23944471],
+       [-0.96438869, -0.13927255, -0.01329947],
+       [-0.68131546, -0.24674281, -0.22433371],
+       [-0.55254903, -0.20844273,  0.13519471],
+       [ 0.64668826,  0.03977517,  0.12186971],
+       [ 2.22705449,  1.62318294,  0.02449997],
+       [ 0.14295541, -0.84313996,  0.07784997],
+       [ 0.85472488,  0.53878235, -0.22433371],
+       [ 0.88303219,  0.46378199, -0.08807497],
+       [-1.9714939 , -0.28674332,  0.27819471],
+       [-0.90500097, -0.52813135,  0.05117547],
+       [ 0.97236991,  0.57628243, -0.19001365],
+       [-1.29059504, -0.46527788, -0.06474997],
+       [ 1.2891884 ,  0.2337778 , -0.26308371],
+       [ 1.19985068,  0.07727525, -0.10139997],
+       [-1.58432986, -0.39027772,  0.17394471]]), "y_scores_": array([[-1.1331325 ,  0.02270774, -0.18743231],
+       [-1.10220237, -0.3840349 ,  0.02034498],
+       [-0.98448184,  0.65334241, -0.01436188],
+       [-1.72308496, -0.53034249, -0.23909735],
+       [-1.08673729,  0.13604015,  0.2187624 ],
+       [-1.28778324, -0.11666285, -0.00718094],
+       [-0.65622811, -0.2143601 , -0.19461325],
+       [-1.5137836 , -0.1760374 ,  0.12645393],
+       [-1.382434  , -0.0033251 ,  0.112172  ],
+       [-1.9777357 ,  1.40000966,  0.03570749],
+       [-1.46708474, -0.73067524,  0.06438123],
+       [-1.49801487,  0.46067516, -0.20179419],
+       [-1.62843422,  0.39800781, -0.07864301],
+       [ 0.0356188 , -0.2416676 ,  0.24627829],
+       [-1.04580716, -0.46767514,  0.04288624],
+       [-1.00000001,  0.50800791, -0.17315037],
+       [-1.32871337, -0.40166755, -0.05010075],
+       [-1.68215483,  0.19734255, -0.22481541],
+       [-1.7076199 ,  0.0636752 , -0.08582395],
+       [-1.93680557, -0.33166752,  0.15518459]]), "x_weights_": array([[ 0.57373892, -0.0067779 ,  0.01713271],
+       [ 0.52722204,  0.00100499,  0.00233173],
+       [ 0.63283588,  0.00778289, -0.01946444]]), "y_weights_": array([[ 0.70737806, -0.00823173, -0.00209976],
+       [ 0.09133257,  0.00737509,  0.00077726],
+       [ 0.70173339,  0.00895896,  0.00287699]]), "x_loadings_": array([[0.8727033 , 0.20827788, 0.02569906],
+       [0.78344107, 0.03092499, 0.0034976 ],
+       [0.93985381, 0.23933371, 0.0292 ],
+       [0.8727033 , 0.20827788, 0.02569906],
+       [0.78344107, 0.03092499, 0.0034976 ],
+       [0.93985381, 0.23933371, 0.0292 ]]), "y_loadings_": array([[ 0.85380998,  0.22270774, -0.02099756],
+       [ 0.11135387,  0.02770774,  0.00077726],
+       [ 0.85663516,  0.24570782,  0.00287699]]), "n_iter_": [2, 2, 2], "x_rotations_": array([[ 0.57373892, -0.0067779 ,  0.01713271],
+       [ 0.52722204,  0.00100499,  0.00233173],
+       [ 0.63283588,  0.00778289, -0.01946444]]), "y_rotations_": array([[ 0.99989999, -0.00823173, -0.00209976],
+       [ 0.00823173,  1.        ,  0.00077726],
+       [ 0.00209976, -0.00077726,  1.        ]]), "coef_": array([[ 49.05272204,   1.07180003,   5.04990611],
+       [ 45.13892492,   0.23933371,   4.6862789 ],
+       [ 54.19121711,   1.31113344,   5.73985381]])}}
+[/ANSWER]

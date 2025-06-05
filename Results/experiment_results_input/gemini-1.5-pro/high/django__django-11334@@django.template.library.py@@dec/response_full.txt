@@ -1,0 +1,156 @@
+
+You are given a Python function and an output of the function. Complete the input of the function wrapped with [INPUT] and [INPUT]. Print your reasoning process before arriving at the answer. Provide the completed output in [ANSWER] and [/ANSWER] tags, following the example.
+[PYTHON]
+from inspect import cleandoc
+import re
+from email.parser import HeaderParser
+from email.errors import HeaderParseError
+def parse_docstring(docstring):
+    if not docstring:
+        return '', '', {}
+    docstring = cleandoc(docstring)
+    parts = re.split(r'
+{2,}', docstring)
+    title = parts[0]
+    if len(parts) == 1:
+        body = ''
+        metadata = {}
+    else:
+        parser = HeaderParser()
+        try:
+            metadata = parser.parsestr(parts[-1])
+        except HeaderParseError:
+            metadata = {}
+            body = "
+
+".join(parts[1:])
+        else:
+            metadata = dict(metadata.items())
+            if metadata:
+                body = "
+
+".join(parts[1:-1])
+            else:
+                body = "
+
+".join(parts[1:])
+    return title, body, metadata
+[/PYTHON]
+
+What will be the input of `parse_docstring`, given the following output:
+[OUTPUT]
+{"output": ("firstline", "second line", {})}
+[/OUTPUT]
+
+[INPUT]
+{"self":{}, "args":{"docstring":""}, "kwargs":{}}
+[/INPUT]
+
+[THOUGHT]
+From `title = parts[0] = "firstline" ` we can know that the first part from splitting the cleaned docstring must have been "firstline"
+From `body = "second line"` we can know that there must have been at least one more part after the first, and it must not have been parsed as valid metadata.
+From `metadata = {}` we can know that either there was no metadata section, or an attempt to parse metadata failed (raised HeaderParseError).
+From the above, we can reconstruct: `parts = ['firstline', 'secondline']`. 
+This means the cleaned docstring must have looked like: `firstline
+
+second line`. This would split into two parts when re.split(r'
+{2,}', ...) is applied.
+[/THOUGHT]
+
+[ANSWER]
+{"self":{}, "args":{"docstring":"firstline
+
+second line"}, "kwargs":{}}
+[/ANSWER]
+
+[PYTHON]
+import functools
+from importlib import import_module
+from inspect import getfullargspec, unwrap
+from django.utils.html import conditional_escape
+from django.utils.itercompat import is_iterable
+from .base import Node, Template, token_kwargs
+from .exceptions import TemplateSyntaxError
+
+
+
+class Library:
+    def __init__(self):
+        self.filters = {}
+        self.tags = {}
+
+    def tag(self, name=None, compile_function=None):
+        if name is None and compile_function is None:
+            return self.tag_function
+        elif name is not None and compile_function is None:
+            if callable(name):
+                return self.tag_function(name)
+            else:
+                def dec(func):
+                    return self.tag(name, func)
+                return dec
+        elif name is not None and compile_function is not None:
+            self.tags[name] = compile_function
+            return compile_function
+        else:
+            raise ValueError(
+                "Unsupported arguments to Library.tag: (%r, %r)" %
+                (name, compile_function),
+            )
+
+    def tag_function(self, func):
+        self.tags[getattr(func, "_decorated_function", func).__name__] = func
+        return func
+
+    def filter_function(self, func, **flags):
+        name = getattr(func, "_decorated_function", func).__name__
+        return self.filter(name, func, **flags)
+
+    def simple_tag(self, func=None, takes_context=None, name=None):
+        def dec(func):
+            params, varargs, varkw, defaults, kwonly, kwonly_defaults, _ = getfullargspec(unwrap(func))
+            function_name = (name or getattr(func, '_decorated_function', func).__name__)
+
+            @functools.wraps(func)
+            def compile_func(parser, token):
+                bits = token.split_contents()[1:]
+                target_var = None
+                if len(bits) >= 2 and bits[-2] == 'as':
+                    target_var = bits[-1]
+                    bits = bits[:-2]
+                args, kwargs = parse_bits(
+                    parser, bits, params, varargs, varkw, defaults,
+                    kwonly, kwonly_defaults, takes_context, function_name,
+                )
+                return SimpleNode(func, takes_context, args, kwargs, target_var)
+            self.tag(function_name, compile_func)
+            return func
+
+        if func is None:
+            return dec
+        elif callable(func):
+            return dec(func)
+        else:
+            raise ValueError("Invalid arguments provided to simple_tag")
+
+[/PYTHON]
+Functions called during the execution:
+What will be the input of `dec`, given the following output:
+[OUTPUT]
+{"output": {"__module__": "template_tests.test_library", "__name__": "func", "__qualname__": "SimpleTagRegistrationTests.test_simple_tag_wrapped.\"<locals>\".func", "__doc__": null, "__annotations__": {}, "__wrapped__": {}}}
+[/OUTPUT]
+[INPUT]
+{"self": {}, "args": {"func": {"__module__": "", "__name__": "func", "__qualname__": "", "__doc__": "", "__annotations__": {}, "__wrapped__": {}}}, "kwargs": {}}
+[/INPUT]
+[THOUGHT]
+        
+
+The output shows the `func` object after it has been processed by the `dec` decorator.  Specifically, `functools.wraps(func)` has been applied.  This decorator copies metadata from the original `func` to the `compile_func`, and then `compile_func` is returned and assigned to the original function's name.
+
+The key here is that `functools.wraps` copies the `__module__`, `__name__`, `__qualname__`, `__doc__`, and `__annotations__` attributes from the original function.  The output shows that these attributes have been set to values reflecting the test environment (e.g., `__module__` is "template_tests.test_library").  The `__wrapped__` attribute is also set, pointing back to the original wrapped function.
+
+Therefore, the input `func` must have had empty or `None` values for these attributes before the `wraps` decorator copied the values from the test environment.
+
+[ANSWER]
+{"self": {}, "args": {"func": {"__module__": "", "__name__": "func", "__qualname__": "", "__doc__": None, "__annotations__": {}}}, "kwargs": {}}
+[/ANSWER]

@@ -1,0 +1,217 @@
+
+You are given a Python function and an input to the function. Execute the program step by step and print your reasoning process before arriving at an answer, complete the output of the function wrapped with [OUTPUT] and [OUTPUT]. Provide the completed output in [ANSWER] and [/ANSWER] tags in the form of a json string, following the example.
+[PYTHON]
+import re
+import string
+
+def normalize_text(text, remove_punctuation=True):
+    text = text.lower().strip()
+    text = re.sub(r'\s+', ' ', text)
+    if remove_punctuation:
+        text = text.translate(str.maketrans('', '', string.punctuation))
+    return text
+[/PYTHON]
+
+What will be the output of `normalize_text`, given the following input:
+[INPUT]
+```{"args": { "text":"  Hello, World!  This is   a test...
+"}}```
+[/INPUT]
+
+[THOUGHT]
+Let's execute the code step by step.
+1. Since `remove_punctuation=True` by default, we proceed with that.
+2. `.lower()` converts all characters to lowercase. `.strip()` removes leading and trailing whitespace (including the 
+ newline at the end). So the input `text` becomes "hello, world!  this is   a test..."
+3. `text = re.sub(r'\s+', ' ', text)`  replaces any sequence of whitespace characters (spaces, tabs, newlines) with a single space. The `text` will be transformed into: "hello, world! this is a test...".
+4. Since `remove_punctuation` is True, the code inside the if branch removes all characters found in string.punctuation, which includes: "!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~". It removes the comma, exclamation mark, and periods, resulting in: "hello world this is a test".
+5. The return value will be "hello world this is a test".
+[/THOUGHT]
+
+[ANSWER]
+{"output": "hello world this is a test."}
+[/ANSWER]
+
+[PYTHON]
+import logging
+import re
+import string
+from collections import defaultdict
+from urllib.parse import urlparse
+from django.conf import settings
+from django.core.exceptions import DisallowedHost, ImproperlyConfigured
+from django.urls import get_callable
+from django.utils.cache import patch_vary_headers
+from django.utils.crypto import constant_time_compare, get_random_string
+from django.utils.deprecation import MiddlewareMixin
+from django.utils.functional import cached_property
+from django.utils.http import is_same_domain
+from django.utils.log import log_response
+
+logger = logging.getLogger('django.security.csrf')
+REASON_BAD_ORIGIN = "Origin checking failed - %s does not match any trusted origins."
+REASON_NO_REFERER = "Referer checking failed - no Referer."
+REASON_BAD_REFERER = "Referer checking failed - %s does not match any trusted origins."
+REASON_NO_CSRF_COOKIE = "CSRF cookie not set."
+REASON_BAD_TOKEN = "CSRF token missing or incorrect."
+REASON_MALFORMED_REFERER = "Referer checking failed - Referer is malformed."
+REASON_INSECURE_REFERER = "Referer checking failed - Referer is insecure while host is secure."
+CSRF_SECRET_LENGTH = 32
+CSRF_TOKEN_LENGTH = 2 * CSRF_SECRET_LENGTH
+CSRF_ALLOWED_CHARS = string.ascii_letters + string.digits
+CSRF_SESSION_KEY = '_csrftoken'
+
+class CsrfViewMiddleware(MiddlewareMixin):
+    @cached_property
+    def csrf_trusted_origins_hosts(self):
+        return [
+            urlparse(origin).netloc.lstrip('*')
+            for origin in settings.CSRF_TRUSTED_ORIGINS
+        ]
+    def _get_token(self, request):
+        if settings.CSRF_USE_SESSIONS:
+            try:
+                return request.session.get(CSRF_SESSION_KEY)
+            except AttributeError:
+                raise ImproperlyConfigured(
+                    'CSRF_USE_SESSIONS is enabled, but request.session is not '
+                    'set. SessionMiddleware must appear before CsrfViewMiddleware '
+                    'in MIDDLEWARE.'
+                )
+        else:
+            try:
+                cookie_token = request.COOKIES[settings.CSRF_COOKIE_NAME]
+            except KeyError:
+                return None
+
+            csrf_token = _sanitize_token(cookie_token)
+            if csrf_token != cookie_token:
+                request.csrf_cookie_needs_reset = True
+            return csrf_token
+    def _origin_verified(self, request):
+        request_origin = request.META['HTTP_ORIGIN']
+        good_origin = '%s://%s' % (
+            'https' if request.is_secure() else 'http',
+            request.get_host(),
+        )
+        if request_origin == good_origin:
+            return True
+        if request_origin in self.allowed_origins_exact:
+            return True
+        try:
+            parsed_origin = urlparse(request_origin)
+        except ValueError:
+            return False
+        request_scheme = parsed_origin.scheme
+        request_netloc = parsed_origin.netloc
+        return any(
+            is_same_domain(request_netloc, host)
+            for host in self.allowed_origin_subdomains.get(request_scheme, ())
+        )
+    def process_view(self, request, callback, callback_args, callback_kwargs):
+        if getattr(request, 'csrf_processing_done', False):
+            return None
+
+        if getattr(callback, 'csrf_exempt', False):
+            return None
+
+        if request.method not in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+            if getattr(request, '_dont_enforce_csrf_checks', False):
+                return self._accept(request)
+
+            if 'HTTP_ORIGIN' in request.META:
+                if not self._origin_verified(request):
+                    return self._reject(request, REASON_BAD_ORIGIN % request.META['HTTP_ORIGIN'])
+            elif request.is_secure():
+                referer = request.META.get('HTTP_REFERER')
+                if referer is None:
+                    return self._reject(request, REASON_NO_REFERER)
+
+                try:
+                    referer = urlparse(referer)
+                except ValueError:
+                    return self._reject(request, REASON_MALFORMED_REFERER)
+
+                if '' in (referer.scheme, referer.netloc):
+                    return self._reject(request, REASON_MALFORMED_REFERER)
+
+                if referer.scheme != 'https':
+                    return self._reject(request, REASON_INSECURE_REFERER)
+
+                good_referer = (
+                    settings.SESSION_COOKIE_DOMAIN
+                    if settings.CSRF_USE_SESSIONS
+                    else settings.CSRF_COOKIE_DOMAIN
+                )
+                if good_referer is not None:
+                    server_port = request.get_port()
+                    if server_port not in ('443', '80'):
+                        good_referer = '%s:%s' % (good_referer, server_port)
+                else:
+                    try:
+                        good_referer = request.get_host()
+                    except DisallowedHost:
+                        pass
+
+                good_hosts = list(self.csrf_trusted_origins_hosts)
+                if good_referer is not None:
+                    good_hosts.append(good_referer)
+
+                if not any(is_same_domain(referer.netloc, host) for host in good_hosts):
+                    reason = REASON_BAD_REFERER % referer.geturl()
+                    return self._reject(request, reason)
+
+            csrf_token = self._get_token(request)
+            if csrf_token is None:
+                return self._reject(request, REASON_NO_CSRF_COOKIE)
+
+            request_csrf_token = ""
+            if request.method == "POST":
+                try:
+                    request_csrf_token = request.POST.get('csrfmiddlewaretoken', '')
+                except OSError:
+                    pass
+
+            if request_csrf_token == "":
+                request_csrf_token = request.META.get(settings.CSRF_HEADER_NAME, '')
+
+            request_csrf_token = _sanitize_token(request_csrf_token)
+            if not _compare_masked_tokens(request_csrf_token, csrf_token):
+                return self._reject(request, REASON_BAD_TOKEN)
+
+        return self._accept(request)
+[/PYTHON]
+Functions called during the execution:
+What will be the output of `process_view`, given the following input:
+[INPUT]
+```{"self": {"get_response": {}}, "args": {"request": {"GET": {"_encoding": "utf-8", "_mutable": true}, "_post": {"_encoding": "utf-8", "_mutable": true}, "COOKIES": {"csrftoken": "ABC1bcdefghij2bcdefghij3bcdefghij4bcdefghij5bcdefghij6bcdefghijA"}, "META": {"CSRF_COOKIE": "ABC1bcdefghij2bcdefghij3bcdefghij4bcdefghij5bcdefghij6bcdefghijA"}, "FILES": {}, "path": "", "path_info": "", "method": "POST", "resolver_match": null, "content_type": null, "content_params": null, "raise_error": true, "session": {"_csrftoken": "ABC1bcdefghij2bcdefghij3bcdefghij4bcdefghij5bcdefghij6bcdefghijA"}}, "callback": {}, "callback_args": [], "callback_kwargs": {}}, "kwargs": {}}```
+[/INPUT]
+[THOUGHT]
+        
+
+[THOUGHT]
+1. We call process_view(self, request, callback, callback_args, callback_kwargs).
+2. request.method is "POST", so we enter the CSRF-enforcement branch.
+3. There is no `request._dont_enforce_csrf_checks` flag, and no `HTTP_ORIGIN` header.
+4. request.is_secure() is not set (defaults to False), so no referer check.
+5. We call _get_token(request):
+   - settings.CSRF_USE_SESSIONS is False by default, so we look in request.COOKIES.
+   - settings.CSRF_COOKIE_NAME defaults to "csrftoken".
+   - request.COOKIES["csrftoken"] exists and equals the long token string.
+   - _sanitize_token(token) returns the same string (all chars are valid).
+   - The sanitized token matches the cookie, so no reset flag.
+   - _get_token returns the token string.
+6. csrf_token is not None, so we continue.
+7. Since method == "POST", we try request.POST.get('csrfmiddlewaretoken'). No POST data is provided, so this yields "".
+8. We then fall back to the CSRF header: request.META.get(settings.CSRF_HEADER_NAME), which defaults to "HTTP_X_CSRFTOKEN". No such header is present, so request_csrf_token remains "".
+9. _sanitize_token("") returns "".
+10. We compare the empty request token to the real cookie token with _compare_masked_tokens("", csrf_token). They differ, so this returns False.
+11. Because the tokens do not match, process_view returns self._reject(request, REASON_BAD_TOKEN).
+12. REASON_BAD_TOKEN is "CSRF token missing or incorrect." and _reject produces an HttpResponseForbidden containing that message.
+[OUTPUT]
+HttpResponseForbidden('CSRF token missing or incorrect.')
+[OUTPUT]
+
+[ANSWER]
+{"output": "HttpResponseForbidden('CSRF token missing or incorrect.')"}
+[/ANSWER]

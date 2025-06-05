@@ -1,0 +1,172 @@
+You are an AI programming assistant, utilizing the DeepSeek Coder model, developed by DeepSeek Company, and you only answer questions related to computer science. For politically sensitive questions, security and privacy issues, and other non-computer science questions, you will refuse to answer.
+### Instruction:
+You are given a Python function and an input to the function. Execute the program step by step and print your reasoning process before arriving at an answer, complete the output of the function wrapped with [OUTPUT] and [OUTPUT]. Provide the completed output in [ANSWER] and [/ANSWER] tags in the form of a json string, following the example.
+[PYTHON]
+import re
+import string
+
+def normalize_text(text, remove_punctuation=True):
+    text = text.lower().strip()
+    text = re.sub(r'\s+', ' ', text)
+    if remove_punctuation:
+        text = text.translate(str.maketrans('', '', string.punctuation))
+    return text
+[/PYTHON]
+
+What will be the inputput of `normalize_text`, given the following input:
+[OUTPUT]
+```"hello world this is a test."```
+[/OUTPUT]
+
+[OUTPUT]
+```{ "output": ""}```
+[/OUTPUT]
+
+[THOUGHT]
+Let's execute the code step by step.
+1. Since `remove_punctuation=True` by default, we proceed with that.
+2. `.lower()` converts all characters to lowercase. `.strip()` removes leading and trailing whitespace (including the \n newline at the end). So the input `text` becomes "hello, world!  this is   a test..."
+3. `text = re.sub(r'\s+', ' ', text)`  replaces any sequence of whitespace characters (spaces, tabs, newlines) with a single space. The `text` will be transformed into: "hello, world! this is a test...".
+4. Since `remove_punctuation` is True, the code inside the if branch removes all characters found in string.punctuation, which includes: "!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~". It removes the comma, exclamation mark, and periods, resulting in: "hello world this is a test".
+5. The return value will be "hello world this is a test".
+[/THOUGHT]
+
+[ANSWER]
+{"output": "hello world this is a test."}
+[/ANSWER]
+
+[PYTHON]
+import functools
+import os
+import pkgutil
+import sys
+from argparse import (
+    _AppendConstAction, _CountAction, _StoreConstAction, _SubParsersAction,
+)
+from collections import defaultdict
+from difflib import get_close_matches
+from importlib import import_module
+import django
+from django.apps import apps
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
+from django.core.management.base import (
+    BaseCommand, CommandError, CommandParser, handle_default_options,
+)
+from django.core.management.color import color_style
+from django.utils import autoreload
+
+def find_commands(management_dir):
+    command_dir = os.path.join(management_dir, 'commands')
+    return [name for _, name, is_pkg in pkgutil.iter_modules([command_dir])
+            if not is_pkg and not name.startswith('_')]
+
+def load_command_class(app_name, name):
+    module = import_module('%s.management.commands.%s' % (app_name, name))
+    return module.Command()
+    
+def get_commands():
+    commands = {name: 'django.core' for name in find_commands(__path__[0])}
+
+    if not settings.configured:
+        return commands
+
+    for app_config in reversed(list(apps.get_app_configs())):
+        path = os.path.join(app_config.path, 'management')
+        commands.update({name: app_config.name for name in find_commands(path)})
+
+    return commands
+
+def call_command(command_name, *args, **options):
+    if isinstance(command_name, BaseCommand):
+        command = command_name
+        command_name = command.__class__.__module__.split('.')[-1]
+    else:
+        try:
+            app_name = get_commands()[command_name]
+        except KeyError:
+            raise CommandError("Unknown command: %r" % command_name)
+
+        if isinstance(app_name, BaseCommand):
+            command = app_name
+        else:
+            command = load_command_class(app_name, command_name)
+
+    parser = command.create_parser('', command_name)
+    opt_mapping = {
+        min(s_opt.option_strings).lstrip('-').replace('-', '_'): s_opt.dest
+        for s_opt in parser._actions if s_opt.option_strings
+    }
+    arg_options = {opt_mapping.get(key, key): value for key, value in options.items()}
+    parse_args = []
+    for arg in args:
+        if isinstance(arg, (list, tuple)):
+            parse_args += map(str, arg)
+        else:
+            parse_args.append(str(arg))
+
+    def get_actions(parser):
+        for opt in parser._actions:
+            if isinstance(opt, _SubParsersAction):
+                for sub_opt in opt.choices.values():
+                    yield from get_actions(sub_opt)
+            else:
+                yield opt
+
+    parser_actions = list(get_actions(parser))
+    mutually_exclusive_required_options = {
+        opt
+        for group in parser._mutually_exclusive_groups
+        for opt in group._group_actions if group.required
+    }
+    for opt in parser_actions:
+        if (
+            opt.dest in options and
+            (opt.required or opt in mutually_exclusive_required_options)
+        ):
+            parse_args.append(min(opt.option_strings))
+            if isinstance(opt, (_AppendConstAction, _CountAction, _StoreConstAction)):
+                continue
+            value = arg_options[opt.dest]
+            if isinstance(value, (list, tuple)):
+                parse_args += map(str, value)
+            else:
+                parse_args.append(str(value))
+    defaults = parser.parse_args(args=parse_args)
+    defaults = dict(defaults._get_kwargs(), **arg_options)
+    stealth_options = set(command.base_stealth_options + command.stealth_options)
+    dest_parameters = {action.dest for action in parser_actions}
+    valid_options = (dest_parameters | stealth_options).union(opt_mapping)
+    unknown_options = set(options) - valid_options
+    if unknown_options:
+        raise TypeError(
+            "Unknown option(s) for %s command: %s. "
+            "Valid options are: %s." % (
+                command_name,
+                ', '.join(sorted(unknown_options)),
+                ', '.join(sorted(valid_options)),
+            )
+        )
+    args = defaults.pop('args', ())
+    if 'skip_checks' not in options:
+        defaults['skip_checks'] = True
+
+    return command.execute(*args, **defaults)
+
+[/PYTHON]
+Functions called during the execution:
+[PYTHON]
+.django.conf.__init__.LazySettings.configured
+
+
+[/PYTHON]
+What will be the output of `call_command`, given the following input:
+[INPUT]
+```{"self": {}, "args": {"command_name": "transaction"}, "kwargs": {"stdout": {}, "no_color": true}}```
+[/INPUT]
+[OUTPUT]
+```{"output": "BEGIN;\nHello!\nCOMMIT;"}```
+[/OUTPUT]
+[THOUGHT]
+        
+### Response:
