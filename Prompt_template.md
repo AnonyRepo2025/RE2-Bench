@@ -1,3 +1,4 @@
+```
 You are given a Python function and an input to the function. Execute the program step by step and print your reasoning process before arriving at an answer, complete the output of the function wrapped with [OUTPUT] and [OUTPUT]. Provide the completed output in [ANSWER] and [/ANSWER] tags in the form of a json string, following the example.
 [PYTHON]
 import re
@@ -179,3 +180,4 @@ What will be the output of `make_classification`, given the following input:
 ```{"output": ""}```
 [/OUTPUT]
         
+```
