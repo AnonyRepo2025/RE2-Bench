@@ -160,8 +160,6 @@ def check_random_state(seed):
                      ' instance' % seed)
 
 def _generate_hypercube(samples, dimensions, rng):
-    """Returns distinct binary samples of length dimensions
-    """
     if dimensions > 30:
         return np.hstack([rng.randint(2, size=(samples, dimensions - 30)),
                           _generate_hypercube(samples, 30, rng)])
