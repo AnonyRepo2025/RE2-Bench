@@ -1,0 +1,400 @@
+def precision_recall_fscore_support(y_true, y_pred, beta=1.0, labels=None, pos_label=1, average=None, warn_for=('precision', 'recall', 'f-score'), sample_weight=None):
+    average_options = (None, 'micro', 'macro', 'weighted', 'samples')
+    if average not in average_options and average != 'binary':
+        raise ValueError('average has to be one of ' + str(average_options))
+    if beta <= 0:
+        raise ValueError('beta should be >0 in the F-beta score')
+    y_type, y_true, y_pred = _check_targets(y_true, y_pred)
+    check_consistent_length(y_true, y_pred, sample_weight)
+    present_labels = unique_labels(y_true, y_pred)
+    if average == 'binary':
+        if y_type == 'binary':
+            if pos_label not in present_labels:
+                if len(present_labels) < 2:
+                    return (0.0, 0.0, 0.0, 0)
+                else:
+                    raise ValueError('pos_label=%r is not a valid label: %r' % (pos_label, present_labels))
+            labels = [pos_label]
+        else:
+            raise ValueError("Target is %s but average='binary'. Please choose another average setting." % y_type)
+    elif pos_label not in (None, 1):
+        warnings.warn("Note that pos_label (set to %r) is ignored when average != 'binary' (got %r). You may use labels=[pos_label] to specify a single positive class." % (pos_label, average), UserWarning)
+    if labels is None:
+        labels = present_labels
+        n_labels = None
+    else:
+        n_labels = len(labels)
+        labels = np.hstack([labels, np.setdiff1d(present_labels, labels, assume_unique=True)])
+    if y_type.startswith('multilabel'):
+        sum_axis = 1 if average == 'samples' else 0
+        if not np.all(labels == present_labels):
+            if np.max(labels) > np.max(present_labels):
+                raise ValueError('All labels must be in [0, n labels). Got %d > %d' % (np.max(labels), np.max(present_labels)))
+            if np.min(labels) < 0:
+                raise ValueError('All labels must be in [0, n labels). Got %d < 0' % np.min(labels))
+        if n_labels is not None:
+            y_true = y_true[:, labels[:n_labels]]
+            y_pred = y_pred[:, labels[:n_labels]]
+        true_and_pred = y_true.multiply(y_pred)
+        tp_sum = count_nonzero(true_and_pred, axis=sum_axis, sample_weight=sample_weight)
+        pred_sum = count_nonzero(y_pred, axis=sum_axis, sample_weight=sample_weight)
+        true_sum = count_nonzero(y_true, axis=sum_axis, sample_weight=sample_weight)
+    elif average == 'samples':
+        raise ValueError('Sample-based precision, recall, fscore is not meaningful outside multilabel classification. See the accuracy_score instead.')
+    else:
+        le = LabelEncoder()
+        le.fit(labels)
+        y_true = le.transform(y_true)
+        y_pred = le.transform(y_pred)
+        sorted_labels = le.classes_
+        tp = y_true == y_pred
+        tp_bins = y_true[tp]
+        if sample_weight is not None:
+            tp_bins_weights = np.asarray(sample_weight)[tp]
+        else:
+            tp_bins_weights = None
+        if len(tp_bins):
+            tp_sum = np.bincount(tp_bins, weights=tp_bins_weights, minlength=len(labels))
+        else:
+            true_sum = pred_sum = tp_sum = np.zeros(len(labels))
+        if len(y_pred):
+            pred_sum = np.bincount(y_pred, weights=sample_weight, minlength=len(labels))
+        if len(y_true):
+            true_sum = np.bincount(y_true, weights=sample_weight, minlength=len(labels))
+        indices = np.searchsorted(sorted_labels, labels[:n_labels])
+        tp_sum = tp_sum[indices]
+        true_sum = true_sum[indices]
+        pred_sum = pred_sum[indices]
+    if average == 'micro':
+        tp_sum = np.array([tp_sum.sum()])
+        pred_sum = np.array([pred_sum.sum()])
+        true_sum = np.array([true_sum.sum()])
+    beta2 = beta ** 2
+    with np.errstate(divide='ignore', invalid='ignore'):
+        precision = _prf_divide(tp_sum, pred_sum, 'precision', 'predicted', average, warn_for)
+        recall = _prf_divide(tp_sum, true_sum, 'recall', 'true', average, warn_for)
+        f_score = (1 + beta2) * precision * recall / (beta2 * precision + recall)
+        f_score[tp_sum == 0] = 0.0
+    if average == 'weighted':
+        weights = true_sum
+        if weights.sum() == 0:
+            return (0, 0, 0, None)
+    elif average == 'samples':
+        weights = sample_weight
+    else:
+        weights = None
+    if average is not None:
+        assert average != 'binary' or len(precision) == 1
+        precision = np.average(precision, weights=weights)
+        recall = np.average(recall, weights=weights)
+        f_score = np.average(f_score, weights=weights)
+        true_sum = None
+    return (precision, recall, f_score, true_sum)
+
+def _check_targets(y_true, y_pred):
+    check_consistent_length(y_true, y_pred)
+    type_true = type_of_target(y_true)
+    type_pred = type_of_target(y_pred)
+    y_type = set([type_true, type_pred])
+    if y_type == set(['binary', 'multiclass']):
+        y_type = set(['multiclass'])
+    if len(y_type) > 1:
+        raise ValueError("Classification metrics can't handle a mix of {0} and {1} targets".format(type_true, type_pred))
+    y_type = y_type.pop()
+    if y_type not in ['binary', 'multiclass', 'multilabel-indicator']:
+        raise ValueError('{0} is not supported'.format(y_type))
+    if y_type in ['binary', 'multiclass']:
+        y_true = column_or_1d(y_true)
+        y_pred = column_or_1d(y_pred)
+        if y_type == 'binary':
+            unique_values = np.union1d(y_true, y_pred)
+            if len(unique_values) > 2:
+                y_type = 'multiclass'
+    if y_type.startswith('multilabel'):
+        y_true = csr_matrix(y_true)
+        y_pred = csr_matrix(y_pred)
+        y_type = 'multilabel-indicator'
+    return (y_type, y_true, y_pred)
+
+def check_consistent_length(*arrays):
+    lengths = [_num_samples(X) for X in arrays if X is not None]
+    uniques = np.unique(lengths)
+    if len(uniques) > 1:
+        raise ValueError('Found input variables with inconsistent numbers of samples: %r' % [int(l) for l in lengths])
+
+def _num_samples(x):
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError('Expected sequence or array-like, got estimator %s' % x)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError('Expected sequence or array-like, got %s' % type(x))
+    if hasattr(x, 'shape'):
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        return x.shape[0]
+    else:
+        return len(x)
+
+def type_of_target(y):
+    valid = (isinstance(y, (Sequence, spmatrix)) or hasattr(y, '__array__')) and (not isinstance(y, string_types))
+    if not valid:
+        raise ValueError('Expected array-like (array or non-string sequence), got %r' % y)
+    sparseseries = y.__class__.__name__ == 'SparseSeries'
+    if sparseseries:
+        raise ValueError("y cannot be class 'SparseSeries'.")
+    if is_multilabel(y):
+        return 'multilabel-indicator'
+    try:
+        y = np.asarray(y)
+    except ValueError:
+        return 'unknown'
+    try:
+        if not hasattr(y[0], '__array__') and isinstance(y[0], Sequence) and (not isinstance(y[0], string_types)):
+            raise ValueError('You appear to be using a legacy multi-label data representation. Sequence of sequences are no longer supported; use a binary array or sparse matrix instead.')
+    except IndexError:
+        pass
+    if y.ndim > 2 or (y.dtype == object and len(y) and (not isinstance(y.flat[0], string_types))):
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] == 0:
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] > 1:
+        suffix = '-multioutput'
+    else:
+        suffix = ''
+    if y.dtype.kind == 'f' and np.any(y != y.astype(int)):
+        return 'continuous' + suffix
+    if len(np.unique(y)) > 2 or (y.ndim >= 2 and len(y[0]) > 1):
+        return 'multiclass' + suffix
+    else:
+        return 'binary'
+
+def is_multilabel(y):
+    if hasattr(y, '__array__'):
+        y = np.asarray(y)
+    if not (hasattr(y, 'shape') and y.ndim == 2 and (y.shape[1] > 1)):
+        return False
+    if issparse(y):
+        if isinstance(y, (dok_matrix, lil_matrix)):
+            y = y.tocsr()
+        return len(y.data) == 0 or (np.unique(y.data).size == 1 and (y.dtype.kind in 'biu' or _is_integral_float(np.unique(y.data))))
+    else:
+        labels = np.unique(y)
+        return len(labels) < 3 and (y.dtype.kind in 'biu' or _is_integral_float(labels))
+
+def column_or_1d(y, warn=False):
+    shape = np.shape(y)
+    if len(shape) == 1:
+        return np.ravel(y)
+    if len(shape) == 2 and shape[1] == 1:
+        if warn:
+            warnings.warn('A column-vector y was passed when a 1d array was expected. Please change the shape of y to (n_samples, ), for example using ravel().', DataConversionWarning, stacklevel=2)
+        return np.ravel(y)
+    raise ValueError('bad input shape {0}'.format(shape))
+
+def unique_labels(*ys):
+    if not ys:
+        raise ValueError('No argument has been passed.')
+    ys_types = set((type_of_target(x) for x in ys))
+    if ys_types == set(['binary', 'multiclass']):
+        ys_types = set(['multiclass'])
+    if len(ys_types) > 1:
+        raise ValueError('Mix type of y not allowed, got types %s' % ys_types)
+    label_type = ys_types.pop()
+    if label_type == 'multilabel-indicator' and len(set((check_array(y, ['csr', 'csc', 'coo']).shape[1] for y in ys))) > 1:
+        raise ValueError('Multi-label binary indicator input with different numbers of labels')
+    _unique_labels = _FN_UNIQUE_LABELS.get(label_type, None)
+    if not _unique_labels:
+        raise ValueError('Unknown label type: %s' % repr(ys))
+    ys_labels = set(chain.from_iterable((_unique_labels(y) for y in ys)))
+    if len(set((isinstance(label, string_types) for label in ys_labels))) > 1:
+        raise ValueError('Mix of label input types (string and number)')
+    return np.array(sorted(ys_labels))
+
+def _unique_multiclass(y):
+    if hasattr(y, '__array__'):
+        return np.unique(np.asarray(y))
+    else:
+        return set(y)
+
+def fit(self, y):
+    y = column_or_1d(y, warn=True)
+    self.classes_ = np.unique(y)
+    return self
+
+def transform(self, y):
+    check_is_fitted(self, 'classes_')
+    y = column_or_1d(y, warn=True)
+    if _num_samples(y) == 0:
+        return np.array([])
+    classes = np.unique(y)
+    if len(np.intersect1d(classes, self.classes_)) < len(classes):
+        diff = np.setdiff1d(classes, self.classes_)
+        raise ValueError('y contains previously unseen labels: %s' % str(diff))
+    return np.searchsorted(self.classes_, y)
+
+def check_is_fitted(estimator, attributes, msg=None, all_or_any=all):
+    if msg is None:
+        msg = "This %(name)s instance is not fitted yet. Call 'fit' with appropriate arguments before using this method."
+    if not hasattr(estimator, 'fit'):
+        raise TypeError('%s is not an estimator instance.' % estimator)
+    if not isinstance(attributes, (list, tuple)):
+        attributes = [attributes]
+    if not all_or_any([hasattr(estimator, attr) for attr in attributes]):
+        raise NotFittedError(msg % {'name': type(estimator).__name__})
+
+def _prf_divide(numerator, denominator, metric, modifier, average, warn_for):
+    result = numerator / denominator
+    mask = denominator == 0.0
+    if not np.any(mask):
+        return result
+    result[mask] = 0.0
+    axis0 = 'sample'
+    axis1 = 'label'
+    if average == 'samples':
+        axis0, axis1 = (axis1, axis0)
+    if metric in warn_for and 'f-score' in warn_for:
+        msg_start = '{0} and F-score are'.format(metric.title())
+    elif metric in warn_for:
+        msg_start = '{0} is'.format(metric.title())
+    elif 'f-score' in warn_for:
+        msg_start = 'F-score is'
+    else:
+        return result
+    msg = '{0} ill-defined and being set to 0.0 {{0}} no {1} {2}s.'.format(msg_start, modifier, axis0)
+    if len(mask) == 1:
+        msg = msg.format('due to')
+    else:
+        msg = msg.format('in {0}s with'.format(axis1))
+    warnings.warn(msg, UndefinedMetricWarning, stacklevel=2)
+    return result
+
+def check_array(array, accept_sparse=False, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=False, estimator=None):
+    if accept_sparse is None:
+        warnings.warn("Passing 'None' to parameter 'accept_sparse' in methods check_array and check_X_y is deprecated in version 0.19 and will be removed in 0.21. Use 'accept_sparse=False'  instead.", DeprecationWarning)
+        accept_sparse = False
+    array_orig = array
+    dtype_numeric = isinstance(dtype, six.string_types) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, six.string_types):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse, dtype, copy, force_all_finite)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                array = np.asarray(array, dtype=dtype, order=order)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of strings will be interpreted as decimal numbers if parameter 'dtype' is 'numeric'. It is recommended that you convert the array to type np.float64 before passing it to check_array.", FutureWarning)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    shape_repr = _shape_repr(array.shape)
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, shape_repr, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, shape_repr, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning)
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+    return array
+
+def _ensure_no_complex_data(array):
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+
+
+from __future__ import division
+import warnings
+import numpy as np
+from scipy.sparse import coo_matrix
+from scipy.sparse import csr_matrix
+from ..preprocessing import LabelBinarizer, label_binarize
+from ..preprocessing import LabelEncoder
+from ..utils import assert_all_finite
+from ..utils import check_array
+from ..utils import check_consistent_length
+from ..utils import column_or_1d
+from ..utils.multiclass import unique_labels
+from ..utils.multiclass import type_of_target
+from ..utils.validation import _num_samples
+from ..utils.sparsefuncs import count_nonzero
+from ..exceptions import UndefinedMetricWarning
+
+def classification_report(y_true, y_pred, labels=None, target_names=None, sample_weight=None, digits=2, output_dict=False):
+    labels_given = True
+    if labels is None:
+        labels = unique_labels(y_true, y_pred)
+        labels_given = False
+    else:
+        labels = np.asarray(labels)
+    if target_names is not None and len(labels) != len(target_names):
+        if labels_given:
+            warnings.warn('labels size, {0}, does not match size of target_names, {1}'.format(len(labels), len(target_names)))
+        else:
+            raise ValueError('Number of classes, {0}, does not match size of target_names, {1}. Try specifying the labels parameter'.format(len(labels), len(target_names)))
+    last_line_heading = 'avg / total'
+    if target_names is None:
+        target_names = [u'%s' % l for l in labels]
+    name_width = max((len(cn) for cn in target_names))
+    width = max(name_width, len(last_line_heading), digits)
+    headers = ['precision', 'recall', 'f1-score', 'support']
+    head_fmt = u'{:>{width}s} ' + u' {:>9}' * len(headers)
+    report = head_fmt.format(u'', *headers, width=width)
+    report += u'\n\n'
+    p, r, f1, s = precision_recall_fscore_support(y_true, y_pred, labels=labels, average=None, sample_weight=sample_weight)
+    row_fmt = u'{:>{width}s} ' + u' {:>9.{digits}f}' * 3 + u' {:>9}\n'
+    rows = zip(target_names, p, r, f1, s)
+    avg_total = [np.average(p, weights=s), np.average(r, weights=s), np.average(f1, weights=s), np.sum(s)]
+    if output_dict:
+        report_dict = {label[0]: label[1:] for label in rows}
+        for label, scores in report_dict.items():
+            report_dict[label] = dict(zip(headers, scores))
+        report_dict['avg / total'] = dict(zip(headers, avg_total))
+        return report_dict
+    for row in rows:
+        report += row_fmt.format(*row, width=width, digits=digits)
+    report += u'\n'
+    report += row_fmt.format(last_line_heading, *avg_total, width=width, digits=digits)
+    return report

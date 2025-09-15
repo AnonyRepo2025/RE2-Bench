@@ -1,0 +1,609 @@
+diff --git a/django/core/servers/basehttp.py b/django/core/servers/basehttp.py
+index 14dab51..98d1709 100644
+--- a/django/core/servers/basehttp.py
++++ b/django/core/servers/basehttp.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14011/django/core/servers/basehttp.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ HTTP server that implements the Python WSGI protocol (PEP 333, rev 1.21).
+ 
+@@ -16,6 +209,7 @@ from wsgiref import simple_server
+ from django.core.exceptions import ImproperlyConfigured
+ from django.core.handlers.wsgi import LimitedStream
+ from django.core.wsgi import get_wsgi_application
++from django.db import connections
+ from django.utils.module_loading import import_string
+ 
+ __all__ = ('WSGIServer', 'WSGIRequestHandler')
+@@ -81,6 +275,29 @@ class ThreadedWSGIServer(socketserver.ThreadingMixIn, WSGIServer):
+     """A threaded version of the WSGIServer"""
+     daemon_threads = True
+ 
++    @inspect_code
++    def __init__(self, *args, connections_override=None, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.connections_override = connections_override
++
++    # socketserver.ThreadingMixIn.process_request() passes this method as
++    # the target to a new Thread object.
++    def process_request_thread(self, request, client_address):
++        if self.connections_override:
++            # Override this thread's database connections with the ones
++            # provided by the parent thread.
++            for alias, conn in self.connections_override.items():
++                connections[alias] = conn
++        super().process_request_thread(request, client_address)
++
++    def _close_connections(self):
++        # Used for mocking in tests.
++        connections.close_all()
++
++    def close_request(self, request):
++        self._close_connections()
++        super().close_request(request)
++
+ 
+ class ServerHandler(simple_server.ServerHandler):
+     http_version = '1.1'
+diff --git a/django/db/backends/sqlite3/features.py b/django/db/backends/sqlite3/features.py
+index 6a7aa09..d1913d1 100644
+--- a/django/db/backends/sqlite3/features.py
++++ b/django/db/backends/sqlite3/features.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14011/django/db/backends/sqlite3/features.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import operator
+ import platform
+ 
+@@ -50,6 +243,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+         'non_default': 'nocase',
+     }
+ 
++    @inspect_code
+     @cached_property
+     def django_test_skips(self):
+         skips = {
+@@ -83,6 +277,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+                 "the sqlite backend's close() method is a no-op when using an "
+                 "in-memory database": {
+                     'servers.test_liveserverthread.LiveServerThreadTest.test_closes_connections',
++                    'servers.tests.LiveServerTestCloseConnectionTest.test_closes_connections',
+                 },
+             })
+         return skips
+diff --git a/django/test/testcases.py b/django/test/testcases.py
+index 92f566b..53508cd 100644
+--- a/django/test/testcases.py
++++ b/django/test/testcases.py
+@@ -1513,11 +1513,12 @@ class LiveServerThread(threading.Thread):
+         finally:
+             connections.close_all()
+ 
+-    def _create_server(self):
++    def _create_server(self, connections_override=None):
+         return self.server_class(
+             (self.host, self.port),
+             QuietWSGIRequestHandler,
+             allow_reuse_address=False,
++            connections_override=connections_override,
+         )
+ 
+     def terminate(self):
+@@ -1553,21 +1554,28 @@ class LiveServerTestCase(TransactionTestCase):
+         return cls.host
+ 
+     @classmethod
+-    def setUpClass(cls):
+-        super().setUpClass()
++    def _make_connections_override(cls):
+         connections_override = {}
+         for conn in connections.all():
+             # If using in-memory sqlite databases, pass the connections to
+             # the server thread.
+             if conn.vendor == 'sqlite' and conn.is_in_memory_db():
+-                # Explicitly enable thread-shareability for this connection
+-                conn.inc_thread_sharing()
+                 connections_override[conn.alias] = conn
++        return connections_override
+ 
++    @classmethod
++    def setUpClass(cls):
++        super().setUpClass()
+         cls._live_server_modified_settings = modify_settings(
+             ALLOWED_HOSTS={'append': cls.allowed_host},
+         )
+         cls._live_server_modified_settings.enable()
++
++        connections_override = cls._make_connections_override()
++        for conn in connections_override.values():
++            # Explicitly enable thread-shareability for this connection.
++            conn.inc_thread_sharing()
++
+         cls.server_thread = cls._create_server_thread(connections_override)
+         cls.server_thread.daemon = True
+         cls.server_thread.start()
+@@ -1593,7 +1601,7 @@ class LiveServerTestCase(TransactionTestCase):
+     def _tearDownClassInternal(cls):
+         # Terminate the live server's thread.
+         cls.server_thread.terminate()
+-        # Restore sqlite in-memory database connections' non-shareability.
++        # Restore shared connections' non-shareability.
+         for conn in cls.server_thread.connections_override.values():
+             conn.dec_thread_sharing()
+ 
+diff --git a/tests/servers/tests.py b/tests/servers/tests.py
+index 8b6e372..c4b8298 100644
+--- a/tests/servers/tests.py
++++ b/tests/servers/tests.py
+@@ -4,13 +4,15 @@ Tests for django.core.servers.
+ import errno
+ import os
+ import socket
++import threading
+ from http.client import HTTPConnection
+ from urllib.error import HTTPError
+ from urllib.parse import urlencode
+ from urllib.request import urlopen
+ 
+ from django.conf import settings
+-from django.core.servers.basehttp import WSGIServer
++from django.core.servers.basehttp import ThreadedWSGIServer, WSGIServer
++from django.db import DEFAULT_DB_ALIAS, connections
+ from django.test import LiveServerTestCase, override_settings
+ from django.test.testcases import LiveServerThread, QuietWSGIRequestHandler
+ 
+@@ -40,6 +42,71 @@ class LiveServerBase(LiveServerTestCase):
+         return urlopen(self.live_server_url + url)
+ 
+ 
++class CloseConnectionTestServer(ThreadedWSGIServer):
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        # This event is set right after the first time a request closes its
++        # database connections.
++        self._connections_closed = threading.Event()
++
++    def _close_connections(self):
++        super()._close_connections()
++        self._connections_closed.set()
++
++
++class CloseConnectionTestLiveServerThread(LiveServerThread):
++
++    server_class = CloseConnectionTestServer
++
++    def _create_server(self, connections_override=None):
++        return super()._create_server(connections_override=self.connections_override)
++
++
++class LiveServerTestCloseConnectionTest(LiveServerBase):
++
++    server_thread_class = CloseConnectionTestLiveServerThread
++
++    @classmethod
++    def _make_connections_override(cls):
++        conn = connections[DEFAULT_DB_ALIAS]
++        cls.conn = conn
++        cls.old_conn_max_age = conn.settings_dict['CONN_MAX_AGE']
++        # Set the connection's CONN_MAX_AGE to None to simulate the
++        # CONN_MAX_AGE setting being set to None on the server. This prevents
++        # Django from closing the connection and allows testing that
++        # ThreadedWSGIServer closes connections.
++        conn.settings_dict['CONN_MAX_AGE'] = None
++        # Pass a database connection through to the server to check it is being
++        # closed by ThreadedWSGIServer.
++        return {DEFAULT_DB_ALIAS: conn}
++
++    @classmethod
++    def tearDownConnectionTest(cls):
++        cls.conn.settings_dict['CONN_MAX_AGE'] = cls.old_conn_max_age
++
++    @classmethod
++    def tearDownClass(cls):
++        cls.tearDownConnectionTest()
++        super().tearDownClass()
++
++    def test_closes_connections(self):
++        # The server's request thread sets this event after closing
++        # its database connections.
++        closed_event = self.server_thread.httpd._connections_closed
++        conn = self.conn
++        # Open a connection to the database.
++        conn.connect()
++        self.assertIsNotNone(conn.connection)
++        with self.urlopen('/model_view/') as f:
++            # The server can access the database.
++            self.assertEqual(f.read().splitlines(), [b'jane', b'robert'])
++        # Wait for the server's request thread to close the connection.
++        # A timeout of 0.1 seconds should be more than enough. If the wait
++        # times out, the assertion after should fail.
++        closed_event.wait(timeout=0.1)
++        self.assertIsNone(conn.connection)
++
++
+ class FailingLiveServerThread(LiveServerThread):
+     def _create_server(self):
+         raise RuntimeError('Error creating server.')

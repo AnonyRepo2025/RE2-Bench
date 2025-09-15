@@ -1,0 +1,27 @@
+[THOUGHT]
+1. process_view sees request.method == "POST", so enters the CSRF enforcement branch.
+2. request.is_secure() returns False (no HTTPS), so it skips all referer checks.
+3. It reads csrf_token = request.META.get('CSRF_COOKIE'), which is the 64-char string “ABC1…”.
+4. It tries to get request_csrf_token from POST and from the CSRF header, both of which are absent, so request_csrf_token == ''.
+5. _sanitize_token('') will hit the final `return _get_new_csrf_token()` case, producing a brand-new salted token.
+6. That new token will not match the cookie token when run through _compare_salted_tokens, so process_view will return self._reject(request, REASON_BAD_TOKEN).
+7. _reject(...) ends up building an HttpResponseForbidden with status_code=403, reason_phrase="Forbidden", default charset “utf-8”, default content_type “text/html; charset=utf-8”, no cookies, an empty closable_objects list, a container holding the failure message, and closed=False.
+8. The failure message passed in is REASON_BAD_TOKEN = "CSRF token missing or incorrect.", so the response body is exactly that string.
+
+Filling in the internal HttpResponse attributes, we get:
+
+[OUTPUT]
+{
+    "_headers": {
+        "content-type": ["Content-Type", "text/html; charset=utf-8"]
+    },
+    "_closable_objects": [],
+    "_handler_class": null,
+    "cookies": {},
+    "closed": false,
+    "_reason_phrase": "Forbidden",
+    "_charset": "utf-8",
+    "_container": ["CSRF token missing or incorrect."],
+    "_has_been_logged": false
+}
+[/OUTPUT]

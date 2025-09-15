@@ -1,0 +1,958 @@
+diff --git a/sympy/core/basic.py b/sympy/core/basic.py
+index dce161a..3894f4f 100644
+--- a/sympy/core/basic.py
++++ b/sympy/core/basic.py
+@@ -7,7 +7,6 @@
+ from .cache import cacheit
+ from .sympify import _sympify, sympify, SympifyError
+ from .compatibility import iterable, ordered
+-from .singleton import S
+ from .kind import UndefinedKind
+ from ._print_helpers import Printable
+ 
+@@ -121,19 +120,17 @@ def __new__(cls, *args):
+     def copy(self):
+         return self.func(*self.args)
+ 
+-    def __reduce_ex__(self, proto):
+-        """ Pickling support."""
+-        return type(self), self.__getnewargs__(), self.__getstate__()
+-
+     def __getnewargs__(self):
+         return self.args
+ 
+     def __getstate__(self):
+-        return {}
++        return None
+ 
+-    def __setstate__(self, state):
+-        for k, v in state.items():
+-            setattr(self, k, v)
++    def __reduce_ex__(self, protocol):
++        if protocol < 2:
++            msg = "Only pickle protocol 2 or higher is supported by sympy"
++            raise NotImplementedError(msg)
++        return super().__reduce_ex__(protocol)
+ 
+     def __hash__(self):
+         # hash cannot be cached using cache_it because infinite recurrence
+@@ -2060,3 +2057,7 @@ def _make_find_query(query):
+     elif isinstance(query, Basic):
+         return lambda expr: expr.match(query) is not None
+     return query
++
++
++# Delayed to avoid cyclic import
++from .singleton import S
+diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py
+index 6929eed..1322a68 100644
+--- a/sympy/core/numbers.py
++++ b/sympy/core/numbers.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-21260/sympy/core/numbers.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import numbers
+ import decimal
+ import fractions
+@@ -1206,11 +1399,9 @@ def _new(cls, _mpf_, _prec, zero=True):
+         return obj
+ 
+     # mpz can't be pickled
+-    def __getnewargs__(self):
+-        return (mlib.to_pickable(self._mpf_),)
+-
+-    def __getstate__(self):
+-        return {'_prec': self._prec}
++    @inspect_code
++    def __getnewargs_ex__(self):
++        return ((mlib.to_pickable(self._mpf_),), {'precision': self._prec})
+ 
+     def _hashable_content(self):
+         return (self._mpf_, self._prec)
+@@ -2665,6 +2856,7 @@ class One(IntegerConstant, metaclass=Singleton):
+     .. [1] https://en.wikipedia.org/wiki/1_%28number%29
+     """
+     is_number = True
++    is_positive = True
+ 
+     p = 1
+     q = 1
+diff --git a/sympy/core/singleton.py b/sympy/core/singleton.py
+index afede5f..4d809cc 100644
+--- a/sympy/core/singleton.py
++++ b/sympy/core/singleton.py
+@@ -1,8 +1,6 @@
+ """Singleton mechanism"""
+ 
+ 
+-from typing import Any, Dict, Type
+-
+ from .core import Registry
+ from .assumptions import ManagedProperties
+ from .sympify import sympify
+@@ -171,26 +169,14 @@ class is instantiated. Additionally, this instance can be accessed through
+     subclasses to have a different metaclass than the superclass, except the
+     subclass may use a subclassed metaclass).
+     """
++    def __init__(cls, *args, **kwargs):
++        super().__init__(cls, *args, **kwargs)
++        cls._instance = obj = Basic.__new__(cls)
++        cls.__new__ = lambda cls: obj
++        cls.__getnewargs__ = lambda obj: ()
++        cls.__getstate__ = lambda obj: None
++        S.register(cls)
++
+ 
+-    _instances = {}  # type: Dict[Type[Any], Any]
+-    "Maps singleton classes to their instances."
+-
+-    def __new__(cls, *args, **kwargs):
+-        result = super().__new__(cls, *args, **kwargs)
+-        S.register(result)
+-        return result
+-
+-    def __call__(self, *args, **kwargs):
+-        # Called when application code says SomeClass(), where SomeClass is a
+-        # class of which Singleton is the metaclas.
+-        # __call__ is invoked first, before __new__() and __init__().
+-        if self not in Singleton._instances:
+-            Singleton._instances[self] = \
+-                super().__call__(*args, **kwargs)
+-                # Invokes the standard constructor of SomeClass.
+-        return Singleton._instances[self]
+-
+-        # Inject pickling support.
+-        def __getnewargs__(self):
+-            return ()
+-        self.__getnewargs__ = __getnewargs__
++# Delayed to avoid cyclic import
++from .basic import Basic
+diff --git a/sympy/core/symbol.py b/sympy/core/symbol.py
+index 41b3c10..03664d4 100644
+--- a/sympy/core/symbol.py
++++ b/sympy/core/symbol.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-21260/sympy/core/symbol.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from sympy.core.assumptions import StdFactKB, _assume_defined
+ from sympy.core.compatibility import is_sequence, ordered
+ from .basic import Basic, Atom
+@@ -300,11 +493,9 @@ def __new_stage2__(cls, name, **assumptions):
+     __xnew_cached_ = staticmethod(
+         cacheit(__new_stage2__))   # symbols are always cached
+ 
+-    def __getnewargs__(self):
+-        return (self.name,)
+-
+-    def __getstate__(self):
+-        return {'_assumptions': self._assumptions}
++    @inspect_code
++    def __getnewargs_ex__(self):
++        return ((self.name,), self.assumptions0)
+ 
+     def _hashable_content(self):
+         # Note: user-specified assumptions not hashed, just derived ones
+@@ -414,8 +605,9 @@ def __new__(cls, name=None, dummy_index=None, **assumptions):
+ 
+         return obj
+ 
+-    def __getstate__(self):
+-        return {'_assumptions': self._assumptions, 'dummy_index': self.dummy_index}
++    @inspect_code
++    def __getnewargs_ex__(self):
++        return ((self.name, self.dummy_index), self.assumptions0)
+ 
+     @cacheit
+     def sort_key(self, order=None):
+diff --git a/sympy/core/tests/test_singleton.py b/sympy/core/tests/test_singleton.py
+index 162b8e9..893713f 100644
+--- a/sympy/core/tests/test_singleton.py
++++ b/sympy/core/tests/test_singleton.py
+@@ -3,28 +3,19 @@
+ from sympy.core.singleton import S, Singleton
+ 
+ def test_Singleton():
+-    global instantiated
+-    instantiated = 0
+ 
+     class MySingleton(Basic, metaclass=Singleton):
+-        def __new__(cls):
+-            global instantiated
+-            instantiated += 1
+-            return Basic.__new__(cls)
++        pass
+ 
+-    assert instantiated == 0
+     MySingleton() # force instantiation
+-    assert instantiated == 1
+     assert MySingleton() is not Basic()
+     assert MySingleton() is MySingleton()
+     assert S.MySingleton is MySingleton()
+-    assert instantiated == 1
+ 
+     class MySingleton_sub(MySingleton):
+         pass
+-    assert instantiated == 1
++
+     MySingleton_sub()
+-    assert instantiated == 2
+     assert MySingleton_sub() is not MySingleton()
+     assert MySingleton_sub() is MySingleton_sub()
+ 
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 3e958c5..81e909d 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -42,17 +42,16 @@ class IdentityFunction(Lambda, metaclass=Singleton):
+ 
+     """
+ 
+-    def __new__(cls):
+-        x = Dummy('x')
+-        #construct "by hand" to avoid infinite loop
+-        return Expr.__new__(cls, Tuple(x), x)
++    _symbol = Dummy('x')
+ 
+     @property
+-    def args(self):
+-        return ()
++    def signature(self):
++        return Tuple(self._symbol)
++
++    @property
++    def expr(self):
++        return self._symbol
+ 
+-    def __getnewargs__(self):
+-        return ()
+ 
+ Id = S.IdentityFunction
+ 
+diff --git a/sympy/physics/paulialgebra.py b/sympy/physics/paulialgebra.py
+index e3a6e36..c5b0a0a 100644
+--- a/sympy/physics/paulialgebra.py
++++ b/sympy/physics/paulialgebra.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-21260/sympy/physics/paulialgebra.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ This module implements Pauli algebra by subclassing Symbol. Only algebraic
+ properties of Pauli matrices are used (we don't use the Matrix class).
+@@ -131,8 +324,12 @@ def __new__(cls, i, label="sigma"):
+         obj.label = label
+         return obj
+ 
+-    def __getnewargs__(self):
+-        return (self.i,self.label,)
++    @inspect_code
++    def __getnewargs_ex__(self):
++        return (self.i, self.label), {}
++
++    def _hashable_content(self):
++        return (self.i, self.label)
+ 
+     # FIXME don't work for -I*Pauli(2)*Pauli(3)
+     def __mul__(self, other):
+diff --git a/sympy/sets/fancysets.py b/sympy/sets/fancysets.py
+index 295e2e7..dc0ea17 100644
+--- a/sympy/sets/fancysets.py
++++ b/sympy/sets/fancysets.py
+@@ -255,8 +255,21 @@ class Reals(Interval, metaclass=Singleton):
+ 
+     ComplexRegion
+     """
+-    def __new__(cls):
+-        return Interval.__new__(cls, S.NegativeInfinity, S.Infinity)
++    @property
++    def start(self):
++        return S.NegativeInfinity
++
++    @property
++    def end(self):
++        return S.Infinity
++
++    @property
++    def left_open(self):
++        return True
++
++    @property
++    def right_open(self):
++        return True
+ 
+     def __eq__(self, other):
+         return other == Interval(S.NegativeInfinity, S.Infinity)
+diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
+index 8270404..9f19ecf 100644
+--- a/sympy/sets/sets.py
++++ b/sympy/sets/sets.py
+@@ -971,23 +971,6 @@ def start(self):
+         """
+         return self._args[0]
+ 
+-    _inf = left = start
+-
+-    @classmethod
+-    def open(cls, a, b):
+-        """Return an interval including neither boundary."""
+-        return cls(a, b, True, True)
+-
+-    @classmethod
+-    def Lopen(cls, a, b):
+-        """Return an interval not including the left boundary."""
+-        return cls(a, b, True, False)
+-
+-    @classmethod
+-    def Ropen(cls, a, b):
+-        """Return an interval not including the right boundary."""
+-        return cls(a, b, False, True)
+-
+     @property
+     def end(self):
+         """
+@@ -1005,8 +988,6 @@ def end(self):
+         """
+         return self._args[1]
+ 
+-    _sup = right = end
+-
+     @property
+     def left_open(self):
+         """
+@@ -1041,6 +1022,37 @@ def right_open(self):
+         """
+         return self._args[3]
+ 
++    @classmethod
++    def open(cls, a, b):
++        """Return an interval including neither boundary."""
++        return cls(a, b, True, True)
++
++    @classmethod
++    def Lopen(cls, a, b):
++        """Return an interval not including the left boundary."""
++        return cls(a, b, True, False)
++
++    @classmethod
++    def Ropen(cls, a, b):
++        """Return an interval not including the right boundary."""
++        return cls(a, b, False, True)
++
++    @property
++    def _inf(self):
++        return self.start
++
++    @property
++    def _sup(self):
++        return self.end
++
++    @property
++    def left(self):
++        return self.start
++
++    @property
++    def right(self):
++        return self.end
++
+     @property
+     def is_empty(self):
+         if self.left_open or self.right_open:
+diff --git a/sympy/utilities/tests/test_pickling.py b/sympy/utilities/tests/test_pickling.py
+index c659e6c..73732f1 100644
+--- a/sympy/utilities/tests/test_pickling.py
++++ b/sympy/utilities/tests/test_pickling.py
+@@ -4,7 +4,7 @@
+ 
+ from sympy.physics.units import meter
+ 
+-from sympy.testing.pytest import XFAIL
++from sympy.testing.pytest import XFAIL, raises
+ 
+ from sympy.core.basic import Atom, Basic
+ from sympy.core.core import BasicMeta
+@@ -40,7 +40,12 @@
+ def check(a, exclude=[], check_attr=True):
+     """ Check that pickling and copying round-trips.
+     """
+-    protocols = [0, 1, 2, copy.copy, copy.deepcopy, 3, 4]
++    # Pickling with protocols 0 and 1 is disabled for Basic instances:
++    if isinstance(a, Basic):
++        for protocol in [0, 1]:
++            raises(NotImplementedError, lambda: pickle.dumps(a, protocol))
++
++    protocols = [2, copy.copy, copy.deepcopy, 3, 4]
+     if cloudpickle:
+         protocols.extend([cloudpickle])
+ 

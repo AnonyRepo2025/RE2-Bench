@@ -1,0 +1,1009 @@
+diff --git a/django/core/management/sql.py b/django/core/management/sql.py
+index 0d54f9b..1915007 100644
+--- a/django/core/management/sql.py
++++ b/django/core/management/sql.py
+@@ -1,7 +1,201 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12733/django/core/management/sql.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from django.apps import apps
+ from django.db import models
+ 
+ 
++@inspect_code
+ def sql_flush(style, connection, only_django=False, reset_sequences=True, allow_cascade=False):
+     """
+     Return a list of the SQL statements used to flush the database.
+@@ -13,8 +207,12 @@ def sql_flush(style, connection, only_django=False, reset_sequences=True, allow_
+         tables = connection.introspection.django_table_names(only_existing=True, include_views=False)
+     else:
+         tables = connection.introspection.table_names(include_views=False)
+-    seqs = connection.introspection.sequence_list() if reset_sequences else ()
+-    return connection.ops.sql_flush(style, tables, seqs, allow_cascade)
++    return connection.ops.sql_flush(
++        style,
++        tables,
++        reset_sequences=reset_sequences,
++        allow_cascade=allow_cascade,
++    )
+ 
+ 
+ def emit_pre_migrate_signal(verbosity, interactive, db, **kwargs):
+diff --git a/django/db/backends/base/operations.py b/django/db/backends/base/operations.py
+index 6e1187f..70ac07a 100644
+--- a/django/db/backends/base/operations.py
++++ b/django/db/backends/base/operations.py
+@@ -382,16 +382,18 @@ class BaseDatabaseOperations:
+         """
+         return ''
+ 
+-    def sql_flush(self, style, tables, sequences, allow_cascade=False):
++    def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
+         """
+         Return a list of SQL statements required to remove all data from
+         the given database tables (without actually removing the tables
+-        themselves) and the SQL statements required to reset the sequences
+-        passed in `sequences`.
++        themselves).
+ 
+         The `style` argument is a Style object as returned by either
+         color_style() or no_style() in django.core.management.color.
+ 
++        If `reset_sequences` is True, the list includes SQL statements required
++        to reset the sequences.
++
+         The `allow_cascade` argument determines whether truncation may cascade
+         to tables with foreign keys pointing the tables being truncated.
+         PostgreSQL requires a cascade even if these tables are empty.
+diff --git a/django/db/backends/mysql/operations.py b/django/db/backends/mysql/operations.py
+index 9d69ba1..d01e3be 100644
+--- a/django/db/backends/mysql/operations.py
++++ b/django/db/backends/mysql/operations.py
+@@ -193,29 +193,30 @@ class DatabaseOperations(BaseDatabaseOperations):
+         ]
+         return 'RETURNING %s' % ', '.join(columns), ()
+ 
+-    def sql_flush(self, style, tables, sequences, allow_cascade=False):
++    def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
+         if not tables:
+             return []
++
+         sql = ['SET FOREIGN_KEY_CHECKS = 0;']
+-        tables = set(tables)
+-        with_sequences = set(s['table'] for s in sequences)
+-        # It's faster to TRUNCATE tables that require a sequence reset since
+-        # ALTER TABLE AUTO_INCREMENT is slower than TRUNCATE.
+-        sql.extend(
+-            '%s %s;' % (
+-                style.SQL_KEYWORD('TRUNCATE'),
+-                style.SQL_FIELD(self.quote_name(table_name)),
+-            ) for table_name in tables.intersection(with_sequences)
+-        )
+-        # Otherwise issue a simple DELETE since it's faster than TRUNCATE
+-        # and preserves sequences.
+-        sql.extend(
+-            '%s %s %s;' % (
+-                style.SQL_KEYWORD('DELETE'),
+-                style.SQL_KEYWORD('FROM'),
+-                style.SQL_FIELD(self.quote_name(table_name)),
+-            ) for table_name in tables.difference(with_sequences)
+-        )
++        if reset_sequences:
++            # It's faster to TRUNCATE tables that require a sequence reset
++            # since ALTER TABLE AUTO_INCREMENT is slower than TRUNCATE.
++            sql.extend(
++                '%s %s;' % (
++                    style.SQL_KEYWORD('TRUNCATE'),
++                    style.SQL_FIELD(self.quote_name(table_name)),
++                ) for table_name in tables
++            )
++        else:
++            # Otherwise issue a simple DELETE since it's faster than TRUNCATE
++            # and preserves sequences.
++            sql.extend(
++                '%s %s %s;' % (
++                    style.SQL_KEYWORD('DELETE'),
++                    style.SQL_KEYWORD('FROM'),
++                    style.SQL_FIELD(self.quote_name(table_name)),
++                ) for table_name in tables
++            )
+         sql.append('SET FOREIGN_KEY_CHECKS = 1;')
+         return sql
+ 
+diff --git a/django/db/backends/oracle/operations.py b/django/db/backends/oracle/operations.py
+index a712442..6f41214 100644
+--- a/django/db/backends/oracle/operations.py
++++ b/django/db/backends/oracle/operations.py
+@@ -404,53 +404,58 @@ END;
+         # Django's test suite.
+         return lru_cache(maxsize=512)(self.__foreign_key_constraints)
+ 
+-    def sql_flush(self, style, tables, sequences, allow_cascade=False):
+-        if tables:
+-            truncated_tables = {table.upper() for table in tables}
+-            constraints = set()
+-            # Oracle's TRUNCATE CASCADE only works with ON DELETE CASCADE
+-            # foreign keys which Django doesn't define. Emulate the
+-            # PostgreSQL behavior which truncates all dependent tables by
+-            # manually retrieving all foreign key constraints and resolving
+-            # dependencies.
+-            for table in tables:
+-                for foreign_table, constraint in self._foreign_key_constraints(table, recursive=allow_cascade):
+-                    if allow_cascade:
+-                        truncated_tables.add(foreign_table)
+-                    constraints.add((foreign_table, constraint))
+-            sql = [
+-                "%s %s %s %s %s %s %s %s;" % (
+-                    style.SQL_KEYWORD('ALTER'),
+-                    style.SQL_KEYWORD('TABLE'),
+-                    style.SQL_FIELD(self.quote_name(table)),
+-                    style.SQL_KEYWORD('DISABLE'),
+-                    style.SQL_KEYWORD('CONSTRAINT'),
+-                    style.SQL_FIELD(self.quote_name(constraint)),
+-                    style.SQL_KEYWORD('KEEP'),
+-                    style.SQL_KEYWORD('INDEX'),
+-                ) for table, constraint in constraints
+-            ] + [
+-                "%s %s %s;" % (
+-                    style.SQL_KEYWORD('TRUNCATE'),
+-                    style.SQL_KEYWORD('TABLE'),
+-                    style.SQL_FIELD(self.quote_name(table)),
+-                ) for table in truncated_tables
+-            ] + [
+-                "%s %s %s %s %s %s;" % (
+-                    style.SQL_KEYWORD('ALTER'),
+-                    style.SQL_KEYWORD('TABLE'),
+-                    style.SQL_FIELD(self.quote_name(table)),
+-                    style.SQL_KEYWORD('ENABLE'),
+-                    style.SQL_KEYWORD('CONSTRAINT'),
+-                    style.SQL_FIELD(self.quote_name(constraint)),
+-                ) for table, constraint in constraints
++    def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
++        if not tables:
++            return []
++
++        truncated_tables = {table.upper() for table in tables}
++        constraints = set()
++        # Oracle's TRUNCATE CASCADE only works with ON DELETE CASCADE foreign
++        # keys which Django doesn't define. Emulate the PostgreSQL behavior
++        # which truncates all dependent tables by manually retrieving all
++        # foreign key constraints and resolving dependencies.
++        for table in tables:
++            for foreign_table, constraint in self._foreign_key_constraints(table, recursive=allow_cascade):
++                if allow_cascade:
++                    truncated_tables.add(foreign_table)
++                constraints.add((foreign_table, constraint))
++        sql = [
++            '%s %s %s %s %s %s %s %s;' % (
++                style.SQL_KEYWORD('ALTER'),
++                style.SQL_KEYWORD('TABLE'),
++                style.SQL_FIELD(self.quote_name(table)),
++                style.SQL_KEYWORD('DISABLE'),
++                style.SQL_KEYWORD('CONSTRAINT'),
++                style.SQL_FIELD(self.quote_name(constraint)),
++                style.SQL_KEYWORD('KEEP'),
++                style.SQL_KEYWORD('INDEX'),
++            ) for table, constraint in constraints
++        ] + [
++            '%s %s %s;' % (
++                style.SQL_KEYWORD('TRUNCATE'),
++                style.SQL_KEYWORD('TABLE'),
++                style.SQL_FIELD(self.quote_name(table)),
++            ) for table in truncated_tables
++        ] + [
++            '%s %s %s %s %s %s;' % (
++                style.SQL_KEYWORD('ALTER'),
++                style.SQL_KEYWORD('TABLE'),
++                style.SQL_FIELD(self.quote_name(table)),
++                style.SQL_KEYWORD('ENABLE'),
++                style.SQL_KEYWORD('CONSTRAINT'),
++                style.SQL_FIELD(self.quote_name(constraint)),
++            ) for table, constraint in constraints
++        ]
++        if reset_sequences:
++            sequences = [
++                sequence
++                for sequence in self.connection.introspection.sequence_list()
++                if sequence['table'].upper() in truncated_tables
+             ]
+-            # Since we've just deleted all the rows, running our sequence
+-            # ALTER code will reset the sequence to 0.
++            # Since we've just deleted all the rows, running our sequence ALTER
++            # code will reset the sequence to 0.
+             sql.extend(self.sequence_reset_by_name_sql(style, sequences))
+-            return sql
+-        else:
+-            return []
++        return sql
+ 
+     def sequence_reset_by_name_sql(self, style, sequences):
+         sql = []
+diff --git a/django/db/backends/postgresql/operations.py b/django/db/backends/postgresql/operations.py
+index ec87b61..70880d4 100644
+--- a/django/db/backends/postgresql/operations.py
++++ b/django/db/backends/postgresql/operations.py
+@@ -117,29 +117,22 @@ class DatabaseOperations(BaseDatabaseOperations):
+     def set_time_zone_sql(self):
+         return "SET TIME ZONE %s"
+ 
+-    def sql_flush(self, style, tables, sequences, allow_cascade=False):
+-        if tables:
+-            # Perform a single SQL 'TRUNCATE x, y, z...;' statement.  It allows
+-            # us to truncate tables referenced by a foreign key in any other
+-            # table.
+-            tables_sql = ', '.join(
+-                style.SQL_FIELD(self.quote_name(table)) for table in tables)
+-            if allow_cascade:
+-                sql = ['%s %s %s;' % (
+-                    style.SQL_KEYWORD('TRUNCATE'),
+-                    tables_sql,
+-                    style.SQL_KEYWORD('CASCADE'),
+-                )]
+-            else:
+-                sql = ['%s %s;' % (
+-                    style.SQL_KEYWORD('TRUNCATE'),
+-                    tables_sql,
+-                )]
+-            sql.extend(self.sequence_reset_by_name_sql(style, sequences))
+-            return sql
+-        else:
++    def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
++        if not tables:
+             return []
+ 
++        # Perform a single SQL 'TRUNCATE x, y, z...;' statement. It allows us
++        # to truncate tables referenced by a foreign key in any other table.
++        sql_parts = [
++            style.SQL_KEYWORD('TRUNCATE'),
++            ', '.join(style.SQL_FIELD(self.quote_name(table)) for table in tables),
++        ]
++        if reset_sequences:
++            sql_parts.append(style.SQL_KEYWORD('RESTART IDENTITY'))
++        if allow_cascade:
++            sql_parts.append(style.SQL_KEYWORD('CASCADE'))
++        return ['%s;' % ' '.join(sql_parts)]
++
+     def sequence_reset_by_name_sql(self, style, sequences):
+         # 'ALTER SEQUENCE sequence_name RESTART WITH 1;'... style SQL statements
+         # to reset sequence indices
+diff --git a/django/db/backends/sqlite3/operations.py b/django/db/backends/sqlite3/operations.py
+index fcc2a06..7d1970a 100644
+--- a/django/db/backends/sqlite3/operations.py
++++ b/django/db/backends/sqlite3/operations.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12733/django/db/backends/sqlite3/operations.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import datetime
+ import decimal
+ import uuid
+@@ -196,7 +389,8 @@ class DatabaseOperations(BaseDatabaseOperations):
+         # Django's test suite.
+         return lru_cache(maxsize=512)(self.__references_graph)
+ 
+-    def sql_flush(self, style, tables, sequences, allow_cascade=False):
++    @inspect_code
++    def sql_flush(self, style, tables, *, reset_sequences=False, allow_cascade=False):
+         if tables and allow_cascade:
+             # Simulate TRUNCATE CASCADE by recursively collecting the tables
+             # referencing the tables to be flushed.
+diff --git a/tests/backends/base/test_operations.py b/tests/backends/base/test_operations.py
+index 5dff48d..0485fe8 100644
+--- a/tests/backends/base/test_operations.py
++++ b/tests/backends/base/test_operations.py
+@@ -43,7 +43,7 @@ class SimpleDatabaseOperationTests(SimpleTestCase):
+     def test_sql_flush(self):
+         msg = 'subclasses of BaseDatabaseOperations must provide a sql_flush() method'
+         with self.assertRaisesMessage(NotImplementedError, msg):
+-            self.ops.sql_flush(None, None, None)
++            self.ops.sql_flush(None, None)
+ 
+     def test_pk_default_value(self):
+         self.assertEqual(self.ops.pk_default_value(), 'DEFAULT')
+@@ -154,7 +154,7 @@ class SqlFlushTests(TransactionTestCase):
+     available_apps = ['backends']
+ 
+     def test_sql_flush_no_tables(self):
+-        self.assertEqual(connection.ops.sql_flush(no_style(), [], []), [])
++        self.assertEqual(connection.ops.sql_flush(no_style(), []), [])
+ 
+     def test_execute_sql_flush_statements(self):
+         with transaction.atomic():
+@@ -169,12 +169,7 @@ class SqlFlushTests(TransactionTestCase):
+         sql_list = connection.ops.sql_flush(
+             no_style(),
+             [Author._meta.db_table, Book._meta.db_table],
+-            [
+-                {
+-                    'table': Author._meta.db_table,
+-                    'column': Author._meta.pk.db_column,
+-                },
+-            ],
++            reset_sequences=True,
+             allow_cascade=True,
+         )
+         connection.ops.execute_sql_flush(connection.alias, sql_list)
+@@ -185,3 +180,5 @@ class SqlFlushTests(TransactionTestCase):
+             if connection.features.supports_sequence_reset:
+                 author = Author.objects.create(name='F. Scott Fitzgerald')
+                 self.assertEqual(author.pk, 1)
++                book = Book.objects.create(author=author)
++                self.assertEqual(book.pk, 1)
+diff --git a/tests/backends/mysql/test_operations.py b/tests/backends/mysql/test_operations.py
+index f1d9342..a98e896 100644
+--- a/tests/backends/mysql/test_operations.py
++++ b/tests/backends/mysql/test_operations.py
+@@ -4,7 +4,7 @@ from django.core.management.color import no_style
+ from django.db import connection
+ from django.test import SimpleTestCase
+ 
+-from ..models import Person, Square, Tag
++from ..models import Person, Tag
+ 
+ 
+ @unittest.skipUnless(connection.vendor == 'mysql', 'MySQL tests.')
+@@ -13,50 +13,35 @@ class MySQLOperationsTests(SimpleTestCase):
+         # allow_cascade doesn't change statements on MySQL.
+         for allow_cascade in [False, True]:
+             with self.subTest(allow_cascade=allow_cascade):
+-                statements = connection.ops.sql_flush(
+-                    no_style(),
+-                    [Person._meta.db_table, Tag._meta.db_table],
+-                    [],
+-                    allow_cascade=allow_cascade,
+-                )
+-                self.assertEqual(statements[0], 'SET FOREIGN_KEY_CHECKS = 0;')
+-                # The tables are processed in an unordered set.
+                 self.assertEqual(
+-                    sorted(statements[1:-1]),
++                    connection.ops.sql_flush(
++                        no_style(),
++                        [Person._meta.db_table, Tag._meta.db_table],
++                        allow_cascade=allow_cascade,
++                    ),
+                     [
++                        'SET FOREIGN_KEY_CHECKS = 0;',
+                         'DELETE FROM `backends_person`;',
+                         'DELETE FROM `backends_tag`;',
++                        'SET FOREIGN_KEY_CHECKS = 1;',
+                     ],
+                 )
+-                self.assertEqual(statements[-1], 'SET FOREIGN_KEY_CHECKS = 1;')
+ 
+     def test_sql_flush_sequences(self):
+         # allow_cascade doesn't change statements on MySQL.
+         for allow_cascade in [False, True]:
+             with self.subTest(allow_cascade=allow_cascade):
+-                statements = connection.ops.sql_flush(
+-                    no_style(),
+-                    [Person._meta.db_table, Square._meta.db_table, Tag._meta.db_table],
+-                    [
+-                        {
+-                            'table': Person._meta.db_table,
+-                            'column': Person._meta.pk.db_column,
+-                        },
+-                        {
+-                            'table': Tag._meta.db_table,
+-                            'column': Tag._meta.pk.db_column,
+-                        },
+-                    ],
+-                    allow_cascade=allow_cascade,
+-                )
+-                self.assertEqual(statements[0], 'SET FOREIGN_KEY_CHECKS = 0;')
+-                # The tables are processed in an unordered set.
+                 self.assertEqual(
+-                    sorted(statements[1:-1]),
++                    connection.ops.sql_flush(
++                        no_style(),
++                        [Person._meta.db_table, Tag._meta.db_table],
++                        reset_sequences=True,
++                        allow_cascade=allow_cascade,
++                    ),
+                     [
+-                        'DELETE FROM `backends_square`;',
++                        'SET FOREIGN_KEY_CHECKS = 0;',
+                         'TRUNCATE `backends_person`;',
+                         'TRUNCATE `backends_tag`;',
++                        'SET FOREIGN_KEY_CHECKS = 1;',
+                     ],
+                 )
+-                self.assertEqual(statements[-1], 'SET FOREIGN_KEY_CHECKS = 1;')
+diff --git a/tests/backends/oracle/test_operations.py b/tests/backends/oracle/test_operations.py
+index 97760ec..7722744 100644
+--- a/tests/backends/oracle/test_operations.py
++++ b/tests/backends/oracle/test_operations.py
+@@ -31,7 +31,6 @@ class OperationsTests(unittest.TestCase):
+         statements = connection.ops.sql_flush(
+             no_style(),
+             [Person._meta.db_table, Tag._meta.db_table],
+-            [],
+         )
+         # The tables and constraints are processed in an unordered set.
+         self.assertEqual(
+@@ -56,7 +55,6 @@ class OperationsTests(unittest.TestCase):
+         statements = connection.ops.sql_flush(
+             no_style(),
+             [Person._meta.db_table, Tag._meta.db_table],
+-            [],
+             allow_cascade=True,
+         )
+         # The tables and constraints are processed in an unordered set.
+@@ -83,16 +81,7 @@ class OperationsTests(unittest.TestCase):
+         statements = connection.ops.sql_flush(
+             no_style(),
+             [Person._meta.db_table, Tag._meta.db_table],
+-            [
+-                {
+-                    'table': Person._meta.db_table,
+-                    'column': Person._meta.pk.db_column,
+-                },
+-                {
+-                    'table': Tag._meta.db_table,
+-                    'column': Tag._meta.pk.db_column,
+-                },
+-            ],
++            reset_sequences=True,
+         )
+         # The tables and constraints are processed in an unordered set.
+         self.assertEqual(
+@@ -121,16 +110,7 @@ class OperationsTests(unittest.TestCase):
+         statements = connection.ops.sql_flush(
+             no_style(),
+             [Person._meta.db_table, Tag._meta.db_table],
+-            [
+-                {
+-                    'table': Person._meta.db_table,
+-                    'column': Person._meta.pk.db_column,
+-                },
+-                {
+-                    'table': Tag._meta.db_table,
+-                    'column': Tag._meta.pk.db_column,
+-                },
+-            ],
++            reset_sequences=True,
+             allow_cascade=True,
+         )
+         # The tables and constraints are processed in an unordered set.
+@@ -153,6 +133,7 @@ class OperationsTests(unittest.TestCase):
+             '"BACKENDS__PERSON_ID_1DD5E829_F";',
+         )
+         # Sequences.
+-        self.assertEqual(len(statements[5:]), 2)
++        self.assertEqual(len(statements[5:]), 3)
+         self.assertIn('BACKENDS_PERSON_SQ', statements[5])
+-        self.assertIn('BACKENDS_TAG_SQ', statements[6])
++        self.assertIn('BACKENDS_VERYLONGMODELN7BE2_SQ', statements[6])
++        self.assertIn('BACKENDS_TAG_SQ', statements[7])
+diff --git a/tests/backends/postgresql/test_operations.py b/tests/backends/postgresql/test_operations.py
+index b073f68..821bb29 100644
+--- a/tests/backends/postgresql/test_operations.py
++++ b/tests/backends/postgresql/test_operations.py
+@@ -14,7 +14,6 @@ class PostgreSQLOperationsTests(SimpleTestCase):
+             connection.ops.sql_flush(
+                 no_style(),
+                 [Person._meta.db_table, Tag._meta.db_table],
+-                [],
+             ),
+             ['TRUNCATE "backends_person", "backends_tag";'],
+         )
+@@ -24,61 +23,28 @@ class PostgreSQLOperationsTests(SimpleTestCase):
+             connection.ops.sql_flush(
+                 no_style(),
+                 [Person._meta.db_table, Tag._meta.db_table],
+-                [],
+                 allow_cascade=True,
+             ),
+             ['TRUNCATE "backends_person", "backends_tag" CASCADE;'],
+         )
+ 
+     def test_sql_flush_sequences(self):
+-        sequence_reset_sql = (
+-            "SELECT setval(pg_get_serial_sequence('%s','id'), 1, false);"
+-        )
+         self.assertEqual(
+             connection.ops.sql_flush(
+                 no_style(),
+                 [Person._meta.db_table, Tag._meta.db_table],
+-                [
+-                    {
+-                        'table': Person._meta.db_table,
+-                        'column': Person._meta.pk.db_column,
+-                    },
+-                    {
+-                        'table': Tag._meta.db_table,
+-                        'column': Tag._meta.pk.db_column,
+-                    },
+-                ],
++                reset_sequences=True,
+             ),
+-            [
+-                'TRUNCATE "backends_person", "backends_tag";',
+-                sequence_reset_sql % '"backends_person"',
+-                sequence_reset_sql % '"backends_tag"',
+-            ],
++            ['TRUNCATE "backends_person", "backends_tag" RESTART IDENTITY;'],
+         )
+ 
+     def test_sql_flush_sequences_allow_cascade(self):
+-        sequence_reset_sql = (
+-            "SELECT setval(pg_get_serial_sequence('%s','id'), 1, false);"
+-        )
+         self.assertEqual(
+             connection.ops.sql_flush(
+                 no_style(),
+                 [Person._meta.db_table, Tag._meta.db_table],
+-                [
+-                    {
+-                        'table': Person._meta.db_table,
+-                        'column': Person._meta.pk.db_column,
+-                    },
+-                    {
+-                        'table': Tag._meta.db_table,
+-                        'column': Tag._meta.pk.db_column,
+-                    },
+-                ],
++                reset_sequences=True,
+                 allow_cascade=True,
+             ),
+-            [
+-                'TRUNCATE "backends_person", "backends_tag" CASCADE;',
+-                sequence_reset_sql % '"backends_person"',
+-                sequence_reset_sql % '"backends_tag"',
+-            ],
++            ['TRUNCATE "backends_person", "backends_tag" RESTART IDENTITY CASCADE;'],
+         )
+diff --git a/tests/backends/sqlite/test_operations.py b/tests/backends/sqlite/test_operations.py
+index 34c4d82..0ee7006 100644
+--- a/tests/backends/sqlite/test_operations.py
++++ b/tests/backends/sqlite/test_operations.py
+@@ -14,7 +14,6 @@ class SQLiteOperationsTests(TestCase):
+             connection.ops.sql_flush(
+                 no_style(),
+                 [Person._meta.db_table, Tag._meta.db_table],
+-                [],
+             ),
+             [
+                 'DELETE FROM "backends_person";',
+@@ -26,7 +25,6 @@ class SQLiteOperationsTests(TestCase):
+         statements = connection.ops.sql_flush(
+             no_style(),
+             [Person._meta.db_table, Tag._meta.db_table],
+-            [],
+             allow_cascade=True,
+         )
+         self.assertEqual(
+@@ -47,16 +45,7 @@ class SQLiteOperationsTests(TestCase):
+             connection.ops.sql_flush(
+                 no_style(),
+                 [Person._meta.db_table, Tag._meta.db_table],
+-                [
+-                    {
+-                        'table': Person._meta.db_table,
+-                        'column': Person._meta.pk.db_column,
+-                    },
+-                    {
+-                        'table': Tag._meta.db_table,
+-                        'column': Tag._meta.pk.db_column,
+-                    },
+-                ],
++                reset_sequences=True,
+             ),
+             [
+                 'DELETE FROM "backends_person";',
+@@ -69,16 +58,7 @@ class SQLiteOperationsTests(TestCase):
+         statements = connection.ops.sql_flush(
+             no_style(),
+             [Person._meta.db_table, Tag._meta.db_table],
+-            [
+-                {
+-                    'table': Person._meta.db_table,
+-                    'column': Person._meta.pk.db_column,
+-                },
+-                {
+-                    'table': Tag._meta.db_table,
+-                    'column': Tag._meta.pk.db_column,
+-                },
+-            ],
++            reset_sequences=True,
+             allow_cascade=True,
+         )
+         self.assertEqual(
+diff --git a/tests/backends/tests.py b/tests/backends/tests.py
+index f20d3db..2cbfa2f 100644
+--- a/tests/backends/tests.py
++++ b/tests/backends/tests.py
+@@ -161,13 +161,7 @@ class LongNameTest(TransactionTestCase):
+             VLM._meta.db_table,
+             VLM_m2m._meta.db_table,
+         ]
+-        sequences = [
+-            {
+-                'column': VLM._meta.pk.column,
+-                'table': VLM._meta.db_table
+-            },
+-        ]
+-        sql_list = connection.ops.sql_flush(no_style(), tables, sequences)
++        sql_list = connection.ops.sql_flush(no_style(), tables, reset_sequences=True)
+         with connection.cursor() as cursor:
+             for statement in sql_list:
+                 cursor.execute(statement)

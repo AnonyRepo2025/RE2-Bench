@@ -1,0 +1,750 @@
+diff --git a/django/template/__init__.py b/django/template/__init__.py
+index e5ac524..7414d0f 100644
+--- a/django/template/__init__.py
++++ b/django/template/__init__.py
+@@ -64,5 +64,8 @@ from .base import (                                                     # NOQA i
+ # Library management
+ from .library import Library                                            # NOQA isort:skip
+ 
++# Import the .autoreload module to trigger the registrations of signals.
++from . import autoreload                                                # NOQA isort:skip
++
+ 
+ __all__ += ('Template', 'Context', 'RequestContext')
+diff --git a/django/template/loaders/cached.py b/django/template/loaders/cached.py
+index 2ee6591..3a20ce3 100644
+--- a/django/template/loaders/cached.py
++++ b/django/template/loaders/cached.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12928/django/template/loaders/cached.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Wrapper class that takes a list of template loaders as an argument and attempts
+ to load templates from them in order, caching the result.
+@@ -18,6 +211,12 @@ class Loader(BaseLoader):
+         self.loaders = engine.get_template_loaders(loaders)
+         super().__init__(engine)
+ 
++    @inspect_code
++    def get_dirs(self):
++        for loader in self.loaders:
++            if hasattr(loader, "get_dirs"):
++                yield from loader.get_dirs()
++
+     def get_contents(self, origin):
+         return origin.loader.get_contents(origin)
+ 
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+index 442ece1..44cdd5d 100644
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12928/django/utils/autoreload.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import functools
+ import itertools
+ import logging
+@@ -14,6 +207,7 @@ from pathlib import Path
+ from types import ModuleType
+ from zipimport import zipimporter
+ 
++import django
+ from django.apps import apps
+ from django.core.signals import request_finished
+ from django.dispatch import Signal
+@@ -45,6 +239,17 @@ except ImportError:
+     pywatchman = None
+ 
+ 
++@inspect_code
++def is_django_module(module):
++    """Return True if the given module is nested under Django."""
++    return module.__name__.startswith('django.')
++
++
++def is_django_path(path):
++    """Return True if the given file path is nested under Django."""
++    return Path(django.__file__).parent in Path(path).parents
++
++
+ def check_errors(fn):
+     @functools.wraps(fn)
+     def wrapper(*args, **kwargs):
+@@ -431,8 +636,15 @@ class WatchmanReloader(BaseReloader):
+ 
+     def _subscribe(self, directory, name, expression):
+         root, rel_path = self._watch_root(directory)
++        # Only receive notifications of files changing, filtering out other types
++        # like special files: https://facebook.github.io/watchman/docs/type
++        only_files_expression = [
++            'allof',
++            ['anyof', ['type', 'f'], ['type', 'l']],
++            expression
++        ]
+         query = {
+-            'expression': expression,
++            'expression': only_files_expression,
+             'fields': ['name'],
+             'since': self._get_clock(root),
+             'dedup_results': True,
+diff --git a/django/utils/translation/reloader.py b/django/utils/translation/reloader.py
+index 695f769..8795dec 100644
+--- a/django/utils/translation/reloader.py
++++ b/django/utils/translation/reloader.py
+@@ -1,15 +1,205 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12928/django/utils/translation/reloader.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from pathlib import Path
+ 
+ from asgiref.local import Local
+ 
+ from django.apps import apps
++from django.utils.autoreload import is_django_module
+ 
+ 
+-def _is_django_module(module):
+-    """Return True if the given module is nested under Django."""
+-    return module.__name__.startswith('django.')
+-
+-
++@inspect_code
+ def watch_for_translation_changes(sender, **kwargs):
+     """Register file watchers for .mo files in potential locale paths."""
+     from django.conf import settings
+@@ -19,7 +209,7 @@ def watch_for_translation_changes(sender, **kwargs):
+         directories.extend(
+             Path(config.path) / 'locale'
+             for config in apps.get_app_configs()
+-            if not _is_django_module(config.module)
++            if not is_django_module(config.module)
+         )
+         directories.extend(Path(p) for p in settings.LOCALE_PATHS)
+         for path in directories:
+diff --git a/tests/template_tests/test_loaders.py b/tests/template_tests/test_loaders.py
+index 258b18f..6f9c4c9 100644
+--- a/tests/template_tests/test_loaders.py
++++ b/tests/template_tests/test_loaders.py
+@@ -93,6 +93,10 @@ class CachedLoaderTests(SimpleTestCase):
+         """
+         self.assertEqual(self.engine.template_loaders[0].cache_key(lazystr('template.html'), []), 'template.html')
+ 
++    def test_get_dirs(self):
++        inner_dirs = self.engine.template_loaders[0].loaders[0].get_dirs()
++        self.assertSequenceEqual(list(self.engine.template_loaders[0].get_dirs()), list(inner_dirs))
++
+ 
+ class FileSystemLoaderTests(SimpleTestCase):
+ 
+diff --git a/tests/utils_tests/test_autoreload.py b/tests/utils_tests/test_autoreload.py
+index 5b1a733..e21414f 100644
+--- a/tests/utils_tests/test_autoreload.py
++++ b/tests/utils_tests/test_autoreload.py
+@@ -14,6 +14,8 @@ from pathlib import Path
+ from subprocess import CompletedProcess
+ from unittest import mock, skip, skipIf
+ 
++import pytz
++
+ import django.__main__
+ from django.apps.registry import Apps
+ from django.test import SimpleTestCase
+@@ -201,6 +203,26 @@ class TestChildArguments(SimpleTestCase):
+             autoreload.get_child_arguments()
+ 
+ 
++class TestUtilities(SimpleTestCase):
++    def test_is_django_module(self):
++        for module, expected in (
++            (pytz, False),
++            (sys, False),
++            (autoreload, True)
++        ):
++            with self.subTest(module=module):
++                self.assertIs(autoreload.is_django_module(module), expected)
++
++    def test_is_django_path(self):
++        for module, expected in (
++            (pytz.__file__, False),
++            (contextlib.__file__, False),
++            (autoreload.__file__, True)
++        ):
++            with self.subTest(module=module):
++                self.assertIs(autoreload.is_django_path(module), expected)
++
++
+ class TestCommonRoots(SimpleTestCase):
+     def test_common_roots(self):
+         paths = (

@@ -1,0 +1,425 @@
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+index 4a68fb0..0a81f4f 100644
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-11177/django/utils/autoreload.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import functools
+ import itertools
+ import logging
+@@ -77,20 +270,24 @@ def raise_last_exception():
+         raise _exception[0](_exception[1]).with_traceback(_exception[2])
+ 
+ 
++@inspect_code
+ def ensure_echo_on():
+-    if termios:
+-        fd = sys.stdin
+-        if fd.isatty():
+-            attr_list = termios.tcgetattr(fd)
+-            if not attr_list[3] & termios.ECHO:
+-                attr_list[3] |= termios.ECHO
+-                if hasattr(signal, 'SIGTTOU'):
+-                    old_handler = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+-                else:
+-                    old_handler = None
+-                termios.tcsetattr(fd, termios.TCSANOW, attr_list)
+-                if old_handler is not None:
+-                    signal.signal(signal.SIGTTOU, old_handler)
++    """
++    Ensure that echo mode is enabled. Some tools such as PDB disable
++    it which causes usability issues after reload.
++    """
++    if not termios or not sys.stdin.isatty():
++        return
++    attr_list = termios.tcgetattr(sys.stdin)
++    if not attr_list[3] & termios.ECHO:
++        attr_list[3] |= termios.ECHO
++        if hasattr(signal, 'SIGTTOU'):
++            old_handler = signal.signal(signal.SIGTTOU, signal.SIG_IGN)
++        else:
++            old_handler = None
++        termios.tcsetattr(sys.stdin, termios.TCSANOW, attr_list)
++        if old_handler is not None:
++            signal.signal(signal.SIGTTOU, old_handler)
+ 
+ 
+ def iter_all_python_module_files():
+@@ -263,13 +460,19 @@ class BaseReloader:
+             logger.debug('Main Django thread has terminated before apps are ready.')
+             return False
+ 
++    @inspect_code
+     def run(self, django_main_thread):
+         logger.debug('Waiting for apps ready_event.')
+         self.wait_for_apps_ready(apps, django_main_thread)
+         from django.urls import get_resolver
+         # Prevent a race condition where URL modules aren't loaded when the
+         # reloader starts by accessing the urlconf_module property.
+-        get_resolver().urlconf_module
++        try:
++            get_resolver().urlconf_module
++        except Exception:
++            # Loading the urlconf can result in errors during development.
++            # If this occurs then swallow the error and continue.
++            pass
+         logger.debug('Apps ready_event triggered. Sending autoreload_started signal.')
+         autoreload_started.send(sender=self)
+         self.run_loop()
+@@ -316,41 +519,33 @@ class StatReloader(BaseReloader):
+     SLEEP_TIME = 1  # Check for changes once per second.
+ 
+     def tick(self):
+-        state, previous_timestamp = {}, time.time()
++        mtimes = {}
+         while True:
+-            state.update(self.loop_files(state, previous_timestamp))
+-            previous_timestamp = time.time()
++            for filepath, mtime in self.snapshot_files():
++                old_time = mtimes.get(filepath)
++                if old_time is None:
++                    logger.debug('File %s first seen with mtime %s', filepath, mtime)
++                    mtimes[filepath] = mtime
++                    continue
++                elif mtime > old_time:
++                    logger.debug('File %s previous mtime: %s, current mtime: %s', filepath, old_time, mtime)
++                    self.notify_file_changed(filepath)
++
+             time.sleep(self.SLEEP_TIME)
+             yield
+ 
+-    def loop_files(self, previous_times, previous_timestamp):
+-        updated_times = {}
+-        for path, mtime in self.snapshot_files():
+-            previous_time = previous_times.get(path)
+-            # If there are overlapping globs, a file may be iterated twice.
+-            if path in updated_times:
+-                continue
+-            # A new file has been detected. This could happen due to it being
+-            # imported at runtime and only being polled now, or because the
+-            # file was just created. Compare the file's mtime to the
+-            # previous_timestamp and send a notification if it was created
+-            # since the last poll.
+-            is_newly_created = previous_time is None and mtime > previous_timestamp
+-            is_changed = previous_time is not None and previous_time != mtime
+-            if is_newly_created or is_changed:
+-                logger.debug('File %s. is_changed: %s, is_new: %s', path, is_changed, is_newly_created)
+-                logger.debug('File %s previous mtime: %s, current mtime: %s', path, previous_time, mtime)
+-                self.notify_file_changed(path)
+-                updated_times[path] = mtime
+-        return updated_times
+-
+     def snapshot_files(self):
++        # watched_files may produce duplicate paths if globs overlap.
++        seen_files = set()
+         for file in self.watched_files():
++            if file in seen_files:
++                continue
+             try:
+                 mtime = file.stat().st_mtime
+             except OSError:
+                 # This is thrown when the file does not exist.
+                 continue
++            seen_files.add(file)
+             yield file, mtime
+ 
+     @classmethod
+@@ -552,11 +747,12 @@ def get_reloader():
+     return WatchmanReloader()
+ 
+ 
++@inspect_code
+ def start_django(reloader, main_func, *args, **kwargs):
+     ensure_echo_on()
+ 
+     main_func = check_errors(main_func)
+-    django_main_thread = threading.Thread(target=main_func, args=args, kwargs=kwargs)
++    django_main_thread = threading.Thread(target=main_func, args=args, kwargs=kwargs, name='django-main-thread')
+     django_main_thread.setDaemon(True)
+     django_main_thread.start()
+ 
+diff --git a/tests/utils_tests/test_autoreload.py b/tests/utils_tests/test_autoreload.py
+index c59cb23..42bcd0a 100644
+--- a/tests/utils_tests/test_autoreload.py
++++ b/tests/utils_tests/test_autoreload.py
+@@ -255,7 +255,7 @@ class StartDjangoTests(SimpleTestCase):
+         self.assertEqual(mocked_thread.call_count, 1)
+         self.assertEqual(
+             mocked_thread.call_args[1],
+-            {'target': fake_main_func, 'args': (123,), 'kwargs': {'abc': 123}}
++            {'target': fake_main_func, 'args': (123,), 'kwargs': {'abc': 123}, 'name': 'django-main-thread'}
+         )
+         self.assertSequenceEqual(fake_thread.setDaemon.call_args[0], [True])
+         self.assertTrue(fake_thread.start.called)
+@@ -376,26 +376,6 @@ class IntegrationTests:
+         self.assertEqual(notify_mock.call_count, 1)
+         self.assertCountEqual(notify_mock.call_args[0], [self.existing_file])
+ 
+-    @mock.patch('django.utils.autoreload.BaseReloader.notify_file_changed')
+-    @mock.patch('django.utils.autoreload.iter_all_python_module_files', return_value=frozenset())
+-    def test_nonexistent_file(self, mocked_modules, notify_mock):
+-        self.reloader.watch_file(self.nonexistent_file)
+-        with self.tick_twice():
+-            self.ensure_file(self.nonexistent_file)
+-        self.assertEqual(notify_mock.call_count, 1)
+-        self.assertCountEqual(notify_mock.call_args[0], [self.nonexistent_file])
+-
+-    @mock.patch('django.utils.autoreload.BaseReloader.notify_file_changed')
+-    @mock.patch('django.utils.autoreload.iter_all_python_module_files', return_value=frozenset())
+-    def test_nonexistent_file_in_non_existing_directory(self, mocked_modules, notify_mock):
+-        non_existing_directory = self.tempdir / 'non_existing_dir'
+-        nonexistent_file = non_existing_directory / 'test'
+-        self.reloader.watch_file(nonexistent_file)
+-        with self.tick_twice():
+-            self.ensure_file(nonexistent_file)
+-        self.assertEqual(notify_mock.call_count, 1)
+-        self.assertCountEqual(notify_mock.call_args[0], [nonexistent_file])
+-
+     @mock.patch('django.utils.autoreload.BaseReloader.notify_file_changed')
+     @mock.patch('django.utils.autoreload.iter_all_python_module_files', return_value=frozenset())
+     def test_glob(self, mocked_modules, notify_mock):
+@@ -407,18 +387,6 @@ class IntegrationTests:
+         self.assertEqual(notify_mock.call_count, 1)
+         self.assertCountEqual(notify_mock.call_args[0], [self.existing_file])
+ 
+-    @mock.patch('django.utils.autoreload.BaseReloader.notify_file_changed')
+-    @mock.patch('django.utils.autoreload.iter_all_python_module_files', return_value=frozenset())
+-    def test_glob_non_existing_directory(self, mocked_modules, notify_mock):
+-        non_existing_directory = self.tempdir / 'does_not_exist'
+-        nonexistent_file = non_existing_directory / 'test.py'
+-        self.reloader.watch_dir(non_existing_directory, '*.py')
+-        with self.tick_twice():
+-            self.ensure_file(nonexistent_file)
+-            self.set_mtime(nonexistent_file, time.time())
+-        self.assertEqual(notify_mock.call_count, 1)
+-        self.assertCountEqual(notify_mock.call_args[0], [nonexistent_file])
+-
+     @mock.patch('django.utils.autoreload.BaseReloader.notify_file_changed')
+     @mock.patch('django.utils.autoreload.iter_all_python_module_files', return_value=frozenset())
+     def test_multiple_globs(self, mocked_modules, notify_mock):
+@@ -669,28 +637,8 @@ class StatReloaderTests(ReloaderTests, IntegrationTests):
+             snapshot2 = dict(self.reloader.snapshot_files())
+             self.assertNotEqual(snapshot1[self.existing_file], snapshot2[self.existing_file])
+ 
+-    def test_does_not_fire_without_changes(self):
+-        with mock.patch.object(self.reloader, 'watched_files', return_value=[self.existing_file]), \
+-                mock.patch.object(self.reloader, 'notify_file_changed') as notifier:
+-            mtime = self.existing_file.stat().st_mtime
+-            initial_snapshot = {self.existing_file: mtime}
+-            second_snapshot = self.reloader.loop_files(initial_snapshot, time.time())
+-            self.assertEqual(second_snapshot, {})
+-            notifier.assert_not_called()
+-
+-    def test_fires_when_created(self):
+-        with mock.patch.object(self.reloader, 'watched_files', return_value=[self.nonexistent_file]), \
+-                mock.patch.object(self.reloader, 'notify_file_changed') as notifier:
+-            self.nonexistent_file.touch()
+-            mtime = self.nonexistent_file.stat().st_mtime
+-            second_snapshot = self.reloader.loop_files({}, mtime - 1)
+-            self.assertCountEqual(second_snapshot.keys(), [self.nonexistent_file])
+-            notifier.assert_called_once_with(self.nonexistent_file)
+-
+-    def test_fires_with_changes(self):
+-        with mock.patch.object(self.reloader, 'watched_files', return_value=[self.existing_file]), \
+-                mock.patch.object(self.reloader, 'notify_file_changed') as notifier:
+-            initial_snapshot = {self.existing_file: 1}
+-            second_snapshot = self.reloader.loop_files(initial_snapshot, time.time())
+-            notifier.assert_called_once_with(self.existing_file)
+-            self.assertCountEqual(second_snapshot.keys(), [self.existing_file])
++    def test_snapshot_files_with_duplicates(self):
++        with mock.patch.object(self.reloader, 'watched_files', return_value=[self.existing_file, self.existing_file]):
++            snapshot = list(self.reloader.snapshot_files())
++            self.assertEqual(len(snapshot), 1)
++            self.assertEqual(snapshot[0][0], self.existing_file)

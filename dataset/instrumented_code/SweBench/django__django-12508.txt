@@ -1,0 +1,1179 @@
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+index 74ffc94..c554566 100644
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12508/django/core/management/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Base classes for writing management commands (named commands which can
+ be executed through ``django-admin`` or ``manage.py``).
+@@ -26,7 +219,10 @@ class CommandError(Exception):
+     error) is the preferred way to indicate that something has gone
+     wrong in the execution of a command.
+     """
+-    pass
++    @inspect_code
++    def __init__(self, *args, returncode=1, **kwargs):
++        self.returncode = returncode
++        super().__init__(*args, **kwargs)
+ 
+ 
+ class SystemCheckError(CommandError):
+@@ -308,6 +504,7 @@ class BaseCommand:
+         parser = self.create_parser(prog_name, subcommand)
+         parser.print_help()
+ 
++    @inspect_code
+     def run_from_argv(self, argv):
+         """
+         Set up any environment changes requested (e.g., Python path
+@@ -326,8 +523,8 @@ class BaseCommand:
+         handle_default_options(options)
+         try:
+             self.execute(*args, **cmd_options)
+-        except Exception as e:
+-            if options.traceback or not isinstance(e, CommandError):
++        except CommandError as e:
++            if options.traceback:
+                 raise
+ 
+             # SystemCheckError takes care of its own formatting.
+@@ -335,7 +532,7 @@ class BaseCommand:
+                 self.stderr.write(str(e), lambda x: x)
+             else:
+                 self.stderr.write('%s: %s' % (e.__class__.__name__, e))
+-            sys.exit(1)
++            sys.exit(e.returncode)
+         finally:
+             try:
+                 connections.close_all()
+diff --git a/django/core/management/commands/dbshell.py b/django/core/management/commands/dbshell.py
+index 1cb6b52..fb3caed 100644
+--- a/django/core/management/commands/dbshell.py
++++ b/django/core/management/commands/dbshell.py
+@@ -1,3 +1,5 @@
++import subprocess
++
+ from django.core.management.base import BaseCommand, CommandError
+ from django.db import DEFAULT_DB_ALIAS, connections
+ 
+@@ -15,17 +17,27 @@ class Command(BaseCommand):
+             '--database', default=DEFAULT_DB_ALIAS,
+             help='Nominates a database onto which to open a shell. Defaults to the "default" database.',
+         )
++        parameters = parser.add_argument_group('parameters', prefix_chars='--')
++        parameters.add_argument('parameters', nargs='*')
+ 
+     def handle(self, **options):
+         connection = connections[options['database']]
+         try:
+-            connection.client.runshell()
+-        except OSError:
+-            # Note that we're assuming OSError means that the client program
+-            # isn't installed. There's a possibility OSError would be raised
+-            # for some other reason, in which case this error message would be
+-            # inaccurate. Still, this message catches the common case.
++            connection.client.runshell(options['parameters'])
++        except FileNotFoundError:
++            # Note that we're assuming the FileNotFoundError relates to the
++            # command missing. It could be raised for some other reason, in
++            # which case this error message would be inaccurate. Still, this
++            # message catches the common case.
+             raise CommandError(
+                 'You appear not to have the %r program installed or on your path.' %
+                 connection.client.executable_name
+             )
++        except subprocess.CalledProcessError as e:
++            raise CommandError(
++                '"%s" returned non-zero exit status %s.' % (
++                    ' '.join(e.cmd),
++                    e.returncode,
++                ),
++                returncode=e.returncode,
++            )
+diff --git a/django/db/backends/base/client.py b/django/db/backends/base/client.py
+index f6a0cda..563f029 100644
+--- a/django/db/backends/base/client.py
++++ b/django/db/backends/base/client.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12508/django/db/backends/base/client.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ class BaseDatabaseClient:
+     """Encapsulate backend-specific methods for opening a client shell."""
+     # This should be a string representing the name of the executable
+@@ -8,5 +201,6 @@ class BaseDatabaseClient:
+         # connection is an instance of BaseDatabaseWrapper.
+         self.connection = connection
+ 
+-    def runshell(self):
++    @inspect_code
++    def runshell(self, parameters):
+         raise NotImplementedError('subclasses of BaseDatabaseClient must provide a runshell() method')
+diff --git a/django/db/backends/mysql/client.py b/django/db/backends/mysql/client.py
+index a596a65..0e3a700 100644
+--- a/django/db/backends/mysql/client.py
++++ b/django/db/backends/mysql/client.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12508/django/db/backends/mysql/client.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import subprocess
+ 
+ from django.db.backends.base.client import BaseDatabaseClient
+@@ -7,7 +200,8 @@ class DatabaseClient(BaseDatabaseClient):
+     executable_name = 'mysql'
+ 
+     @classmethod
+-    def settings_to_cmd_args(cls, settings_dict):
++    @inspect_code
++    def settings_to_cmd_args(cls, settings_dict, parameters):
+         args = [cls.executable_name]
+         db = settings_dict['OPTIONS'].get('db', settings_dict['NAME'])
+         user = settings_dict['OPTIONS'].get('user', settings_dict['USER'])
+@@ -41,8 +235,9 @@ class DatabaseClient(BaseDatabaseClient):
+             args += ["--ssl-key=%s" % client_key]
+         if db:
+             args += [db]
++        args.extend(parameters)
+         return args
+ 
+-    def runshell(self):
+-        args = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)
++    def runshell(self, parameters):
++        args = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict, parameters)
+         subprocess.run(args, check=True)
+diff --git a/django/db/backends/mysql/creation.py b/django/db/backends/mysql/creation.py
+index 79d2959..99372fd 100644
+--- a/django/db/backends/mysql/creation.py
++++ b/django/db/backends/mysql/creation.py
+@@ -55,9 +55,9 @@ class DatabaseCreation(BaseDatabaseCreation):
+         self._clone_db(source_database_name, target_database_name)
+ 
+     def _clone_db(self, source_database_name, target_database_name):
+-        dump_args = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)[1:]
++        dump_args = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict, [])[1:]
+         dump_cmd = ['mysqldump', *dump_args[:-1], '--routines', '--events', source_database_name]
+-        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict)
++        load_cmd = DatabaseClient.settings_to_cmd_args(self.connection.settings_dict, [])
+         load_cmd[-1] = target_database_name
+ 
+         with subprocess.Popen(dump_cmd, stdout=subprocess.PIPE) as dump_proc:
+diff --git a/django/db/backends/oracle/client.py b/django/db/backends/oracle/client.py
+index 243c018..434481b 100644
+--- a/django/db/backends/oracle/client.py
++++ b/django/db/backends/oracle/client.py
+@@ -8,10 +8,11 @@ class DatabaseClient(BaseDatabaseClient):
+     executable_name = 'sqlplus'
+     wrapper_name = 'rlwrap'
+ 
+-    def runshell(self):
++    def runshell(self, parameters):
+         conn_string = self.connection._connect_string()
+         args = [self.executable_name, "-L", conn_string]
+         wrapper_path = shutil.which(self.wrapper_name)
+         if wrapper_path:
+             args = [wrapper_path, *args]
++        args.extend(parameters)
+         subprocess.run(args, check=True)
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+index 0efe0d4..002f3b3 100644
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12508/django/db/backends/postgresql/client.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import os
+ import signal
+ import subprocess
+@@ -9,7 +202,8 @@ class DatabaseClient(BaseDatabaseClient):
+     executable_name = 'psql'
+ 
+     @classmethod
+-    def runshell_db(cls, conn_params):
++    @inspect_code
++    def runshell_db(cls, conn_params, parameters):
+         args = [cls.executable_name]
+ 
+         host = conn_params.get('host', '')
+@@ -29,6 +223,7 @@ class DatabaseClient(BaseDatabaseClient):
+         if port:
+             args += ['-p', str(port)]
+         args += [dbname]
++        args.extend(parameters)
+ 
+         sigint_handler = signal.getsignal(signal.SIGINT)
+         subprocess_env = os.environ.copy()
+@@ -50,5 +245,6 @@ class DatabaseClient(BaseDatabaseClient):
+             # Restore the original SIGINT handler.
+             signal.signal(signal.SIGINT, sigint_handler)
+ 
+-    def runshell(self):
+-        DatabaseClient.runshell_db(self.connection.get_connection_params())
++    @inspect_code
++    def runshell(self, parameters):
++        self.runshell_db(self.connection.get_connection_params(), parameters)
+diff --git a/django/db/backends/sqlite3/client.py b/django/db/backends/sqlite3/client.py
+index f6b7077..a71005f 100644
+--- a/django/db/backends/sqlite3/client.py
++++ b/django/db/backends/sqlite3/client.py
+@@ -6,9 +6,10 @@ from django.db.backends.base.client import BaseDatabaseClient
+ class DatabaseClient(BaseDatabaseClient):
+     executable_name = 'sqlite3'
+ 
+-    def runshell(self):
++    def runshell(self, parameters):
+         # TODO: Remove str() when dropping support for PY37.
+         # args parameter accepts path-like objects on Windows since Python 3.8.
+         args = [self.executable_name,
+                 str(self.connection.settings_dict['NAME'])]
++        args.extend(parameters)
+         subprocess.run(args, check=True)
+diff --git a/tests/dbshell/test_mysql.py b/tests/dbshell/test_mysql.py
+index 6b60e27..91c1a6c 100644
+--- a/tests/dbshell/test_mysql.py
++++ b/tests/dbshell/test_mysql.py
+@@ -76,5 +76,23 @@ class MySqlDbshellCommandTestCase(SimpleTestCase):
+                 },
+             }))
+ 
+-    def get_command_line_arguments(self, connection_settings):
+-        return DatabaseClient.settings_to_cmd_args(connection_settings)
++    def test_parameters(self):
++        self.assertEqual(
++            ['mysql', 'somedbname', '--help'],
++            self.get_command_line_arguments(
++                {
++                    'NAME': 'somedbname',
++                    'USER': None,
++                    'PASSWORD': None,
++                    'HOST': None,
++                    'PORT': None,
++                    'OPTIONS': {},
++                },
++                ['--help'],
++            ),
++        )
++
++    def get_command_line_arguments(self, connection_settings, parameters=None):
++        if parameters is None:
++            parameters = []
++        return DatabaseClient.settings_to_cmd_args(connection_settings, parameters)
+diff --git a/tests/dbshell/test_oracle.py b/tests/dbshell/test_oracle.py
+index 431134e..41fbc07 100644
+--- a/tests/dbshell/test_oracle.py
++++ b/tests/dbshell/test_oracle.py
+@@ -8,17 +8,19 @@ from django.test import SimpleTestCase
+ 
+ @skipUnless(connection.vendor == 'oracle', 'Oracle tests')
+ class OracleDbshellTests(SimpleTestCase):
+-    def _run_dbshell(self, rlwrap=False):
++    def _run_dbshell(self, rlwrap=False, parameters=None):
+         """Run runshell command and capture its arguments."""
+         def _mock_subprocess_run(*args, **kwargs):
+             self.subprocess_args = list(*args)
+             return CompletedProcess(self.subprocess_args, 0)
+ 
++        if parameters is None:
++            parameters = []
+         client = DatabaseClient(connection)
+         self.subprocess_args = None
+         with mock.patch('subprocess.run', new=_mock_subprocess_run):
+             with mock.patch('shutil.which', return_value='/usr/bin/rlwrap' if rlwrap else None):
+-                client.runshell()
++                client.runshell(parameters)
+         return self.subprocess_args
+ 
+     def test_without_rlwrap(self):
+@@ -32,3 +34,9 @@ class OracleDbshellTests(SimpleTestCase):
+             self._run_dbshell(rlwrap=True),
+             ['/usr/bin/rlwrap', 'sqlplus', '-L', connection._connect_string()],
+         )
++
++    def test_parameters(self):
++        self.assertEqual(
++            self._run_dbshell(parameters=['-HELP']),
++            ['sqlplus', '-L', connection._connect_string(), '-HELP'],
++        )
+diff --git a/tests/dbshell/test_postgresql.py b/tests/dbshell/test_postgresql.py
+index 7047283..6de60ea 100644
+--- a/tests/dbshell/test_postgresql.py
++++ b/tests/dbshell/test_postgresql.py
+@@ -9,7 +9,7 @@ from django.test import SimpleTestCase
+ 
+ class PostgreSqlDbshellCommandTestCase(SimpleTestCase):
+ 
+-    def _run_it(self, dbinfo):
++    def _run_it(self, dbinfo, parameters=None):
+         """
+         That function invokes the runshell command, while mocking
+         subprocess.run(). It returns a 2-tuple with:
+@@ -21,8 +21,11 @@ class PostgreSqlDbshellCommandTestCase(SimpleTestCase):
+             # PostgreSQL environment variables.
+             self.pg_env = {key: env[key] for key in env if key.startswith('PG')}
+             return subprocess.CompletedProcess(self.subprocess_args, 0)
++
++        if parameters is None:
++            parameters = []
+         with mock.patch('subprocess.run', new=_mock_subprocess_run):
+-            DatabaseClient.runshell_db(dbinfo)
++            DatabaseClient.runshell_db(dbinfo, parameters)
+         return self.subprocess_args, self.pg_env
+ 
+     def test_basic(self):
+@@ -104,6 +107,12 @@ class PostgreSqlDbshellCommandTestCase(SimpleTestCase):
+             )
+         )
+ 
++    def test_parameters(self):
++        self.assertEqual(
++            self._run_it({'database': 'dbname'}, ['--help']),
++            (['psql', 'dbname', '--help'], {}),
++        )
++
+     def test_sigint_handler(self):
+         """SIGINT is ignored in Python and passed to psql to abort queries."""
+         def _mock_subprocess_run(*args, **kwargs):
+@@ -114,6 +123,6 @@ class PostgreSqlDbshellCommandTestCase(SimpleTestCase):
+         # The default handler isn't SIG_IGN.
+         self.assertNotEqual(sigint_handler, signal.SIG_IGN)
+         with mock.patch('subprocess.run', new=_mock_subprocess_run):
+-            DatabaseClient.runshell_db({})
++            DatabaseClient.runshell_db({}, [])
+         # dbshell restores the original handler.
+         self.assertEqual(sigint_handler, signal.getsignal(signal.SIGINT))
+diff --git a/tests/dbshell/test_sqlite.py b/tests/dbshell/test_sqlite.py
+index 46d0989..c3b2b1e 100644
+--- a/tests/dbshell/test_sqlite.py
++++ b/tests/dbshell/test_sqlite.py
+@@ -9,15 +9,17 @@ from django.test import SimpleTestCase
+ 
+ @skipUnless(connection.vendor == 'sqlite', 'SQLite tests.')
+ class SqliteDbshellCommandTestCase(SimpleTestCase):
+-    def _run_dbshell(self):
++    def _run_dbshell(self, parameters=None):
+         """Run runshell command and capture its arguments."""
+         def _mock_subprocess_run(*args, **kwargs):
+             self.subprocess_args = list(*args)
+             return CompletedProcess(self.subprocess_args, 0)
+ 
++        if parameters is None:
++            parameters = []
+         client = DatabaseClient(connection)
+         with mock.patch('subprocess.run', new=_mock_subprocess_run):
+-            client.runshell()
++            client.runshell(parameters)
+         return self.subprocess_args
+ 
+     def test_path_name(self):
+@@ -29,3 +31,13 @@ class SqliteDbshellCommandTestCase(SimpleTestCase):
+                 self._run_dbshell(),
+                 ['sqlite3', 'test.db.sqlite3'],
+             )
++
++    def test_parameters(self):
++        with mock.patch.dict(
++            connection.settings_dict,
++            {'NAME': Path('test.db.sqlite3')},
++        ):
++            self.assertEqual(
++                self._run_dbshell(['-help']),
++                ['sqlite3', 'test.db.sqlite3', '-help'],
++            )
+diff --git a/tests/user_commands/management/commands/dance.py b/tests/user_commands/management/commands/dance.py
+index 81d6ec9..82cfc33 100644
+--- a/tests/user_commands/management/commands/dance.py
++++ b/tests/user_commands/management/commands/dance.py
+@@ -15,7 +15,7 @@ class Command(BaseCommand):
+     def handle(self, *args, **options):
+         example = options["example"]
+         if example == "raise":
+-            raise CommandError()
++            raise CommandError(returncode=3)
+         if options['verbosity'] > 0:
+             self.stdout.write("I don't feel like dancing %s." % options["style"])
+             self.stdout.write(','.join(options))
+diff --git a/tests/user_commands/tests.py b/tests/user_commands/tests.py
+index b770e8e..b1d00f2 100644
+--- a/tests/user_commands/tests.py
++++ b/tests/user_commands/tests.py
+@@ -57,12 +57,14 @@ class CommandTests(SimpleTestCase):
+         """ Exception raised in a command should raise CommandError with
+             call_command, but SystemExit when run from command line
+         """
+-        with self.assertRaises(CommandError):
++        with self.assertRaises(CommandError) as cm:
+             management.call_command('dance', example="raise")
++        self.assertEqual(cm.exception.returncode, 3)
+         dance.Command.requires_system_checks = False
+         try:
+-            with captured_stderr() as stderr, self.assertRaises(SystemExit):
++            with captured_stderr() as stderr, self.assertRaises(SystemExit) as cm:
+                 management.ManagementUtility(['manage.py', 'dance', '--example=raise']).execute()
++            self.assertEqual(cm.exception.code, 3)
+         finally:
+             dance.Command.requires_system_checks = True
+         self.assertIn("CommandError", stderr.getvalue())

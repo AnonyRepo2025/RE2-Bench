@@ -1,0 +1,203 @@
+
+[INPUT]
+```
+{
+    "self": {},
+    "args": {},
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+from __future__ import print_function, division
+from sympy import Number
+from sympy.core import Mul, Basic, sympify, Add
+from sympy.core.compatibility import range
+from sympy.functions import adjoint
+from sympy.matrices.expressions.transpose import transpose
+from sympy.strategies import rm_id, unpack, typed, flatten, exhaust, do_one, new
+from sympy.matrices.expressions.matexpr import MatrixExpr, ShapeError, Identity, ZeroMatrix
+from sympy.matrices.matrices import MatrixBase
+from sympy.assumptions.ask import ask, Q
+from sympy.assumptions.refine import handlers_dict
+from sympy.core.symbol import Dummy
+from sympy.concrete.summations import Sum
+from sympy.matrices import ImmutableMatrix
+from sympy.matrices.expressions.determinant import Determinant
+from .trace import trace
+from sympy.matrices.expressions.inverse import Inverse
+rules = (any_zeros, remove_ids, xxinv, unpack, rm_id(lambda x: x == 1), merge_explicit, factor_in_front, flatten)
+canonicalize = exhaust(typed({MatMul: do_one(*rules)}))
+handlers_dict['MatMul'] = refine_MatMul
+
+class MatMul(MatrixExpr):
+    is_MatMul = True
+
+    def as_coeff_matrices(self):
+        scalars = [x for x in self.args if not x.is_Matrix]
+        matrices = [x for x in self.args if x.is_Matrix]
+        coeff = Mul(*scalars)
+        return (coeff, matrices)
+
+    def args_cnc(self, **kwargs):
+        coeff, matrices = self.as_coeff_matrices()
+        coeff_c, coeff_nc = coeff.args_cnc(**kwargs)
+        if coeff_c == [1]:
+            coeff_c = []
+        elif coeff_c == set([1]):
+            coeff_c = set()
+        return (coeff_c, coeff_nc + matrices)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.core.basic.Basic.args
+
+def args(self):
+    return self._args
+
+.sympy.core.operations.AssocOp.__new__
+
+def __new__(cls, *args, **options):
+    from sympy import Order
+    args = list(map(_sympify, args))
+    args = [a for a in args if a is not cls.identity]
+    if not options.pop('evaluate', global_evaluate[0]):
+        return cls._from_args(args)
+    if len(args) == 0:
+        return cls.identity
+    if len(args) == 1:
+        return args[0]
+    c_part, nc_part, order_symbols = cls.flatten(args)
+    is_commutative = not nc_part
+    obj = cls._from_args(c_part + nc_part, is_commutative)
+    if order_symbols is not None:
+        return Order(obj, *order_symbols)
+    return obj
+
+.sympy.core.sympify._sympify
+
+def _sympify(a):
+    return sympify(a, strict=True)
+
+.sympy.core.sympify.sympify
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        evaluate = global_evaluate[0]
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+.sympy.core.basic.Basic.__hash__
+
+def __hash__(self):
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+.sympy.core.mul.Mul.flatten
+
+def flatten(cls, seq):
+    from sympy.calculus.util import AccumBounds
+    rv = None
+    if len(seq) == 2:
+        a, b = seq
+        if b.is_Rational:
+            a, b = (b, a)
+        assert not a is S.One
+        if not a.is_zero and a.is_Rational:
+            r, b = b.as_coeff_Mul()
+            if b.is_Add:
+                if r is not S.One:
+                    rv = ([cls(a * r, b, evaluate=False)], [], None)
+                elif b.is_commutative:
+                    if a is S.One:
+                        rv = ([b], [], None)
+                    else:
+                        r, b = b.as_coeff_Add()
+                        bargs = [_keep_coeff(a, bi) for bi in Add.make_args(b)]
+                        _addsort(bargs)
+                        ar = a * r
+                        if ar:
+                            bargs.insert(0, ar)
+                        bargs = [Add._from_args(bargs)]
+                        rv = (bargs, [], None)
+        if rv:
+            return rv
+    c_part = []
+    nc_part = []
+    nc_seq = []
+    coeff = S.One
+    c_powers = []
+    num_exp = []
+    neg1e = S.Zero
+    pnum_rat = {}
+   

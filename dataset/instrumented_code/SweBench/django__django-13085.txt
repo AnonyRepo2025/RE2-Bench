@@ -1,0 +1,316 @@
+diff --git a/django/core/management/commands/compilemessages.py b/django/core/management/commands/compilemessages.py
+index df188ce..3458a5c 100644
+--- a/django/core/management/commands/compilemessages.py
++++ b/django/core/management/commands/compilemessages.py
+@@ -1,7 +1,201 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-13085/django/core/management/commands/compilemessages.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import codecs
+ import concurrent.futures
+ import glob
+ import os
++from pathlib import Path
+ 
+ from django.core.management.base import BaseCommand, CommandError
+ from django.core.management.utils import (
+@@ -9,8 +203,9 @@ from django.core.management.utils import (
+ )
+ 
+ 
++@inspect_code
+ def has_bom(fn):
+-    with open(fn, 'rb') as f:
++    with fn.open('rb') as f:
+         sample = f.read(4)
+     return sample.startswith((codecs.BOM_UTF8, codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE))
+ 
+@@ -114,6 +309,7 @@ class Command(BaseCommand):
+         if self.has_errors:
+             raise CommandError('compilemessages generated one or more errors.')
+ 
++    @inspect_code
+     def compile_messages(self, locations):
+         """
+         Locations is a list of tuples: [(directory, file), ...]
+@@ -121,9 +317,21 @@ class Command(BaseCommand):
+         with concurrent.futures.ThreadPoolExecutor() as executor:
+             futures = []
+             for i, (dirpath, f) in enumerate(locations):
++                po_path = Path(dirpath) / f
++                mo_path = po_path.with_suffix('.mo')
++                try:
++                    if mo_path.stat().st_mtime >= po_path.stat().st_mtime:
++                        if self.verbosity > 0:
++                            self.stdout.write(
++                                'File “%s” is already compiled and up to date.'
++                                % po_path
++                            )
++                        continue
++                except FileNotFoundError:
++                    pass
+                 if self.verbosity > 0:
+                     self.stdout.write('processing file %s in %s' % (f, dirpath))
+-                po_path = os.path.join(dirpath, f)
++
+                 if has_bom(po_path):
+                     self.stderr.write(
+                         'The %s file has a BOM (Byte Order Mark). Django only '
+@@ -131,10 +339,9 @@ class Command(BaseCommand):
+                     )
+                     self.has_errors = True
+                     continue
+-                base_path = os.path.splitext(po_path)[0]
+ 
+                 # Check writability on first location
+-                if i == 0 and not is_writable(base_path + '.mo'):
++                if i == 0 and not is_writable(mo_path):
+                     self.stderr.write(
+                         'The po files under %s are in a seemingly not writable location. '
+                         'mo files will not be updated/created.' % dirpath
+@@ -142,9 +349,7 @@ class Command(BaseCommand):
+                     self.has_errors = True
+                     return
+ 
+-                args = [self.program] + self.program_options + [
+-                    '-o', base_path + '.mo', base_path + '.po'
+-                ]
++                args = [self.program, *self.program_options, '-o', mo_path, po_path]
+                 futures.append(executor.submit(popen_wrapper, args))
+ 
+             for future in concurrent.futures.as_completed(futures):
+diff --git a/tests/i18n/test_compilation.py b/tests/i18n/test_compilation.py
+index 04958bc..791c1d4 100644
+--- a/tests/i18n/test_compilation.py
++++ b/tests/i18n/test_compilation.py
+@@ -34,6 +34,7 @@ class PoFileTests(MessageCompilationTests):
+ 
+     LOCALE = 'es_AR'
+     MO_FILE = 'locale/%s/LC_MESSAGES/django.mo' % LOCALE
++    MO_FILE_EN = 'locale/en/LC_MESSAGES/django.mo'
+ 
+     def test_bom_rejection(self):
+         stderr = StringIO()
+@@ -43,17 +44,27 @@ class PoFileTests(MessageCompilationTests):
+         self.assertFalse(os.path.exists(self.MO_FILE))
+ 
+     def test_no_write_access(self):
+-        mo_file_en = 'locale/en/LC_MESSAGES/django.mo'
++        mo_file_en = Path(self.MO_FILE_EN)
+         err_buffer = StringIO()
+-        # put file in read-only mode
+-        old_mode = os.stat(mo_file_en).st_mode
+-        os.chmod(mo_file_en, stat.S_IREAD)
++        # Put file in read-only mode.
++        old_mode = mo_file_en.stat().st_mode
++        mo_file_en.chmod(stat.S_IREAD)
++        # Ensure .po file is more recent than .mo file.
++        mo_file_en.with_suffix('.po').touch()
+         try:
+             with self.assertRaisesMessage(CommandError, 'compilemessages generated one or more errors.'):
+                 call_command('compilemessages', locale=['en'], stderr=err_buffer, verbosity=0)
+             self.assertIn('not writable location', err_buffer.getvalue())
+         finally:
+-            os.chmod(mo_file_en, old_mode)
++            mo_file_en.chmod(old_mode)
++
++    def test_no_compile_when_unneeded(self):
++        mo_file_en = Path(self.MO_FILE_EN)
++        mo_file_en.touch()
++        stdout = StringIO()
++        call_command('compilemessages', locale=['en'], stdout=stdout, verbosity=1)
++        msg = '%s” is already compiled and up to date.' % mo_file_en.with_suffix('.po')
++        self.assertIn(msg, stdout.getvalue())
+ 
+ 
+ class PoFileContentsTests(MessageCompilationTests):

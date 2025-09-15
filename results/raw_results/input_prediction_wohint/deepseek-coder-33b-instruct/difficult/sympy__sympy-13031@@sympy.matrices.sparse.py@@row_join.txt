@@ -1,0 +1,206 @@
+1. To get the output, we need:
+other._smat to be exactly "{(0, 1): '3', (1, 1): '4'}", and other.rows to be 2, and other.cols to be 1.
+2. Make other._smat to be exactly "{(0, 1): '3', (1, 1): '4'}".
+3. Make other.rows to be 2.
+4. Make other.cols to be 1.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_smat": {
+            "(0, 0)": "1",
+            "(1, 0)": "2"
+        },
+        "rows": 2,
+        "cols": 1
+    },
+    "other": {
+        "_smat": {
+            "(0, 1)": "3",
+            "(1, 1)": "4"
+        },
+        "rows": 2,
+        "cols": 1
+    }
+}
+```
+[/INPUT]
+[/PYTHON]
+[PYTHON]
+from __future__ import print_function, division
+import copy
+from collections import defaultdict
+from sympy.core.containers import Dict
+from sympy.core.expr import Expr
+from sympy.core.compatibility import is_sequence, as_int, range
+from sympy.core.logic import fuzzy_and
+from sympy.core.singleton import S
+from sympy.functions import Abs
+from sympy.functions.elementary.miscellaneous import sqrt
+from sympy.utilities.iterables import uniq
+from .matrices import MatrixBase, ShapeError, a2idx
+from .dense import Matrix
+import collections
+from .immutable import ImmutableSparseMatrix
+from sympy.core.numbers import nan, oo
+from sympy.core.numbers import nan, oo
+from sympy.matrices.expressions.matexpr import MatrixElement
+from sympy.matrices.expressions.matexpr import MatrixElement
+
+class MutableSparseMatrix(SparseMatrix, MatrixBase):
+    __hash__ = None
+
+    @classmethod
+    def _new(cls, *args, **kwargs):
+        return cls(*args)
+
+    def row_join(self, other):
+        if self.cols == 0 and self.rows != other.rows:
+            return self._new(other.rows, 0, []).row_join(other)
+        A, B = (self, other)
+        if not A.rows == B.rows:
+            raise ShapeError()
+        A = A.copy()
+        if not isinstance(B, SparseMatrix):
+            k = 0
+            b = B._mat
+            for i in range(B.rows):
+                for j in range(B.cols):
+                    v = b[k]
+                    if v:
+                        A._smat[i, j + A.cols] = v
+                    k += 1
+        else:
+            for (i, j), v in B._smat.items():
+                A._smat[i, j + A.cols] = v
+        A.cols += B.cols
+        return A
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.matrices.sparse.SparseMatrix.copy
+
+def copy(self):
+    return self._new(self.rows, self.cols, self._smat)
+
+.sympy.matrices.sparse.SparseMatrix.__new__
+
+def __new__(cls, *args, **kwargs):
+    self = object.__new__(cls)
+    if len(args) == 1 and isinstance(args[0], SparseMatrix):
+        self.rows = args[0].rows
+        self.cols = args[0].cols
+        self._smat = dict(args[0]._smat)
+        return self
+    self._smat = {}
+    if len(args) == 3:
+        self.rows = as_int(args[0])
+        self.cols = as_int(args[1])
+        if isinstance(args[2], collections.Callable):
+            op = args[2]
+            for i in range(self.rows):
+                for j in range(self.cols):
+                    value = self._sympify(op(self._sympify(i), self._sympify(j)))
+                    if value:
+                        self._smat[i, j] = value
+        elif isinstance(args[2], (dict, Dict)):
+            for key in args[2].keys():
+                v = args[2][key]
+                if v:
+                    self._smat[key] = self._sympify(v)
+        elif is_sequence(args[2]):
+            if len(args[2]) != self.rows * self.cols:
+                raise ValueError('List length (%s) != rows*columns (%s)' % (len(args[2]), self.rows * self.cols))
+            flat_list = args[2]
+            for i in range(self.rows):
+                for j in range(self.cols):
+                    value = self._sympify(flat_list[i * self.cols + j])
+                    if value:
+                        self._smat[i, j] = value
+    else:
+        r, c, _list = Matrix._handle_creation_inputs(*args)
+        self.rows = r
+        self.cols = c
+        for i in range(self.rows):
+            for j in range(self.cols):
+                value = _list[self.cols * i + j]
+                if value:
+                    self._smat[i, j] = value
+    return self
+
+.sympy.core.compatibility.as_int
+
+def as_int(n):
+    try:
+        result = int(n)
+        if result != n:
+            raise TypeError
+    except TypeError:
+        raise ValueError('%s is not an integer' % (n,))
+    return result
+
+.sympy.core.sympify.sympify
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            if not isinstance(a, np.floating):
+                func = converter[complex] if np.iscomplex(a) else sympify
+                return func(np.asscalar(a))
+            else:
+                try:
+                    from sympy.core.numbers import Float
+                    prec = np.finfo(a).nmant
+                    a = str(list(np.reshape(np.asarray(a), (1, np.size(a)))[0]))[1:-1]
+                    return Float(a, precision=prec)
+                except NotImplementedError:
+                    raise SympifyError('Translation for numpy float : %s is not implemented' % a)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    try:
+        from ..tensor.array

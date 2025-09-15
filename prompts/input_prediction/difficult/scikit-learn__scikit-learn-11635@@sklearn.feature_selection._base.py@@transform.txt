@@ -1,0 +1,493 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. The input structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict input variable values to fill out placeholders XXX in the structure, and print input between [INPUT] and [\INPUT]. You should maintain the structure when printing inputs. Do not change anything else. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT].
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+from abc import ABCMeta, abstractmethod
+from warnings import warn
+import numpy as np
+from scipy.sparse import issparse, csc_matrix
+from ..base import TransformerMixin
+from ..utils import check_array, safe_mask
+
+class SelectorMixin(TransformerMixin, metaclass=ABCMeta):
+
+    def get_support(self, indices=False):
+        mask = self._get_support_mask()
+        return mask if not indices else np.where(mask)[0]
+
+    @abstractmethod
+    def _get_support_mask(self):
+
+    def transform(self, X):
+        tags = self._get_tags()
+        X = check_array(X, dtype=None, accept_sparse='csr', force_all_finite=not tags.get('allow_nan', True))
+        mask = self.get_support()
+        if not mask.any():
+            warn('No features were selected: either the data is too noisy or the selection test too strict.', UserWarning)
+            return np.empty(0).reshape((X.shape[0], 0))
+        if len(mask) != X.shape[1]:
+            raise ValueError('X has a different shape than during fitting.')
+        return X[:, safe_mask(X, mask)]
+
+    def inverse_transform(self, X):
+        if issparse(X):
+            X = X.tocsc()
+            it = self.inverse_transform(np.diff(X.indptr).reshape(1, -1))
+            col_nonzeros = it.ravel()
+            indptr = np.concatenate([[0], np.cumsum(col_nonzeros)])
+            Xt = csc_matrix((X.data, X.indices, indptr), shape=(X.shape[0], len(indptr) - 1), dtype=X.dtype)
+            return Xt
+        support = self.get_support()
+        X = check_array(X, dtype=None)
+        if support.sum() != X.shape[1]:
+            raise ValueError('X has a different shape than during fitting.')
+        if X.ndim == 1:
+            X = X[None, :]
+        Xt = np.zeros((X.shape[0], support.size), dtype=X.dtype)
+        Xt[:, support] = X
+        return Xt
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.base.BaseEstimator._get_tags
+
+def _get_tags(self):
+    collected_tags = {}
+    for base_class in reversed(inspect.getmro(self.__class__)):
+        if hasattr(base_class, '_more_tags'):
+            more_tags = base_class._more_tags(self)
+            collected_tags.update(more_tags)
+    return collected_tags
+
+.sklearn.base.BaseEstimator._more_tags
+
+def _more_tags(self):
+    return _DEFAULT_TAGS
+
+.sklearn.feature_selection._from_model.SelectFromModel._more_tags
+
+def _more_tags(self):
+    estimator_tags = self.estimator._get_tags()
+    return {'allow_nan': estimator_tags.get('allow_nan', True)}
+
+.sklearn.base.MultiOutputMixin._more_tags
+
+def _more_tags(self):
+    return {'multioutput': True}
+
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=None, estimator=None):
+    if warn_on_dtype is not None:
+        warnings.warn("'warn_on_dtype' is deprecated in version 0.21 and will be removed in 0.23. Don't set `warn_on_dtype` to remove this warning.", FutureWarning, stacklevel=2)
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+        if all((isinstance(dtype, np.dtype) for dtype in dtypes_orig)):
+            dtype_orig = np.result_type(*array.dtypes)
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse, dtype=dtype, copy=copy, force_all_finite=force_all_finite, accept_large_sparse=accept_large_sparse)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                if dtype is not None and np.dtype(dtype).kind in 'iu':
+                    array = np.asarray(array, order=order)
+                    if array.dtype.kind == 'f':
+                        _assert_all_finite(array, allow_nan=False, msg_dtype=dtype)
+                    array = array.astype(dtype, casting='unsafe', copy=False)
+                else:
+                    array = np.asarray(array, order=order, dtype=dtype)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of bytes/strings will be converted to decimal numbers if dtype='numeric'. It is recommended that you convert the array to a float dtype before using it in scikit-learn, for example by using your_array = your_array.astype(np.float64).", FutureWarning, stacklevel=2)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, array.shape, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, array.shape, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=2)
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+    if warn_on_dtype and dtypes_orig is not None and ({array.dtype} != set(dtypes_orig)):
+        msg = 'Data with input dtype %s were all converted to %s%s.' % (', '.join(map(str, sorted(set(dtypes_orig)))), array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=3)
+    return array
+
+.sklearn.utils.validation._ensure_no_complex_data
+
+def _ensure_no_complex_data(array):
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+.sklearn.utils.validation._assert_all_finite
+
+def _assert_all_finite(X, allow_nan=False, msg_dtype=None):
+    from .extmath import _safe_accumulator_op
+    if _get_config()['assume_finite']:
+        return
+    X = np.asanyarray(X)
+    is_float = X.dtype.kind in 'fc'
+    if is_float and np.isfinite(_safe_accumulator_op(np.sum, X)):
+        pass
+    elif is_float:
+        msg_err = 'Input contains {} or a value too large for {!r}.'
+        if allow_nan and np.isinf(X).any() or (not allow_nan and (not np.isfinite(X).all())):
+            type_err = 'infinity' if allow_nan else 'NaN, infinity'
+            raise ValueError(msg_err.format(type_err, msg_dtype if msg_dtype is not None else X.dtype))
+    elif X.dtype == np.dtype('object') and (not allow_nan):
+        if _object_dtype_isnan(X).any():
+            raise ValueError('Input contains NaN')
+
+.sklearn._config.get_config
+
+def get_config():
+    return _global_config.copy()
+
+.sklearn.utils.extmath._safe_accumulator_op
+
+def _safe_accumulator_op(op, x, *args, **kwargs):
+    if np.issubdtype(x.dtype, np.floating) and x.dtype.itemsize < 8:
+        result = op(x, *args, **kwargs, dtype=np.float64)
+    else:
+        result = op(x, *args, **kwargs)
+    return result
+
+.sklearn.utils.validation._num_samples
+
+def _num_samples(x):
+    message = 'Expected sequence or array-like, got %s' % type(x)
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError(message)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError(message)
+    if hasattr(x, 'shape') and x.shape is not None:
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        if isinstance(x.shape[0], numbers.Integral):
+            return x.shape[0]
+    try:
+        return len(x)
+    except TypeError:
+        raise TypeError(message)
+
+.sklearn.feature_selection._from_model.SelectFromModel._get_support_mask
+
+def _get_support_mask(self):
+    if self.prefit:
+        estimator = self.estimator
+    elif hasattr(self, 'estimator_'):
+        estimator = self.estimator_
+    else:
+        raise ValueError('Either fit the model before transform or set "prefit=True" while passing the fitted estimator to the constructor.')
+    scores = _get_feature_importances(estimator, self.norm_order)
+    threshold = _calculate_threshold(estimator, scores, self.threshold)
+    if self.max_features is not None:
+        mask = np.zeros_like(scores, dtype=bool)
+        candidate_indices = np.argsort(-scores, kind='mergesort')[:self.max_features]
+        mask[candidate_indices] = True
+    else:
+        mask = np.ones_like(scores, dtype=bool)
+    mask[scores < threshold] = False
+    return mask
+
+.sklearn.feature_selection._from_model._get_feature_importances
+
+def _get_feature_importances(estimator, norm_order=1):
+    importances = getattr(estimator, 'feature_importances_', None)
+    coef_ = getattr(estimator, 'coef_', None)
+    if importances is None and coef_ is not None:
+        if estimator.coef_.ndim == 1:
+            importances = np.abs(coef_)
+        else:
+            importances = np.linalg.norm(coef_, axis=0, ord=norm_order)
+    elif importances is None:
+        raise ValueError('The underlying estimator %s has no `coef_` or `feature_importances_` attribute. Either pass a fitted estimator to SelectFromModel or call fit before calling transform.' % estimator.__class__.__name__)
+    return importances
+
+.sklearn.ensemble._forest.BaseForest.feature_importances_
+
+def feature_importances_(self):
+    check_is_fitted(self)
+    all_importances = Parallel(n_jobs=self.n_jobs, **_joblib_parallel_args(prefer='threads'))((delayed(getattr)(tree, 'feature_importances_') for tree in self.estimators_ if tree.tree_.node_count > 1))
+    if not all_importances:
+        return np.zeros(self.n_features_, dtype=np.float64)
+    all_importances = np.mean(all_importances, axis=0, dtype=np.float64)
+    return all_importances / np.sum(all_importances)
+
+.sklearn.utils.validation.check_is_fitted
+
+def check_is_fitted(estimator, attributes='deprecated', msg=None, all_or_any='deprecated'):
+    if attributes != 'deprecated':
+        warnings.warn('Passing attributes to check_is_fitted is deprecated and will be removed in 0.23. The attributes argument is ignored.', FutureWarning)
+    if all_or_any != 'deprecated':
+        warnings.warn('Passing all_or_any to check_is_fitted is deprecated and will be removed in 0.23. The any_or_all argument is ignored.', FutureWarning)
+    if isclass(estimator):
+        raise TypeError('{} is a class, not an instance.'.format(estimator))
+    if msg is None:
+        msg = "This %(name)s instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator."
+    if not hasattr(estimator, 'fit'):
+        raise TypeError('%s is not an estimator instance.' % estimator)
+    attrs = [v for v in vars(estimator) if (v.endswith('_') or v.startswith('_')) and (not v.startswith('__'))]
+    if not attrs:
+        raise NotFittedError(msg % {'name': type(estimator).__name__})
+
+.sklearn.utils.fixes._joblib_parallel_args
+
+def _joblib_parallel_args(**kwargs):
+    import joblib
+    if joblib.__version__ >= LooseVersion('0.12'):
+        return kwargs
+    extra_args = set(kwargs.keys()).difference({'prefer', 'require'})
+    if extra_args:
+        raise NotImplementedError('unhandled arguments %s with joblib %s' % (list(extra_args), joblib.__version__))
+    args = {}
+    if 'prefer' in kwargs:
+        prefer = kwargs['prefer']
+        if prefer not in ['threads', 'processes', None]:
+            raise ValueError('prefer=%s is not supported' % prefer)
+        args['backend'] = {'threads': 'threading', 'processes': 'multiprocessing', None: None}[prefer]
+    if 'require' in kwargs:
+        require = kwargs['require']
+        if require not in [None, 'sharedmem']:
+            raise ValueError('require=%s is not supported' % require)
+        if require == 'sharedmem':
+            args['backend'] = 'threading'
+    return args
+
+
+[/PYTHON]
+What will be the input of `transform`, given the following output:
+[OUTPUT]
+```
+{
+    "output": "[[-1.98980636e+00  7.28569828e-02]\n [-2.00350437e+00 -9.82699680e-01]\n [ 1.07501650e+00 -2.10082473e+00]\n [ 1.91909252e+00 -2.81526351e-01]\n [ 9.76464463e-02  5.89799139e-01]\n [ 2.99723497e+00  8.56933176e-01]\n [ 1.04376635e-01  1.04362959e+00]\n [-1.30848704e+00 -1.61024346e+00]\n [ 2.20474963e+00 -2.16942319e+00]\n [ 1.17574587e+00  4.48718882e-01]\n [ 2.37717493e+00 -8.02994742e-01]\n [ 2.35171315e+00  1.18876454e-01]\n [ 2.73826765e+00 -1.51501515e+00]\n [ 1.24170346e+00  1.14471880e+00]\n [ 2.16143176e+00 -6.27734441e-01]\n [ 7.93584893e-01  1.76249777e+00]\n [ 1.99716634e+00  8.06082332e-01]\n [ 4.02634030e-01 -7.18549682e-01]\n [ 1.09511887e-03  6.91165041e-01]\n [ 2.25674669e+00  1.55182596e-01]\n [ 1.86806798e+00 -2.14910446e+00]\n [-1.07388574e+00  8.51931977e-01]\n [ 2.14467225e+00 -1.53301551e+00]\n [ 1.62374343e-01 -1.65459123e+00]\n [ 1.06916261e+00 -9.30139995e-01]\n [ 2.39922700e+00 -1.12701649e-01]\n [ 7.46947451e-01 -9.70092222e-01]\n [ 2.24562395e+00  1.28612871e+00]\n [ 4.78750536e-01  3.12787072e-01]\n [ 1.67865008e+00  6.23693170e-01]\n [ 1.11522162e+00  1.05014196e+00]\n [ 2.34915913e-01  1.48838294e+00]\n [ 2.04613745e+00  4.00937099e-01]\n [ 2.34322552e+00  1.79384552e-02]\n [ 1.56159908e+00  9.41030811e-01]\n [ 4.01014780e-01  7.49688133e-01]\n [ 9.66684149e-01 -4.21705878e-01]\n [ 1.10853712e+00  6.38873498e-01]\n [ 2.29382288e+00 -3.32510932e-02]\n [-4.87976437e-01 -1.34346249e-01]\n [ 3.64712167e-01  6.56636677e-01]\n [ 1.28561144e+00  1.18641832e+00]\n [ 3.68959450e-02  8.45067053e-01]\n [ 9.36719391e-01  3.25540031e-01]\n [ 1.60820915e-01  4.99166204e-01]\n [ 8.72183204e-01 -1.13275442e-01]\n [ 1.84738090e+00  4.01681980e-02]\n [-1.41598983e-01  5.54647259e-01]\n [ 8.41410061e-01 -3.69916074e-01]\n [ 1.75749240e+00 -2.08212975e+00]\n [-2.81982178e-01 -1.68086937e+00]\n [-4.39138444e-01 -1.73271971e-01]\n [ 2.95798151e-01 -5.52499373e-03]\n [-2.31961214e+00 -1.00218322e+00]\n [-2.09188299e+00 -1.29482133e+00]\n [ 2.32002350e-01  1.99339379e-01]\n [-1.81340364e+00  8.93263427e-01]\n [-1.69233636e+00  1.11945991e+00]\n [-5.82821879e-01 -5.66190674e-01]\n [-9.29200047e-01 -8.62574894e-01]\n [-1.37441918e+00  1.44934635e-01]\n [ 6.40038633e-03 -1.01704708e+00]\n [-1.85136997e+00  1.10726865e-01]\n [-3.66974013e-01  1.72756670e+00]\n [-1.90298162e+00 -2.76192007e-01]\n [-6.01532166e-01 -3.92029426e-01]\n [-1.31250651e+00  7.73246330e-01]\n [-3.60248516e-01 -1.26851699e+00]\n [-8.04283448e-02 -1.47905171e+00]\n [-1.14588226e+00  7.31955483e-01]\n [-3.75747530e-01  5.03479124e-01]\n [-7.69818145e-01 -3.11302987e-01]\n [-1.61531358e+00  3.86100654e-01]\n [-1.34648160e+00  3.32867440e-01]\n [-6.45827544e-01  2.62254866e-01]\n [ 9.20981697e-01 -1.87314661e+00]\n [ 2.01791323e+00  1.31476412e+00]\n [ 3.01451640e-01  9.63107897e-02]\n [ 1.93619068e+00 -5.16967803e-01]\n [ 1.51895879e+00 -1.27612782e+00]\n [ 8.30260607e-01  7.07037513e-01]\n [ 5.92100017e-01 -2.18016884e-01]\n [-2.29414921e-01  1.55457199e+00]\n [ 7.12380227e-01  1.41960331e+00]\n [ 4.23578558e-01  4.49612612e-01]\n [ 4.85121874e-01  3.86729905e-01]\n [ 2.59591868e+00 -5.05563308e-01]\n [ 2.65996104e+00 -2.62019165e-01]\n [ 7.68427150e-01 -8.39939858e-01]\n [ 8.25965273e-01  1.54038891e+00]\n [-1.74111785e+00  1.12475605e+00]\n [ 6.02537082e-01 -1.97651391e-01]\n [ 1.48845667e+00 -2.99608423e-01]\n [ 4.15053582e-01  9.52040078e-01]\n [ 1.21680084e-01 -1.43223234e-01]\n [-6.32590150e-01 -5.49801958e-01]\n [ 2.52931692e+00  9.66481353e-01]\n [ 1.14108402e+00  1.03034223e+00]\n [-3.51001040e-01 -1.00292551e+00]\n [ 6.73166092e-01  1.86125222e+00]]"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "estimator": {
+            "alpha": XXX,
+            "l1_ratio": XXX,
+            "fit_intercept": XXX,
+            "normalize": XXX,
+            "precompute": XXX,
+            "max_iter": XXX,
+            "copy_X": XXX,
+            "tol": XXX,
+            "warm_start": XXX,
+            "positive": XXX,
+            "random_state": XXX,
+            "selection": XXX
+        },
+        "threshold": XXX,
+        "prefit": XXX,
+        "norm_order": XXX,
+        "max_features": XXX,
+        "estimator_": {
+            "alpha": XXX,
+            "l1_ratio": XXX,
+            "fit_intercept": XXX,
+            "normalize": XXX,
+            "precompute": XXX,
+            "max_iter": XXX,
+            "copy_X": XXX,
+            "tol": XXX,
+            "warm_start": XXX,
+            "positive": XXX,
+            "random_state": XXX,
+            "selection": XXX,
+            "n_iter_": XXX,
+            "coef_": XXX,
+            "dual_gap_": XXX,
+            "intercept_": XXX
+        }
+    },
+    "args": {
+        "X": XXX
+    },
+    "kwargs": {}
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]

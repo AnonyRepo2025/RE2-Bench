@@ -1,0 +1,619 @@
+diff --git a/xarray/core/combine.py b/xarray/core/combine.py
+index 86ed187..5732479 100644
+--- a/xarray/core/combine.py
++++ b/xarray/core/combine.py
+@@ -412,14 +412,16 @@ def combine_nested(
+         - "override": if indexes are of same size, rewrite indexes to be
+           those of the first object with that dimension. Indexes for the same
+           dimension must have the same size in all objects.
+-    combine_attrs : {"drop", "identical", "no_conflicts", "override"}, \
+-                    default: "drop"
++    combine_attrs : {"drop", "identical", "no_conflicts", "drop_conflicts", \
++                     "override"}, default: "drop"
+         String indicating how to combine attrs of the objects being merged:
+ 
+         - "drop": empty attrs on returned Dataset.
+         - "identical": all attrs must be the same on every object.
+         - "no_conflicts": attrs from all objects are combined, any that have
+           the same name must also have the same value.
++        - "drop_conflicts": attrs from all objects are combined, any that have
++          the same name but different values are dropped.
+         - "override": skip comparing and copy attrs from the first dataset to
+           the result.
+ 
+@@ -625,14 +627,16 @@ def combine_by_coords(
+         - "override": if indexes are of same size, rewrite indexes to be
+           those of the first object with that dimension. Indexes for the same
+           dimension must have the same size in all objects.
+-    combine_attrs : {"drop", "identical", "no_conflicts", "override"}, \
+-                    default: "drop"
++    combine_attrs : {"drop", "identical", "no_conflicts", "drop_conflicts", \
++                     "override"}, default: "drop"
+         String indicating how to combine attrs of the objects being merged:
+ 
+         - "drop": empty attrs on returned Dataset.
+         - "identical": all attrs must be the same on every object.
+         - "no_conflicts": attrs from all objects are combined, any that have
+           the same name must also have the same value.
++        - "drop_conflicts": attrs from all objects are combined, any that have
++          the same name but different values are dropped.
+         - "override": skip comparing and copy attrs from the first dataset to
+           the result.
+ 
+diff --git a/xarray/core/concat.py b/xarray/core/concat.py
+index 5cda5aa..7a958eb 100644
+--- a/xarray/core/concat.py
++++ b/xarray/core/concat.py
+@@ -142,14 +142,16 @@ def concat(
+         - "override": if indexes are of same size, rewrite indexes to be
+           those of the first object with that dimension. Indexes for the same
+           dimension must have the same size in all objects.
+-    combine_attrs : {"drop", "identical", "no_conflicts", "override"}, \
+-                    default: "override"
++    combine_attrs : {"drop", "identical", "no_conflicts", "drop_conflicts", \
++                     "override"}, default: "override"
+         String indicating how to combine attrs of the objects being merged:
+ 
+         - "drop": empty attrs on returned Dataset.
+         - "identical": all attrs must be the same on every object.
+         - "no_conflicts": attrs from all objects are combined, any that have
+           the same name must also have the same value.
++        - "drop_conflicts": attrs from all objects are combined, any that have
++          the same name but different values are dropped.
+         - "override": skip comparing and copy attrs from the first dataset to
+           the result.
+ 
+diff --git a/xarray/core/merge.py b/xarray/core/merge.py
+index d29a9e1..567ab11 100644
+--- a/xarray/core/merge.py
++++ b/xarray/core/merge.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-4827/xarray/core/merge.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from typing import (
+     TYPE_CHECKING,
+     AbstractSet,
+@@ -20,7 +213,7 @@ import pandas as pd
+ from . import dtypes, pdcompat
+ from .alignment import deep_align
+ from .duck_array_ops import lazy_array_equiv
+-from .utils import Frozen, compat_dict_union, dict_equiv
++from .utils import Frozen, compat_dict_union, dict_equiv, equivalent
+ from .variable import Variable, as_variable, assert_unique_multiindex_level_names
+ 
+ if TYPE_CHECKING:
+@@ -492,6 +685,7 @@ def assert_valid_explicit_coords(variables, dims, explicit_coords):
+             )
+ 
+ 
++@inspect_code
+ def merge_attrs(variable_attrs, combine_attrs):
+     """Combine attributes from different variables according to combine_attrs"""
+     if not variable_attrs:
+@@ -513,6 +707,24 @@ def merge_attrs(variable_attrs, combine_attrs):
+                     "the same. Merging %s with %s" % (str(result), str(attrs))
+                 )
+         return result
++    elif combine_attrs == "drop_conflicts":
++        result = {}
++        dropped_keys = set()
++        for attrs in variable_attrs:
++            result.update(
++                {
++                    key: value
++                    for key, value in attrs.items()
++                    if key not in result and key not in dropped_keys
++                }
++            )
++            result = {
++                key: value
++                for key, value in result.items()
++                if key not in attrs or equivalent(attrs[key], value)
++            }
++            dropped_keys |= {key for key in attrs if key not in result}
++        return result
+     elif combine_attrs == "identical":
+         result = dict(variable_attrs[0])
+         for attrs in variable_attrs[1:]:
+@@ -534,6 +746,7 @@ class _MergeResult(NamedTuple):
+     attrs: Dict[Hashable, Any]
+ 
+ 
++@inspect_code
+ def merge_core(
+     objects: Iterable["CoercibleMapping"],
+     compat: str = "broadcast_equals",
+@@ -556,7 +769,8 @@ def merge_core(
+         Compatibility checks to use when merging variables.
+     join : {"outer", "inner", "left", "right"}, optional
+         How to combine objects with different indexes.
+-    combine_attrs : {"drop", "identical", "no_conflicts", "override"}, optional
++    combine_attrs : {"drop", "identical", "no_conflicts", "drop_conflicts", \
++                     "override"}, optional
+         How to combine attributes of objects
+     priority_arg : int, optional
+         Optional argument in `objects` that takes precedence over the others.
+@@ -668,14 +882,16 @@ def merge(
+         Value to use for newly missing values. If a dict-like, maps
+         variable names to fill values. Use a data array's name to
+         refer to its values.
+-    combine_attrs : {"drop", "identical", "no_conflicts", "override"}, \
+-                    default: "drop"
++    combine_attrs : {"drop", "identical", "no_conflicts", "drop_conflicts", \
++                     "override"}, default: "drop"
+         String indicating how to combine attrs of the objects being merged:
+ 
+         - "drop": empty attrs on returned Dataset.
+         - "identical": all attrs must be the same on every object.
+         - "no_conflicts": attrs from all objects are combined, any that have
+           the same name must also have the same value.
++        - "drop_conflicts": attrs from all objects are combined, any that have
++          the same name but different values are dropped.
+         - "override": skip comparing and copy attrs from the first dataset to
+           the result.
+ 
+diff --git a/xarray/tests/test_combine.py b/xarray/tests/test_combine.py
+index 109b78f..522b98c 100644
+--- a/xarray/tests/test_combine.py
++++ b/xarray/tests/test_combine.py
+@@ -732,6 +732,17 @@ class TestCombineAuto:
+                 objs, concat_dim="x", join="outer", combine_attrs="identical"
+             )
+ 
++    def test_combine_nested_combine_attrs_drop_conflicts(self):
++        objs = [
++            Dataset({"x": [0], "y": [0]}, attrs={"a": 1, "b": 2, "c": 3}),
++            Dataset({"x": [1], "y": [1]}, attrs={"a": 1, "b": 0, "d": 3}),
++        ]
++        expected = Dataset({"x": [0, 1], "y": [0, 1]}, attrs={"a": 1, "c": 3, "d": 3})
++        actual = combine_nested(
++            objs, concat_dim="x", join="outer", combine_attrs="drop_conflicts"
++        )
++        assert_identical(expected, actual)
++
+     def test_infer_order_from_coords(self):
+         data = create_test_data()
+         objs = [data.isel(dim2=slice(4, 9)), data.isel(dim2=slice(4))]
+diff --git a/xarray/tests/test_concat.py b/xarray/tests/test_concat.py
+index 7416cab..beed48a 100644
+--- a/xarray/tests/test_concat.py
++++ b/xarray/tests/test_concat.py
+@@ -258,27 +258,118 @@ class TestConcatDataset:
+         )
+         assert_identical(actual, expected)
+ 
+-    def test_concat_combine_attrs_kwarg(self):
+-        ds1 = Dataset({"a": ("x", [0])}, coords={"x": [0]}, attrs={"b": 42})
+-        ds2 = Dataset({"a": ("x", [0])}, coords={"x": [1]}, attrs={"b": 42, "c": 43})
+-
+-        expected = {}
+-        expected["drop"] = Dataset({"a": ("x", [0, 0])}, {"x": [0, 1]})
+-        expected["no_conflicts"] = Dataset(
+-            {"a": ("x", [0, 0])}, {"x": [0, 1]}, {"b": 42, "c": 43}
+-        )
+-        expected["override"] = Dataset({"a": ("x", [0, 0])}, {"x": [0, 1]}, {"b": 42})
+-
+-        with raises_regex(ValueError, "combine_attrs='identical'"):
+-            actual = concat([ds1, ds2], dim="x", combine_attrs="identical")
+-        with raises_regex(ValueError, "combine_attrs='no_conflicts'"):
+-            ds3 = ds2.copy(deep=True)
+-            ds3.attrs["b"] = 44
+-            actual = concat([ds1, ds3], dim="x", combine_attrs="no_conflicts")
++    @pytest.mark.parametrize(
++        "combine_attrs, var1_attrs, var2_attrs, expected_attrs, expect_exception",
++        [
++            (
++                "no_conflicts",
++                {"a": 1, "b": 2},
++                {"a": 1, "c": 3},
++                {"a": 1, "b": 2, "c": 3},
++                False,
++            ),
++            ("no_conflicts", {"a": 1, "b": 2}, {}, {"a": 1, "b": 2}, False),
++            ("no_conflicts", {}, {"a": 1, "c": 3}, {"a": 1, "c": 3}, False),
++            (
++                "no_conflicts",
++                {"a": 1, "b": 2},
++                {"a": 4, "c": 3},
++                {"a": 1, "b": 2, "c": 3},
++                True,
++            ),
++            ("drop", {"a": 1, "b": 2}, {"a": 1, "c": 3}, {}, False),
++            ("identical", {"a": 1, "b": 2}, {"a": 1, "b": 2}, {"a": 1, "b": 2}, False),
++            ("identical", {"a": 1, "b": 2}, {"a": 1, "c": 3}, {"a": 1, "b": 2}, True),
++            (
++                "override",
++                {"a": 1, "b": 2},
++                {"a": 4, "b": 5, "c": 3},
++                {"a": 1, "b": 2},
++                False,
++            ),
++            (
++                "drop_conflicts",
++                {"a": 41, "b": 42, "c": 43},
++                {"b": 2, "c": 43, "d": 44},
++                {"a": 41, "c": 43, "d": 44},
++                False,
++            ),
++        ],
++    )
++    def test_concat_combine_attrs_kwarg(
++        self, combine_attrs, var1_attrs, var2_attrs, expected_attrs, expect_exception
++    ):
++        ds1 = Dataset({"a": ("x", [0])}, coords={"x": [0]}, attrs=var1_attrs)
++        ds2 = Dataset({"a": ("x", [0])}, coords={"x": [1]}, attrs=var2_attrs)
++
++        if expect_exception:
++            with pytest.raises(ValueError, match=f"combine_attrs='{combine_attrs}'"):
++                concat([ds1, ds2], dim="x", combine_attrs=combine_attrs)
++        else:
++            actual = concat([ds1, ds2], dim="x", combine_attrs=combine_attrs)
++            expected = Dataset(
++                {"a": ("x", [0, 0])}, {"x": [0, 1]}, attrs=expected_attrs
++            )
+ 
+-        for combine_attrs in expected:
++            assert_identical(actual, expected)
++
++    @pytest.mark.skip(reason="not implemented, yet (see #4827)")
++    @pytest.mark.parametrize(
++        "combine_attrs, attrs1, attrs2, expected_attrs, expect_exception",
++        [
++            (
++                "no_conflicts",
++                {"a": 1, "b": 2},
++                {"a": 1, "c": 3},
++                {"a": 1, "b": 2, "c": 3},
++                False,
++            ),
++            ("no_conflicts", {"a": 1, "b": 2}, {}, {"a": 1, "b": 2}, False),
++            ("no_conflicts", {}, {"a": 1, "c": 3}, {"a": 1, "c": 3}, False),
++            (
++                "no_conflicts",
++                {"a": 1, "b": 2},
++                {"a": 4, "c": 3},
++                {"a": 1, "b": 2, "c": 3},
++                True,
++            ),
++            ("drop", {"a": 1, "b": 2}, {"a": 1, "c": 3}, {}, False),
++            ("identical", {"a": 1, "b": 2}, {"a": 1, "b": 2}, {"a": 1, "b": 2}, False),
++            ("identical", {"a": 1, "b": 2}, {"a": 1, "c": 3}, {"a": 1, "b": 2}, True),
++            (
++                "override",
++                {"a": 1, "b": 2},
++                {"a": 4, "b": 5, "c": 3},
++                {"a": 1, "b": 2},
++                False,
++            ),
++            (
++                "drop_conflicts",
++                {"a": 41, "b": 42, "c": 43},
++                {"b": 2, "c": 43, "d": 44},
++                {"a": 41, "c": 43, "d": 44},
++                False,
++            ),
++        ],
++    )
++    def test_concat_combine_attrs_kwarg_variables(
++        self, combine_attrs, attrs1, attrs2, expected_attrs, expect_exception
++    ):
++        """check that combine_attrs is used on data variables and coords"""
++        ds1 = Dataset({"a": ("x", [0], attrs1)}, coords={"x": ("x", [0], attrs1)})
++        ds2 = Dataset({"a": ("x", [0], attrs2)}, coords={"x": ("x", [1], attrs2)})
++
++        if expect_exception:
++            with pytest.raises(ValueError, match=f"combine_attrs='{combine_attrs}'"):
++                concat([ds1, ds2], dim="x", combine_attrs=combine_attrs)
++        else:
+             actual = concat([ds1, ds2], dim="x", combine_attrs=combine_attrs)
+-            assert_identical(actual, expected[combine_attrs])
++            expected = Dataset(
++                {"a": ("x", [0, 0], expected_attrs)},
++                {"x": ("x", [0, 1], expected_attrs)},
++            )
++
++            assert_identical(actual, expected)
+ 
+     def test_concat_promote_shape(self):
+         # mixed dims within variables
+diff --git a/xarray/tests/test_merge.py b/xarray/tests/test_merge.py
+index 34b138e..27e2b10 100644
+--- a/xarray/tests/test_merge.py
++++ b/xarray/tests/test_merge.py
+@@ -92,6 +92,20 @@ class TestMergeFunction:
+                 {"a": 1, "b": 2},
+                 False,
+             ),
++            (
++                "drop_conflicts",
++                {"a": 1, "b": 2, "c": 3},
++                {"b": 1, "c": 3, "d": 4},
++                {"a": 1, "c": 3, "d": 4},
++                False,
++            ),
++            (
++                "drop_conflicts",
++                {"a": 1, "b": np.array([2]), "c": np.array([3])},
++                {"b": 1, "c": np.array([3]), "d": 4},
++                {"a": 1, "c": np.array([3]), "d": 4},
++                False,
++            ),
+         ],
+     )
+     def test_merge_arrays_attrs(
+@@ -109,6 +123,68 @@ class TestMergeFunction:
+             expected.attrs = expected_attrs
+             assert_identical(actual, expected)
+ 
++    @pytest.mark.skip(reason="not implemented, yet (see #4827)")
++    @pytest.mark.parametrize(
++        "combine_attrs, attrs1, attrs2, expected_attrs, expect_exception",
++        [
++            (
++                "no_conflicts",
++                {"a": 1, "b": 2},
++                {"a": 1, "c": 3},
++                {"a": 1, "b": 2, "c": 3},
++                False,
++            ),
++            ("no_conflicts", {"a": 1, "b": 2}, {}, {"a": 1, "b": 2}, False),
++            ("no_conflicts", {}, {"a": 1, "c": 3}, {"a": 1, "c": 3}, False),
++            (
++                "no_conflicts",
++                {"a": 1, "b": 2},
++                {"a": 4, "c": 3},
++                {"a": 1, "b": 2, "c": 3},
++                True,
++            ),
++            ("drop", {"a": 1, "b": 2}, {"a": 1, "c": 3}, {}, False),
++            ("identical", {"a": 1, "b": 2}, {"a": 1, "b": 2}, {"a": 1, "b": 2}, False),
++            ("identical", {"a": 1, "b": 2}, {"a": 1, "c": 3}, {"a": 1, "b": 2}, True),
++            (
++                "override",
++                {"a": 1, "b": 2},
++                {"a": 4, "b": 5, "c": 3},
++                {"a": 1, "b": 2},
++                False,
++            ),
++            (
++                "drop_conflicts",
++                {"a": 1, "b": 2, "c": 3},
++                {"b": 1, "c": 3, "d": 4},
++                {"a": 1, "c": 3, "d": 4},
++                False,
++            ),
++        ],
++    )
++    def test_merge_arrays_attrs_variables(
++        self, combine_attrs, attrs1, attrs2, expected_attrs, expect_exception
++    ):
++        """check that combine_attrs is used on data variables and coords"""
++        data = create_test_data()
++        data1 = data.copy()
++        data1.var1.attrs = attrs1
++        data1.dim1.attrs = attrs1
++        data2 = data.copy()
++        data2.var1.attrs = attrs2
++        data2.dim1.attrs = attrs2
++
++        if expect_exception:
++            with raises_regex(MergeError, "combine_attrs"):
++                actual = xr.merge([data1, data2], combine_attrs=combine_attrs)
++        else:
++            actual = xr.merge([data1, data2], combine_attrs=combine_attrs)
++            expected = data.copy()
++            expected.var1.attrs = expected_attrs
++            expected.dim1.attrs = expected_attrs
++
++            assert_identical(actual, expected)
++
+     def test_merge_attrs_override_copy(self):
+         ds1 = xr.Dataset(attrs={"x": 0})
+         ds2 = xr.Dataset(attrs={"x": 1})
+@@ -116,6 +192,15 @@ class TestMergeFunction:
+         ds3.attrs["x"] = 2
+         assert ds1.x == 0
+ 
++    def test_merge_attrs_drop_conflicts(self):
++        ds1 = xr.Dataset(attrs={"a": 0, "b": 0, "c": 0})
++        ds2 = xr.Dataset(attrs={"b": 0, "c": 1, "d": 0})
++        ds3 = xr.Dataset(attrs={"a": 0, "b": 1, "c": 0, "e": 0})
++
++        actual = xr.merge([ds1, ds2, ds3], combine_attrs="drop_conflicts")
++        expected = xr.Dataset(attrs={"a": 0, "d": 0, "e": 0})
++        assert_identical(actual, expected)
++
+     def test_merge_dicts_simple(self):
+         actual = xr.merge([{"foo": 0}, {"bar": "one"}, {"baz": 3.5}])
+         expected = xr.Dataset({"foo": 0, "bar": "one", "baz": 3.5})

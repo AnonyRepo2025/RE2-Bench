@@ -1,0 +1,365 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. The input structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict input variable values to fill out placeholders XXX in the structure, and print input between [INPUT] and [\INPUT]. You should maintain the structure when printing inputs. Do not change anything else.  ONLY print the input, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import time
+import warnings
+from django.core.exceptions import ImproperlyConfigured
+from django.utils.module_loading import import_string
+DEFAULT_TIMEOUT = object()
+MEMCACHE_MAX_KEY_LENGTH = 250
+
+class BaseCache:
+    _missing_key = object()
+
+    def __init__(self, params):
+        timeout = params.get('timeout', params.get('TIMEOUT', 300))
+        if timeout is not None:
+            try:
+                timeout = int(timeout)
+            except (ValueError, TypeError):
+                timeout = 300
+        self.default_timeout = timeout
+        options = params.get('OPTIONS', {})
+        max_entries = params.get('max_entries', options.get('MAX_ENTRIES', 300))
+        try:
+            self._max_entries = int(max_entries)
+        except (ValueError, TypeError):
+            self._max_entries = 300
+        cull_frequency = params.get('cull_frequency', options.get('CULL_FREQUENCY', 3))
+        try:
+            self._cull_frequency = int(cull_frequency)
+        except (ValueError, TypeError):
+            self._cull_frequency = 3
+        self.key_prefix = params.get('KEY_PREFIX', '')
+        self.version = params.get('VERSION', 1)
+        self.key_func = get_key_func(params.get('KEY_FUNCTION'))
+
+    def get_backend_timeout(self, timeout=DEFAULT_TIMEOUT):
+        if timeout == DEFAULT_TIMEOUT:
+            timeout = self.default_timeout
+        elif timeout == 0:
+            timeout = -1
+        return None if timeout is None else time.time() + timeout
+
+    def make_key(self, key, version=None):
+        if version is None:
+            version = self.version
+        return self.key_func(key, self.key_prefix, version)
+
+    def add(self, key, value, timeout=DEFAULT_TIMEOUT, version=None):
+        raise NotImplementedError('subclasses of BaseCache must provide an add() method')
+
+    def get(self, key, default=None, version=None):
+        raise NotImplementedError('subclasses of BaseCache must provide a get() method')
+
+    def set(self, key, value, timeout=DEFAULT_TIMEOUT, version=None):
+        raise NotImplementedError('subclasses of BaseCache must provide a set() method')
+
+    def touch(self, key, timeout=DEFAULT_TIMEOUT, version=None):
+        raise NotImplementedError('subclasses of BaseCache must provide a touch() method')
+
+    def delete(self, key, version=None):
+        raise NotImplementedError('subclasses of BaseCache must provide a delete() method')
+
+    def get_many(self, keys, version=None):
+        d = {}
+        for k in keys:
+            val = self.get(k, self._missing_key, version=version)
+            if val is not self._missing_key:
+                d[k] = val
+        return d
+
+    def get_or_set(self, key, default, timeout=DEFAULT_TIMEOUT, version=None):
+        val = self.get(key, self._missing_key, version=version)
+        if val is self._missing_key:
+            if callable(default):
+                default = default()
+            self.add(key, default, timeout=timeout, version=version)
+            return self.get(key, default, version=version)
+        return val
+
+    def has_key(self, key, version=None):
+        return self.get(key, self._missing_key, version=version) is not self._missing_key
+
+    def incr(self, key, delta=1, version=None):
+        value = self.get(key, self._missing_key, version=version)
+        if value is self._missing_key:
+            raise ValueError("Key '%s' not found" % key)
+        new_value = value + delta
+        self.set(key, new_value, version=version)
+        return new_value
+
+    def decr(self, key, delta=1, version=None):
+        return self.incr(key, -delta, version=version)
+
+    def __contains__(self, key):
+        return self.has_key(key)
+
+    def set_many(self, data, timeout=DEFAULT_TIMEOUT, version=None):
+        for key, value in data.items():
+            self.set(key, value, timeout=timeout, version=version)
+        return []
+
+    def delete_many(self, keys, version=None):
+        for key in keys:
+            self.delete(key, version=version)
+
+    def clear(self):
+        raise NotImplementedError('subclasses of BaseCache must provide a clear() method')
+
+    def validate_key(self, key):
+        for warning in memcache_key_warnings(key):
+            warnings.warn(warning, CacheKeyWarning)
+
+    def incr_version(self, key, delta=1, version=None):
+        if version is None:
+            version = self.version
+        value = self.get(key, self._missing_key, version=version)
+        if value is self._missing_key:
+            raise ValueError("Key '%s' not found" % key)
+        self.set(key, value, version=version + delta)
+        self.delete(key, version=version)
+        return version + delta
+
+    def decr_version(self, key, delta=1, version=None):
+        return self.incr_version(key, -delta, version)
+
+    def close(self, **kwargs):
+        pass
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.django.core.cache.backends.filebased.FileBasedCache.get
+
+def get(self, key, default=None, version=None):
+    fname = self._key_to_file(key, version)
+    try:
+        with open(fname, 'rb') as f:
+            if not self._is_expired(f):
+                return pickle.loads(zlib.decompress(f.read()))
+    except FileNotFoundError:
+        pass
+    return default
+
+.django.core.cache.backends.filebased.FileBasedCache._key_to_file
+
+def _key_to_file(self, key, version=None):
+    key = self.make_key(key, version=version)
+    self.validate_key(key)
+    return os.path.join(self._dir, ''.join([hashlib.md5(key.encode()).hexdigest(), self.cache_suffix]))
+
+.django.core.cache.backends.base.default_key_func
+
+def default_key_func(key, key_prefix, version):
+    return '%s:%s:%s' % (key_prefix, version, key)
+
+.django.core.cache.backends.base.memcache_key_warnings
+
+def memcache_key_warnings(key):
+    if len(key) > MEMCACHE_MAX_KEY_LENGTH:
+        yield ('Cache key will cause errors if used with memcached: %r (longer than %s)' % (key, MEMCACHE_MAX_KEY_LENGTH))
+    for char in key:
+        if ord(char) < 33 or ord(char) == 127:
+            yield ('Cache key contains characters that will cause errors if used with memcached: %r' % key)
+            break
+
+.django.core.cache.backends.filebased.FileBasedCache._is_expired
+
+def _is_expired(self, f):
+    try:
+        exp = pickle.load(f)
+    except EOFError:
+        exp = 0
+    if exp is not None and exp < time.time():
+        f.close()
+        self._delete(f.name)
+        return True
+    return False
+
+.django.core.cache.backends.locmem.LocMemCache.get
+
+def get(self, key, default=None, version=None):
+    key = self.make_key(key, version=version)
+    self.validate_key(key)
+    with self._lock:
+        if self._has_expired(key):
+            self._delete(key)
+            return default
+        pickled = self._cache[key]
+        self._cache.move_to_end(key, last=False)
+    return pickle.loads(pickled)
+
+.django.core.cache.backends.locmem.LocMemCache._has_expired
+
+def _has_expired(self, key):
+    exp = self._expire_info.get(key, -1)
+    return exp is not None and exp <= time.time()
+
+.django.core.cache.backends.locmem.LocMemCache._delete
+
+def _delete(self, key):
+    try:
+        del self._cache[key]
+        del self._expire_info[key]
+    except KeyError:
+        return False
+    return True
+
+.django.core.cache.backends.dummy.DummyCache.get
+
+def get(self, key, default=None, version=None):
+    key = self.make_key(key, version=version)
+    self.validate_key(key)
+    return default
+
+
+[/PYTHON]
+What will be the input of `get_many`, given the following output:
+[OUTPUT]
+```
+{}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "default_timeout": XXX,
+        "_max_entries": XXX,
+        "_cull_frequency": XXX,
+        "key_prefix": XXX,
+        "version": XXX,
+        "key_func": {},
+        "_dir": XXX
+    },
+    "args": {
+        "key": XXX
+    },
+    "kwargs": {
+        "version": XXX
+    }
+}
+```
+[/STRUCTURE]

@@ -1,0 +1,296 @@
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+index cc65c04..81ee19b 100644
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14771/django/utils/autoreload.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import functools
+ import itertools
+ import logging
+@@ -210,6 +403,7 @@ def sys_path_directories():
+             yield resolved_path
+ 
+ 
++@inspect_code
+ def get_child_arguments():
+     """
+     Return the executable. This contains a workaround for Windows if the
+@@ -220,6 +414,11 @@ def get_child_arguments():
+     py_script = Path(sys.argv[0])
+ 
+     args = [sys.executable] + ['-W%s' % o for o in sys.warnoptions]
++    if sys.implementation.name == 'cpython':
++        args.extend(
++            f'-X{key}' if value is True else f'-X{key}={value}'
++            for key, value in sys._xoptions.items()
++        )
+     # __spec__ is set when the server was started with the `-m` option,
+     # see https://docs.python.org/3/reference/import.html#main-spec
+     # __spec__ may not exist, e.g. when running in a Conda env.
+diff --git a/tests/utils_tests/test_autoreload.py b/tests/utils_tests/test_autoreload.py
+index 7c28a9d..9b31872 100644
+--- a/tests/utils_tests/test_autoreload.py
++++ b/tests/utils_tests/test_autoreload.py
+@@ -170,6 +170,7 @@ class TestChildArguments(SimpleTestCase):
+     @mock.patch.dict(sys.modules, {'__main__': django.__main__})
+     @mock.patch('sys.argv', [django.__main__.__file__, 'runserver'])
+     @mock.patch('sys.warnoptions', [])
++    @mock.patch('sys._xoptions', {})
+     def test_run_as_module(self):
+         self.assertEqual(
+             autoreload.get_child_arguments(),
+@@ -179,6 +180,7 @@ class TestChildArguments(SimpleTestCase):
+     @mock.patch.dict(sys.modules, {'__main__': test_main})
+     @mock.patch('sys.argv', [test_main.__file__, 'runserver'])
+     @mock.patch('sys.warnoptions', [])
++    @mock.patch('sys._xoptions', {})
+     def test_run_as_non_django_module(self):
+         self.assertEqual(
+             autoreload.get_child_arguments(),
+@@ -188,6 +190,7 @@ class TestChildArguments(SimpleTestCase):
+     @mock.patch.dict(sys.modules, {'__main__': test_main_module})
+     @mock.patch('sys.argv', [test_main.__file__, 'runserver'])
+     @mock.patch('sys.warnoptions', [])
++    @mock.patch('sys._xoptions', {})
+     def test_run_as_non_django_module_non_package(self):
+         self.assertEqual(
+             autoreload.get_child_arguments(),
+@@ -197,12 +200,22 @@ class TestChildArguments(SimpleTestCase):
+     @mock.patch('__main__.__spec__', None)
+     @mock.patch('sys.argv', [__file__, 'runserver'])
+     @mock.patch('sys.warnoptions', ['error'])
++    @mock.patch('sys._xoptions', {})
+     def test_warnoptions(self):
+         self.assertEqual(
+             autoreload.get_child_arguments(),
+             [sys.executable, '-Werror', __file__, 'runserver']
+         )
+ 
++    @mock.patch('sys.argv', [__file__, 'runserver'])
++    @mock.patch('sys.warnoptions', [])
++    @mock.patch('sys._xoptions', {'utf8': True, 'a': 'b'})
++    def test_xoptions(self):
++        self.assertEqual(
++            autoreload.get_child_arguments(),
++            [sys.executable, '-Xutf8', '-Xa=b', __file__, 'runserver'],
++        )
++
+     @mock.patch('__main__.__spec__', None)
+     @mock.patch('sys.warnoptions', [])
+     def test_exe_fallback(self):
+@@ -217,6 +230,7 @@ class TestChildArguments(SimpleTestCase):
+ 
+     @mock.patch('__main__.__spec__', None)
+     @mock.patch('sys.warnoptions', [])
++    @mock.patch('sys._xoptions', {})
+     def test_entrypoint_fallback(self):
+         with tempfile.TemporaryDirectory() as tmpdir:
+             script_path = Path(tmpdir) / 'django-admin-script.py'
+@@ -237,6 +251,7 @@ class TestChildArguments(SimpleTestCase):
+ 
+     @mock.patch('sys.argv', [__file__, 'runserver'])
+     @mock.patch('sys.warnoptions', [])
++    @mock.patch('sys._xoptions', {})
+     def test_module_no_spec(self):
+         module = types.ModuleType('test_module')
+         del module.__spec__
+@@ -468,6 +483,7 @@ class RestartWithReloaderTests(SimpleTestCase):
+             mock.patch('django.utils.autoreload.sys.argv', argv),
+             mock.patch('django.utils.autoreload.sys.executable', self.executable),
+             mock.patch('django.utils.autoreload.sys.warnoptions', ['all']),
++            mock.patch('django.utils.autoreload.sys._xoptions', {}),
+         ]
+         for p in patches:
+             p.start()

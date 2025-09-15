@@ -1,0 +1,624 @@
+diff --git a/astropy/units/quantity.py b/astropy/units/quantity.py
+index b0747f5..95aaf8d 100644
+--- a/astropy/units/quantity.py
++++ b/astropy/units/quantity.py
+@@ -18,6 +18,7 @@ import numpy as np
+ 
+ # LOCAL
+ from astropy import config as _config
++from astropy.utils.compat import NUMPY_LT_1_20, NUMPY_LT_1_22
+ from astropy.utils.compat.misc import override__dir__
+ from astropy.utils.data_info import ParentDtypeInfo
+ from astropy.utils.exceptions import AstropyDeprecationWarning, AstropyWarning
+@@ -1788,19 +1789,34 @@ class Quantity(np.ndarray):
+     def trace(self, offset=0, axis1=0, axis2=1, dtype=None, out=None):
+         return self._wrap_function(np.trace, offset, axis1, axis2, dtype,
+                                    out=out)
+-
+-    def var(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+-        return self._wrap_function(np.var, axis, dtype,
+-                                   out=out, ddof=ddof, keepdims=keepdims,
+-                                   unit=self.unit**2)
+-
+-    def std(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
+-        return self._wrap_function(np.std, axis, dtype, out=out, ddof=ddof,
+-                                   keepdims=keepdims)
+-
+-    def mean(self, axis=None, dtype=None, out=None, keepdims=False):
+-        return self._wrap_function(np.mean, axis, dtype, out=out,
+-                                   keepdims=keepdims)
++    if NUMPY_LT_1_20:
++        def var(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
++            return self._wrap_function(np.var, axis, dtype,
++                                       out=out, ddof=ddof, keepdims=keepdims,
++                                       unit=self.unit**2)
++    else:
++        def var(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False, *, where=True):
++            return self._wrap_function(np.var, axis, dtype,
++                                       out=out, ddof=ddof, keepdims=keepdims, where=where,
++                                       unit=self.unit**2)
++
++    if NUMPY_LT_1_20:
++        def std(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
++            return self._wrap_function(np.std, axis, dtype, out=out, ddof=ddof,
++                                       keepdims=keepdims)
++    else:
++        def std(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False, *, where=True):
++            return self._wrap_function(np.std, axis, dtype, out=out, ddof=ddof,
++                                       keepdims=keepdims, where=where)
++
++    if NUMPY_LT_1_20:
++        def mean(self, axis=None, dtype=None, out=None, keepdims=False):
++            return self._wrap_function(np.mean, axis, dtype, out=out,
++                                       keepdims=keepdims)
++    else:
++        def mean(self, axis=None, dtype=None, out=None, keepdims=False, *, where=True):
++            return self._wrap_function(np.mean, axis, dtype, out=out,
++                                       keepdims=keepdims, where=where)
+ 
+     def round(self, decimals=0, out=None):
+         return self._wrap_function(np.round, decimals, out=out)
+@@ -1827,9 +1843,14 @@ class Quantity(np.ndarray):
+     def ediff1d(self, to_end=None, to_begin=None):
+         return self._wrap_function(np.ediff1d, to_end, to_begin)
+ 
+-    def nansum(self, axis=None, out=None, keepdims=False):
+-        return self._wrap_function(np.nansum, axis,
+-                                   out=out, keepdims=keepdims)
++    if NUMPY_LT_1_22:
++        def nansum(self, axis=None, out=None, keepdims=False):
++            return self._wrap_function(np.nansum, axis,
++                                       out=out, keepdims=keepdims)
++    else:
++        def nansum(self, axis=None, out=None, keepdims=False, *, initial=None, where=True):
++            return self._wrap_function(np.nansum, axis,
++                                       out=out, keepdims=keepdims, initial=initial, where=where)
+ 
+     def insert(self, obj, values, axis=None):
+         """
+diff --git a/astropy/units/tests/test_quantity_array_methods.py b/astropy/units/tests/test_quantity_array_methods.py
+index beb4486..b98895c 100644
+--- a/astropy/units/tests/test_quantity_array_methods.py
++++ b/astropy/units/tests/test_quantity_array_methods.py
+@@ -7,7 +7,7 @@ import pytest
+ from numpy.testing import assert_array_equal
+ 
+ from astropy import units as u
+-from astropy.utils.compat import NUMPY_LT_1_21_1
++from astropy.utils.compat import NUMPY_LT_1_20, NUMPY_LT_1_21_1, NUMPY_LT_1_22
+ 
+ 
+ class TestQuantityArrayCopy:
+@@ -168,6 +168,11 @@ class TestQuantityStatsFuncs:
+         assert qi2 is qi
+         assert qi == 3.6 * u.m
+ 
++    @pytest.mark.xfail(NUMPY_LT_1_20, reason="'where' keyword argument not supported for numpy < 1.20")
++    def test_mean_where(self):
++        q1 = np.array([1., 2., 4., 5., 6., 7.]) * u.m
++        assert_array_equal(np.mean(q1, where=q1 < 7 * u.m), 3.6 * u.m)
++
+     def test_std(self):
+         q1 = np.array([1., 2.]) * u.m
+         assert_array_equal(np.std(q1), 0.5 * u.m)
+@@ -179,6 +184,11 @@ class TestQuantityStatsFuncs:
+         np.std(q1, out=qi)
+         assert qi == 0.5 * u.m
+ 
++    @pytest.mark.xfail(NUMPY_LT_1_20, reason="'where' keyword argument not supported for numpy < 1.20")
++    def test_std_where(self):
++        q1 = np.array([1., 2., 3.]) * u.m
++        assert_array_equal(np.std(q1, where=q1 < 3 * u.m), 0.5 * u.m)
++
+     def test_var(self):
+         q1 = np.array([1., 2.]) * u.m
+         assert_array_equal(np.var(q1), 0.25 * u.m ** 2)
+@@ -190,6 +200,11 @@ class TestQuantityStatsFuncs:
+         np.var(q1, out=qi)
+         assert qi == 0.25 * u.m ** 2
+ 
++    @pytest.mark.xfail(NUMPY_LT_1_20, reason="'where' keyword argument not supported for numpy < 1.20")
++    def test_var_where(self):
++        q1 = np.array([1., 2., 3.]) * u.m
++        assert_array_equal(np.var(q1, where=q1 < 3 * u.m), 0.25 * u.m ** 2)
++
+     def test_median(self):
+         q1 = np.array([1., 2., 4., 5., 6.]) * u.m
+         assert np.median(q1) == 4. * u.m
+@@ -210,6 +225,10 @@ class TestQuantityStatsFuncs:
+         np.min(q1, out=qi)
+         assert qi == 1. * u.m
+ 
++    def test_min_where(self):
++        q1 = np.array([0., 1., 2., 4., 5., 6.]) * u.m
++        assert np.min(q1, initial=10 * u.m, where=q1 > 0 * u.m) == 1. * u.m
++
+     def test_argmin(self):
+         q1 = np.array([6., 2., 4., 5., 6.]) * u.m
+         assert np.argmin(q1) == 1
+@@ -224,6 +243,10 @@ class TestQuantityStatsFuncs:
+         np.max(q1, out=qi)
+         assert qi == 6. * u.m
+ 
++    def test_max_where(self):
++        q1 = np.array([1., 2., 4., 5., 6., 7.]) * u.m
++        assert np.max(q1, initial=0 * u.m, where=q1 < 7 * u.m) == 6. * u.m
++
+     def test_argmax(self):
+         q1 = np.array([5., 2., 4., 5., 6.]) * u.m
+         assert np.argmax(q1) == 4
+@@ -285,6 +308,14 @@ class TestQuantityStatsFuncs:
+         np.sum(q1, out=qi)
+         assert qi == 9. * u.m
+ 
++    def test_sum_where(self):
++
++        q1 = np.array([1., 2., 6., 7.]) * u.m
++        initial = 0 * u.m
++        where = q1 < 7 * u.m
++        assert np.all(q1.sum(initial=initial, where=where) == 9. * u.m)
++        assert np.all(np.sum(q1, initial=initial, where=where) == 9. * u.m)
++
+     def test_cumsum(self):
+ 
+         q1 = np.array([1, 2, 6]) * u.m
+@@ -327,6 +358,15 @@ class TestQuantityStatsFuncs:
+         assert qout2 is qi2
+         assert qi2 == np.nansum(q1.value) * q1.unit
+ 
++    @pytest.mark.xfail(NUMPY_LT_1_22, reason="'where' keyword argument not supported for numpy < 1.22")
++    def test_nansum_where(self):
++
++        q1 = np.array([1., 2., np.nan, 4.]) * u.m
++        initial = 0 * u.m
++        where = q1 < 4 * u.m
++        assert np.all(q1.nansum(initial=initial, where=where) == 3. * u.m)
++        assert np.all(np.nansum(q1, initial=initial, where=where) == 3. * u.m)
++
+     def test_prod(self):
+ 
+         q1 = np.array([1, 2, 6]) * u.m
+diff --git a/astropy/utils/masked/core.py b/astropy/utils/masked/core.py
+index 2d8c198..bb16c87 100644
+--- a/astropy/utils/masked/core.py
++++ b/astropy/utils/masked/core.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/astropy__astropy-12891/astropy/utils/masked/core.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # -*- coding: utf-8 -*-
+ # Licensed under a 3-clause BSD style license - see LICENSE.rst
+ """
+@@ -1043,7 +1236,8 @@ class MaskedNDArray(Masked, np.ndarray, base_cls=np.ndarray, data_cls=np.ndarray
+             np.minimum(out, dmax, out=out, where=True if mmax is None else ~mmax)
+         return masked_out
+ 
+-    def mean(self, axis=None, dtype=None, out=None, keepdims=False):
++    @inspect_code
++    def mean(self, axis=None, dtype=None, out=None, keepdims=False, *, where=True):
+         # Implementation based on that in numpy/core/_methods.py
+         # Cast bool, unsigned int, and int to float64 by default,
+         # and do float16 at higher precision.
+@@ -1055,38 +1249,42 @@ class MaskedNDArray(Masked, np.ndarray, base_cls=np.ndarray, data_cls=np.ndarray
+                 dtype = np.dtype('f4')
+                 is_float16_result = out is None
+ 
++        where = ~self.mask & where
++
+         result = self.sum(axis=axis, dtype=dtype, out=out,
+-                          keepdims=keepdims, where=~self.mask)
+-        n = np.add.reduce(~self.mask, axis=axis, keepdims=keepdims)
++                          keepdims=keepdims, where=where)
++        n = np.add.reduce(where, axis=axis, keepdims=keepdims)
+         result /= n
+         if is_float16_result:
+             result = result.astype(self.dtype)
+         return result
+ 
+-    def var(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
++    def var(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False, *, where=True):
++        where_final = ~self.mask & where
++
+         # Simplified implementation based on that in numpy/core/_methods.py
+-        n = np.add.reduce(~self.mask, axis=axis, keepdims=keepdims)[...]
++        n = np.add.reduce(where_final, axis=axis, keepdims=keepdims)[...]
+ 
+         # Cast bool, unsigned int, and int to float64 by default.
+         if dtype is None and issubclass(self.dtype.type,
+                                         (np.integer, np.bool_)):
+             dtype = np.dtype('f8')
+-        mean = self.mean(axis=axis, dtype=dtype, keepdims=True)
++        mean = self.mean(axis=axis, dtype=dtype, keepdims=True, where=where)
+ 
+         x = self - mean
+         x *= x.conjugate()  # Conjugate just returns x if not complex.
+ 
+         result = x.sum(axis=axis, dtype=dtype, out=out,
+-                       keepdims=keepdims, where=~x.mask)
++                       keepdims=keepdims, where=where_final)
+         n -= ddof
+         n = np.maximum(n, 0, out=n)
+         result /= n
+         result._mask |= (n == 0)
+         return result
+ 
+-    def std(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False):
++    def std(self, axis=None, dtype=None, out=None, ddof=0, keepdims=False, *, where=True):
+         result = self.var(axis=axis, dtype=dtype, out=out, ddof=ddof,
+-                          keepdims=keepdims)
++                          keepdims=keepdims, where=where)
+         return np.sqrt(result, out=result)
+ 
+     def __bool__(self):
+@@ -1094,13 +1292,13 @@ class MaskedNDArray(Masked, np.ndarray, base_cls=np.ndarray, data_cls=np.ndarray
+         result = super().__bool__()
+         return result and not self.mask
+ 
+-    def any(self, axis=None, out=None, keepdims=False):
++    def any(self, axis=None, out=None, keepdims=False, *, where=True):
+         return np.logical_or.reduce(self, axis=axis, out=out,
+-                                    keepdims=keepdims, where=~self.mask)
++                                    keepdims=keepdims, where=~self.mask & where)
+ 
+-    def all(self, axis=None, out=None, keepdims=False):
++    def all(self, axis=None, out=None, keepdims=False, *, where=True):
+         return np.logical_and.reduce(self, axis=axis, out=out,
+-                                     keepdims=keepdims, where=~self.mask)
++                                     keepdims=keepdims, where=~self.mask & where)
+ 
+     # Following overrides needed since somehow the ndarray implementation
+     # does not actually call these.
+diff --git a/astropy/utils/masked/tests/test_masked.py b/astropy/utils/masked/tests/test_masked.py
+index 138cda3..a15bef9 100644
+--- a/astropy/utils/masked/tests/test_masked.py
++++ b/astropy/utils/masked/tests/test_masked.py
+@@ -13,6 +13,7 @@ from astropy import units as u
+ from astropy.units import Quantity
+ from astropy.coordinates import Longitude
+ from astropy.utils.masked import Masked, MaskedNDArray
++from astropy.utils.compat import NUMPY_LT_1_20
+ 
+ 
+ def assert_masked_equal(a, b):
+@@ -781,6 +782,19 @@ class TestMaskedArrayMethods(MaskedArraySetup):
+         assert_array_equal(ma_sum.unmasked, expected_data)
+         assert_array_equal(ma_sum.mask, expected_mask)
+ 
++    @pytest.mark.parametrize('axis', (0, 1, None))
++    def test_sum_where(self, axis):
++        where = np.array([
++            [True, False, False, ],
++            [True, True, True, ],
++        ])
++        where_final = ~self.ma.mask & where
++        ma_sum = self.ma.sum(axis, where=where_final)
++        expected_data = self.ma.unmasked.sum(axis, where=where_final)
++        expected_mask = np.logical_or.reduce(self.ma.mask, axis=axis, where=where_final) | (~where_final).all(axis)
++        assert_array_equal(ma_sum.unmasked, expected_data)
++        assert_array_equal(ma_sum.mask, expected_mask)
++
+     @pytest.mark.parametrize('axis', (0, 1, None))
+     def test_cumsum(self, axis):
+         ma_sum = self.ma.cumsum(axis)
+@@ -824,6 +838,22 @@ class TestMaskedArrayMethods(MaskedArraySetup):
+         assert result is out
+         assert_masked_equal(out, expected)
+ 
++    @pytest.mark.xfail(NUMPY_LT_1_20, reason="'where' keyword argument not supported for numpy < 1.20")
++    @pytest.mark.filterwarnings("ignore:.*encountered in.*divide")
++    @pytest.mark.filterwarnings("ignore:Mean of empty slice")
++    @pytest.mark.parametrize('axis', (0, 1, None))
++    def test_mean_where(self, axis):
++        where = np.array([
++            [True, False, False, ],
++            [True, True, True, ],
++        ])
++        where_final = ~self.ma.mask & where
++        ma_mean = self.ma.mean(axis, where=where)
++        expected_data = self.ma.unmasked.mean(axis, where=where_final)
++        expected_mask = np.logical_or.reduce(self.ma.mask, axis=axis, where=where_final) | (~where_final).all(axis)
++        assert_array_equal(ma_mean.unmasked, expected_data)
++        assert_array_equal(ma_mean.mask, expected_mask)
++
+     @pytest.mark.filterwarnings("ignore:.*encountered in.*divide")
+     @pytest.mark.parametrize('axis', (0, 1, None))
+     def test_var(self, axis):
+@@ -851,6 +881,22 @@ class TestMaskedArrayMethods(MaskedArraySetup):
+         expected = ma.astype('f8').var()
+         assert_masked_equal(ma_var, expected)
+ 
++    @pytest.mark.xfail(NUMPY_LT_1_20, reason="'where' keyword argument not supported for numpy < 1.20")
++    @pytest.mark.filterwarnings("ignore:.*encountered in.*divide")
++    @pytest.mark.filterwarnings("ignore:Degrees of freedom <= 0 for slice")
++    @pytest.mark.parametrize('axis', (0, 1, None))
++    def test_var_where(self, axis):
++        where = np.array([
++            [True, False, False, ],
++            [True, True, True, ],
++        ])
++        where_final = ~self.ma.mask & where
++        ma_var = self.ma.var(axis, where=where)
++        expected_data = self.ma.unmasked.var(axis, where=where_final)
++        expected_mask = np.logical_or.reduce(self.ma.mask, axis=axis, where=where_final) | (~where_final).all(axis)
++        assert_array_equal(ma_var.unmasked, expected_data)
++        assert_array_equal(ma_var.mask, expected_mask)
++
+     def test_std(self):
+         ma_std = self.ma.std(1, ddof=1)
+         ma_var1 = self.ma.var(1, ddof=1)
+@@ -864,6 +910,22 @@ class TestMaskedArrayMethods(MaskedArraySetup):
+         assert result is out
+         assert_masked_equal(result, expected)
+ 
++    @pytest.mark.xfail(NUMPY_LT_1_20, reason="'where' keyword argument not supported for numpy < 1.20")
++    @pytest.mark.filterwarnings("ignore:.*encountered in.*divide")
++    @pytest.mark.filterwarnings("ignore:Degrees of freedom <= 0 for slice")
++    @pytest.mark.parametrize('axis', (0, 1, None))
++    def test_std_where(self, axis):
++        where = np.array([
++            [True, False, False, ],
++            [True, True, True, ],
++        ])
++        where_final = ~self.ma.mask & where
++        ma_std = self.ma.std(axis, where=where)
++        expected_data = self.ma.unmasked.std(axis, where=where_final)
++        expected_mask = np.logical_or.reduce(self.ma.mask, axis=axis, where=where_final) | (~where_final).all(axis)
++        assert_array_equal(ma_std.unmasked, expected_data)
++        assert_array_equal(ma_std.mask, expected_mask)
++
+     @pytest.mark.parametrize('axis', (0, 1, None))
+     def test_min(self, axis):
+         ma_min = self.ma.min(axis)
+@@ -879,6 +941,19 @@ class TestMaskedArrayMethods(MaskedArraySetup):
+         assert_array_equal(ma_min.unmasked, np.array(2.))
+         assert not ma_min.mask
+ 
++    @pytest.mark.parametrize('axis', (0, 1, None))
++    def test_min_where(self, axis):
++        where = np.array([
++            [True, False, False, ],
++            [True, True, True, ],
++        ])
++        where_final = ~self.ma.mask & where
++        ma_min = self.ma.min(axis, where=where_final, initial=np.inf)
++        expected_data = self.ma.unmasked.min(axis, where=where_final, initial=np.inf)
++        expected_mask = np.logical_or.reduce(self.ma.mask, axis=axis, where=where_final) | (~where_final).all(axis)
++        assert_array_equal(ma_min.unmasked, expected_data)
++        assert_array_equal(ma_min.mask, expected_mask)
++
+     @pytest.mark.parametrize('axis', (0, 1, None))
+     def test_max(self, axis):
+         ma_max = self.ma.max(axis)
+@@ -888,6 +963,19 @@ class TestMaskedArrayMethods(MaskedArraySetup):
+         assert_array_equal(ma_max.unmasked, expected_data)
+         assert not np.any(ma_max.mask)
+ 
++    @pytest.mark.parametrize('axis', (0, 1, None))
++    def test_max_where(self, axis):
++        where = np.array([
++            [True, False, False, ],
++            [True, True, True, ],
++        ])
++        where_final = ~self.ma.mask & where
++        ma_max = self.ma.max(axis, where=where_final, initial=-np.inf)
++        expected_data = self.ma.unmasked.max(axis, where=where_final, initial=-np.inf)
++        expected_mask = np.logical_or.reduce(self.ma.mask, axis=axis, where=where_final) | (~where_final).all(axis)
++        assert_array_equal(ma_max.unmasked, expected_data)
++        assert_array_equal(ma_max.mask, expected_mask)
++
+     @pytest.mark.parametrize('axis', (0, 1, None))
+     def test_argmin(self, axis):
+         ma_argmin = self.ma.argmin(axis)
+@@ -1020,6 +1108,22 @@ class TestMaskedArrayMethods(MaskedArraySetup):
+         assert result is out
+         assert_masked_equal(result, expected)
+ 
++    @pytest.mark.xfail(NUMPY_LT_1_20, reason="'where' keyword argument not supported for numpy < 1.20")
++    @pytest.mark.parametrize('method', ('all', 'any'))
++    @pytest.mark.parametrize('axis', (0, 1, None))
++    def test_all_and_any_where(self, method, axis):
++        where = np.array([
++            [True, False, False, ],
++            [True, True, True, ],
++        ])
++        where_final = ~self.ma.mask & where
++        ma_eq = self.ma == self.ma
++        ma_any = getattr(ma_eq, method)(axis, where=where)
++        expected_data = getattr(ma_eq.unmasked, method)(axis, where=where_final)
++        expected_mask = np.logical_or.reduce(self.ma.mask, axis=axis, where=where_final) | (~where_final).all(axis)
++        assert_array_equal(ma_any.unmasked, expected_data)
++        assert_array_equal(ma_any.mask, expected_mask)
++
+     @pytest.mark.parametrize('offset', (0, 1))
+     def test_diagonal(self, offset):
+         mda = self.ma.diagonal(offset=offset)

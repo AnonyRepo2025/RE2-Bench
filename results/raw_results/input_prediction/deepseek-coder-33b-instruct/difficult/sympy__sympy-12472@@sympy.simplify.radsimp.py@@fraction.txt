@@ -1,0 +1,202 @@
+1. The output is a list of two strings, which are the numerator and the denominator of a fraction.
+2. The numerator is "-x**3", which is a string representation of a polynomial.
+3. The denominator is "1", which is a string representation of the number 1.
+4. The function `fraction` takes an expression and returns a tuple of two expressions.
+5. The expression "-x**3" is a polynomial, so the input should be a polynomial.
+6. The expression "1" is a number, so the input should be a number.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "expr": "-x**3"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/PYTHON]
+[PYTHON]
+from __future__ import print_function, division
+from collections import defaultdict
+from sympy import SYMPY_DEBUG
+from sympy.core.evaluate import global_evaluate
+from sympy.core.compatibility import iterable, ordered, default_sort_key
+from sympy.core import expand_power_base, sympify, Add, S, Mul, Derivative, Pow, symbols, expand_mul
+from sympy.core.numbers import Rational
+from sympy.core.exprtools import Factors, gcd_terms
+from sympy.core.mul import _keep_coeff, _unevaluated_Mul
+from sympy.core.function import _mexpand
+from sympy.core.add import _unevaluated_Add
+from sympy.functions import exp, sqrt, log
+from sympy.polys import gcd
+from sympy.simplify.sqrtdenest import sqrtdenest
+from sympy.simplify.simplify import signsimp
+from sympy.simplify.simplify import nsimplify
+from sympy.simplify.powsimp import powsimp, powdenest
+expand_numer = numer_expand
+expand_denom = denom_expand
+expand_fraction = fraction_expand
+
+def fraction(expr, exact=False):
+    expr = sympify(expr)
+    numer, denom = ([], [])
+    for term in Mul.make_args(expr):
+        if term.is_commutative and (term.is_Pow or term.func is exp):
+            b, ex = term.as_base_exp()
+            if ex.is_negative:
+                if ex is S.NegativeOne:
+                    denom.append(b)
+                elif exact:
+                    if ex.is_constant():
+                        denom.append(Pow(b, -ex))
+                    else:
+                        numer.append(term)
+                else:
+                    denom.append(Pow(b, -ex))
+            elif ex.is_positive:
+                numer.append(term)
+            elif not exact and ex.is_Mul:
+                n, d = term.as_numer_denom()
+                numer.append(n)
+                denom.append(d)
+            else:
+                numer.append(term)
+        elif term.is_Rational:
+            n, d = term.as_numer_denom()
+            numer.append(n)
+            denom.append(d)
+        else:
+            numer.append(term)
+    if exact:
+        return (Mul(*numer, evaluate=False), Mul(*denom, evaluate=False))
+    else:
+        return (Mul(*numer), Mul(*denom))
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.core.sympify.sympify
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            if not isinstance(a, np.floating):
+                return sympify(np.asscalar(a))
+            else:
+                try:
+                    from sympy.core.numbers import Float
+                    prec = np.finfo(a).nmant
+                    a = str(list(np.reshape(np.asarray(a), (1, np.size(a)))[0]))[1:-1]
+                    return Float(a, precision=prec)
+                except NotImplementedError:
+                    raise SympifyError('Translation for numpy float : %s is not implemented' % a)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    try:
+        from ..tensor.array import Array
+        return Array(a.flat, a.shape)
+    except AttributeError:
+        pass
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+.sympy.core.basic.Basic.__hash__
+
+def __hash__(self):
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+.sympy.core.operations.AssocOp.make_args
+
+def make_args(cls, expr):
+    if isinstance(expr, cls):
+        return expr.args
+    else:
+        return (sympify(expr),)
+
+.sympy.core.power.Pow.as_base_exp
+
+def as_base_exp(self):
+    b, e = self.args
+    if b.is_Rational and b.p == 1 and (b.q != 1):
+        return (Integer(b.q), -e)
+    return (b, e)
+
+.sympy.core.basic.Basic.args
+
+def args

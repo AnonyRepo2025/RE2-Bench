@@ -1,0 +1,308 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 103fffa..0a2c625 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-16649/django/db/models/sql/query.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Create SQL statements for QuerySets.
+ 
+@@ -1080,6 +1273,7 @@ class Query(BaseExpression):
+                 "semicolons, or SQL comments."
+             )
+ 
++    @inspect_code
+     def add_annotation(self, annotation, alias, select=True):
+         """Add a single annotation expression to the Query."""
+         self.check_alias(alias)
+@@ -1087,7 +1281,12 @@ class Query(BaseExpression):
+         if select:
+             self.append_annotation_mask([alias])
+         else:
+-            self.set_annotation_mask(set(self.annotation_select).difference({alias}))
++            annotation_mask = (
++                value
++                for value in dict.fromkeys(self.annotation_select)
++                if value != alias
++            )
++            self.set_annotation_mask(annotation_mask)
+         self.annotations[alias] = annotation
+ 
+     def resolve_expression(self, query, *args, **kwargs):
+@@ -2341,12 +2540,12 @@ class Query(BaseExpression):
+         if names is None:
+             self.annotation_select_mask = None
+         else:
+-            self.annotation_select_mask = set(names)
++            self.annotation_select_mask = list(dict.fromkeys(names))
+         self._annotation_select_cache = None
+ 
+     def append_annotation_mask(self, names):
+         if self.annotation_select_mask is not None:
+-            self.set_annotation_mask(self.annotation_select_mask.union(names))
++            self.set_annotation_mask((*self.annotation_select_mask, *names))
+ 
+     def set_extra_mask(self, names):
+         """
+@@ -2412,6 +2611,7 @@ class Query(BaseExpression):
+         self.add_fields(field_names, True)
+ 
+     @property
++    @inspect_code
+     def annotation_select(self):
+         """
+         Return the dictionary of aggregate columns that are not masked and
+@@ -2423,9 +2623,9 @@ class Query(BaseExpression):
+             return {}
+         elif self.annotation_select_mask is not None:
+             self._annotation_select_cache = {
+-                k: v
+-                for k, v in self.annotations.items()
+-                if k in self.annotation_select_mask
++                k: self.annotations[k]
++                for k in self.annotation_select_mask
++                if k in self.annotations
+             }
+             return self._annotation_select_cache
+         else:
+diff --git a/tests/postgres_tests/test_array.py b/tests/postgres_tests/test_array.py
+index f7615c9..5f8441b 100644
+--- a/tests/postgres_tests/test_array.py
++++ b/tests/postgres_tests/test_array.py
+@@ -466,8 +466,8 @@ class TestQuerying(PostgreSQLTestCase):
+                 ],
+             )
+         sql = ctx[0]["sql"]
+-        self.assertIn("GROUP BY 1", sql)
+-        self.assertIn("ORDER BY 1", sql)
++        self.assertIn("GROUP BY 2", sql)
++        self.assertIn("ORDER BY 2", sql)
+ 
+     def test_index(self):
+         self.assertSequenceEqual(
+diff --git a/tests/queries/test_qs_combinators.py b/tests/queries/test_qs_combinators.py
+index bf127ce..71d2418 100644
+--- a/tests/queries/test_qs_combinators.py
++++ b/tests/queries/test_qs_combinators.py
+@@ -246,7 +246,7 @@ class QuerySetSetOperationTests(TestCase):
+             )
+             .values_list("num", "count")
+         )
+-        self.assertCountEqual(qs1.union(qs2), [(1, 0), (2, 1)])
++        self.assertCountEqual(qs1.union(qs2), [(1, 0), (1, 2)])
+ 
+     def test_union_with_extra_and_values_list(self):
+         qs1 = (
+@@ -368,6 +368,20 @@ class QuerySetSetOperationTests(TestCase):
+             [reserved_name.pk],
+         )
+ 
++    def test_union_multiple_models_with_values_list_and_annotations(self):
++        ReservedName.objects.create(name="rn1", order=10)
++        Celebrity.objects.create(name="c1")
++        qs1 = ReservedName.objects.annotate(row_type=Value("rn")).values_list(
++            "name", "order", "row_type"
++        )
++        qs2 = Celebrity.objects.annotate(
++            row_type=Value("cb"), order=Value(-10)
++        ).values_list("name", "order", "row_type")
++        self.assertSequenceEqual(
++            qs1.union(qs2).order_by("order"),
++            [("c1", -10, "cb"), ("rn1", 10, "rn")],
++        )
++
+     def test_union_in_subquery(self):
+         ReservedName.objects.bulk_create(
+             [

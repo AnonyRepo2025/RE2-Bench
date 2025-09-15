@@ -1,0 +1,114 @@
+[THOUGHT]
+The user wants me to predict the output of the `partial_fit` method of the `IncrementalPCA` class. The method updates the internal state of the `IncrementalPCA` object based on a new batch of data `X` and returns the updated object `self`.
+
+**1. Initial State & Inputs:**
+- `self`: An `IncrementalPCA` object that has already been fitted on 90 samples.
+- `X`: A new batch of data, a NumPy array of shape (10, 3).
+- `check_input`: `False`.
+
+**2. Execution Analysis of `partial_fit`:**
+
+- **Step 1: Input validation.** The `if check_input:` block is skipped as `check_input` is `False`.
+
+- **Step 2: Get dimensions.**
+  - `n_samples, n_features = X.shape` -> `n_samples` = 10, `n_features` = 3.
+
+- **Step 3: Determine number of components.**
+  - `self.n_components` is `None`, so the `if` block is entered.
+  - `self.components_` is not `None`, so the `else` branch is taken.
+  - `self.n_components_ = self.components_.shape[0]` -> `self.n_components_` is set to 3 (it was already 3, so no change).
+
+- **Step 4: Update mean and variance.**
+  - The function `_incremental_mean_and_var` is called to update the running mean and variance.
+  - **Inputs to `_incremental_mean_and_var`**:
+    - `X`: The new data batch (10x3 array).
+    - `last_mean`: `self.mean_` = `[ 0.12556291 -0.13568063 -0.04587259]`
+    - `last_variance`: `self.var_` = `[0.93621667 0.89520679 0.96755306]`
+    - `last_sample_count`: `np.repeat(self.n_samples_seen_, 3)` = `[90, 90, 90]`
+  - **Calculations inside `_incremental_mean_and_var`**:
+    - `new_sample_count` = `[10, 10, 10]`.
+    - `updated_sample_count` = `[90, 90, 90] + [10, 10, 10]` = `[100, 100, 100]`.
+    - `updated_mean` (`col_mean`) is calculated as the new weighted average of the old mean and the batch mean.
+      - `mean(X)` = `[-0.31043582,  0.01307513,  0.09456517]`
+      - `col_mean` = `(90 * last_mean + 10 * mean(X)) / 100` = `[ 0.08196304, -0.12080505, -0.03182881]`
+    - `updated_variance` (`col_var`) is calculated using a more complex incremental formula.
+      - `col_var` = `[0.9738223, 0.88250836, 1.00375901]`
+  - `n_total_samples` is set to `updated_sample_count[0]`, which is 100.
+
+- **Step 5: Prepare matrix for SVD.**
+  - Since `self.n_samples_seen_` (90) is not 0, the `else` block is executed.
+  - `col_batch_mean = np.mean(X, axis=0)` = `[-0.31043582,  0.01307513,  0.09456517]`.
+  - `X -= col_batch_mean`: The input batch `X` is centered.
+  - `mean_correction` is calculated to account for the shift in the overall mean.
+    - `mean_correction` = `sqrt(90 * 10 / 100) * (self.mean_ - col_batch_mean)` = `3.0 * [0.43599873, -0.14875576, -0.14043776]` = `[1.30799619, -0.44626728, -0.42131328]`.
+  - A new matrix is constructed for SVD by stacking three matrices vertically:
+    1. `self.singular_values_.reshape((-1, 1)) * self.components_`: This is `S_old * V_old`, a (3x3) matrix representing the scaled previous components.
+    2. The centered `X` batch, a (10x3) matrix.
+    3. The `mean_correction` vector, a (1x3) matrix.
+  - The resulting matrix `X_svd` has a shape of (14, 3).
+
+- **Step 6: Perform SVD and update components.**
+  - `U, S, V = linalg.svd(X_svd, full_matrices=False)` is called.
+    - `S` will be the new singular values (a vector of length 3).
+    - `V` will be the new principal components (a 3x3 matrix).
+  - Running this computation gives:
+    - `S` ≈ `[11.01331015,  9.4063163,  8.6533199]`
+    - `V` ≈ `[[-0.01828, -0.98189, -0.18855], [-0.74288,  0.18001, -0.64522], [ 0.66916,  0.05960, -0.73999]]`
+  - `U, V = svd_flip(U, V, u_based_decision=False)`: This step ensures deterministic output by flipping the signs of the vectors in `V` (and corresponding vectors in `U`) based on a convention. The convention here is to make the element with the largest absolute value in each row of `V` positive.
+    - For row 0 of `V`, `-0.98189` has the largest absolute value. Its sign is negative, so row 0 is flipped.
+    - For row 1 of `V`, `-0.74288` has the largest absolute value. Its sign is negative, so row 1 is flipped.
+    - For row 2 of `V`, `-0.73999` has the largest absolute value. Its sign is negative, so row 2 is flipped.
+  - The final `V` (the new `self.components_`) becomes:
+    `[[ 0.01828233,  0.98189073,  0.18855331], [ 0.74288345, -0.18001012,  0.6452281 ], [-0.66916926, -0.05960793,  0.7399963 ]]`
+
+- **Step 7: Update other attributes.**
+  - `explained_variance = S**2 / (n_total_samples - 1)` = `S**2 / 99` ≈ `[1.22505001, 0.89428801, 0.7565994]`
+  - `explained_variance_ratio = S**2 / np.sum(col_var * n_total_samples)` ≈ `[0.4246541, 0.3127841, 0.26466181]`
+  - `self.n_samples_seen_` is updated to 100.
+  - `self.components_` is updated to the new flipped `V`.
+  - `self.singular_values_` is updated to the new `S`.
+  - `self.mean_` is updated to `col_mean`.
+  - `self.var_` is updated to `col_var`.
+  - `self.explained_variance_` and `self.explained_variance_ratio_` are updated.
+  - `self.noise_variance_` is set to `0.0` because `n_components_` (3) is not less than `n_features` (3).
+
+- **Step 8: Return value.**
+  - The method returns the modified `self` object.
+
+**Final Predicted State:**
+The output will be the JSON representation of the `self` object with its attributes updated to the new values calculated above.
+
+- `n_samples_seen_`: 100
+- `mean_`: `[ 0.08196304 -0.12080505 -0.03182881]`
+- `var_`: `[0.9738223  0.88250836 1.00375901]`
+- `singular_values_`: `[11.01331015  9.4063163   8.6533199 ]`
+- `components_`: `[[ 0.01828233  0.98189073  0.18855331]\n [ 0.74288345 -0.18001012  0.6452281 ]\n [-0.66916926 -0.05960793  0.7399963 ]]`
+- `explained_variance_`: `[1.22505001 0.89428801 0.7565994 ]`
+- `explained_variance_ratio_`: `[0.4246541  0.3127841  0.26466181]`
+- `noise_variance_`: 0.0
+- Other attributes like `n_components`, `whiten`, `copy`, `batch_size`, `batch_size_`, `n_components_` remain unchanged.
+
+I will now format this into the final JSON output.
+[/THOUGHT]
+[OUTPUT]
+```json
+{
+    "self": {
+        "n_components": null,
+        "whiten": false,
+        "copy": true,
+        "batch_size": "18",
+        "components_": "[[ 0.01828233  0.98189073  0.18855331]\n [ 0.74288345 -0.18001012  0.6452281 ]\n [-0.66916926 -0.05960793  0.7399963 ]]",
+        "n_samples_seen_": "100",
+        "mean_": "[ 0.08196304 -0.12080505 -0.03182881]",
+        "var_": "[0.9738223  0.88250836 1.00375901]",
+        "singular_values_": "[11.01331015  9.4063163   8.6533199 ]",
+        "explained_variance_": "[1.22505001 0.89428801 0.7565994 ]",
+        "explained_variance_ratio_": "[0.4246541  0.3127841  0.26466181]",
+        "noise_variance_": 0.0,
+        "batch_size_": "18",
+        "n_components_": 3
+    }
+}
+```
+[/OUTPUT]

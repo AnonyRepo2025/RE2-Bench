@@ -1,0 +1,476 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+from abc import ABCMeta, abstractmethod
+from warnings import warn
+import numpy as np
+from scipy.sparse import issparse, csc_matrix
+from ..base import TransformerMixin
+from ..utils import check_array, safe_mask
+
+class SelectorMixin(TransformerMixin, metaclass=ABCMeta):
+
+    def get_support(self, indices=False):
+        mask = self._get_support_mask()
+        return mask if not indices else np.where(mask)[0]
+
+    @abstractmethod
+    def _get_support_mask(self):
+
+    def transform(self, X):
+        tags = self._get_tags()
+        X = check_array(X, dtype=None, accept_sparse='csr', force_all_finite=not tags.get('allow_nan', True))
+        mask = self.get_support()
+        if not mask.any():
+            warn('No features were selected: either the data is too noisy or the selection test too strict.', UserWarning)
+            return np.empty(0).reshape((X.shape[0], 0))
+        if len(mask) != X.shape[1]:
+            raise ValueError('X has a different shape than during fitting.')
+        return X[:, safe_mask(X, mask)]
+
+    def inverse_transform(self, X):
+        if issparse(X):
+            X = X.tocsc()
+            it = self.inverse_transform(np.diff(X.indptr).reshape(1, -1))
+            col_nonzeros = it.ravel()
+            indptr = np.concatenate([[0], np.cumsum(col_nonzeros)])
+            Xt = csc_matrix((X.data, X.indices, indptr), shape=(X.shape[0], len(indptr) - 1), dtype=X.dtype)
+            return Xt
+        support = self.get_support()
+        X = check_array(X, dtype=None)
+        if support.sum() != X.shape[1]:
+            raise ValueError('X has a different shape than during fitting.')
+        if X.ndim == 1:
+            X = X[None, :]
+        Xt = np.zeros((X.shape[0], support.size), dtype=X.dtype)
+        Xt[:, support] = X
+        return Xt
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.base.BaseEstimator._get_tags
+
+def _get_tags(self):
+    collected_tags = {}
+    for base_class in reversed(inspect.getmro(self.__class__)):
+        if hasattr(base_class, '_more_tags'):
+            more_tags = base_class._more_tags(self)
+            collected_tags.update(more_tags)
+    return collected_tags
+
+.sklearn.base.BaseEstimator._more_tags
+
+def _more_tags(self):
+    return _DEFAULT_TAGS
+
+.sklearn.feature_selection._from_model.SelectFromModel._more_tags
+
+def _more_tags(self):
+    estimator_tags = self.estimator._get_tags()
+    return {'allow_nan': estimator_tags.get('allow_nan', True)}
+
+.sklearn.base.MultiOutputMixin._more_tags
+
+def _more_tags(self):
+    return {'multioutput': True}
+
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=None, estimator=None):
+    if warn_on_dtype is not None:
+        warnings.warn("'warn_on_dtype' is deprecated in version 0.21 and will be removed in 0.23. Don't set `warn_on_dtype` to remove this warning.", FutureWarning, stacklevel=2)
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+        if all((isinstance(dtype, np.dtype) for dtype in dtypes_orig)):
+            dtype_orig = np.result_type(*array.dtypes)
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse, dtype=dtype, copy=copy, force_all_finite=force_all_finite, accept_large_sparse=accept_large_sparse)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                if dtype is not None and np.dtype(dtype).kind in 'iu':
+                    array = np.asarray(array, order=order)
+                    if array.dtype.kind == 'f':
+                        _assert_all_finite(array, allow_nan=False, msg_dtype=dtype)
+                    array = array.astype(dtype, casting='unsafe', copy=False)
+                else:
+                    array = np.asarray(array, order=order, dtype=dtype)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of bytes/strings will be converted to decimal numbers if dtype='numeric'. It is recommended that you convert the array to a float dtype before using it in scikit-learn, for example by using your_array = your_array.astype(np.float64).", FutureWarning, stacklevel=2)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, array.shape, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, array.shape, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=2)
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+    if warn_on_dtype and dtypes_orig is not None and ({array.dtype} != set(dtypes_orig)):
+        msg = 'Data with input dtype %s were all converted to %s%s.' % (', '.join(map(str, sorted(set(dtypes_orig)))), array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=3)
+    return array
+
+.sklearn.utils.validation._ensure_no_complex_data
+
+def _ensure_no_complex_data(array):
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+.sklearn.utils.validation._assert_all_finite
+
+def _assert_all_finite(X, allow_nan=False, msg_dtype=None):
+    from .extmath import _safe_accumulator_op
+    if _get_config()['assume_finite']:
+        return
+    X = np.asanyarray(X)
+    is_float = X.dtype.kind in 'fc'
+    if is_float and np.isfinite(_safe_accumulator_op(np.sum, X)):
+        pass
+    elif is_float:
+        msg_err = 'Input contains {} or a value too large for {!r}.'
+        if allow_nan and np.isinf(X).any() or (not allow_nan and (not np.isfinite(X).all())):
+            type_err = 'infinity' if allow_nan else 'NaN, infinity'
+            raise ValueError(msg_err.format(type_err, msg_dtype if msg_dtype is not None else X.dtype))
+    elif X.dtype == np.dtype('object') and (not allow_nan):
+        if _object_dtype_isnan(X).any():
+            raise ValueError('Input contains NaN')
+
+.sklearn._config.get_config
+
+def get_config():
+    return _global_config.copy()
+
+.sklearn.utils.extmath._safe_accumulator_op
+
+def _safe_accumulator_op(op, x, *args, **kwargs):
+    if np.issubdtype(x.dtype, np.floating) and x.dtype.itemsize < 8:
+        result = op(x, *args, **kwargs, dtype=np.float64)
+    else:
+        result = op(x, *args, **kwargs)
+    return result
+
+.sklearn.utils.validation._num_samples
+
+def _num_samples(x):
+    message = 'Expected sequence or array-like, got %s' % type(x)
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError(message)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError(message)
+    if hasattr(x, 'shape') and x.shape is not None:
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        if isinstance(x.shape[0], numbers.Integral):
+            return x.shape[0]
+    try:
+        return len(x)
+    except TypeError:
+        raise TypeError(message)
+
+.sklearn.feature_selection._from_model.SelectFromModel._get_support_mask
+
+def _get_support_mask(self):
+    if self.prefit:
+        estimator = self.estimator
+    elif hasattr(self, 'estimator_'):
+        estimator = self.estimator_
+    else:
+        raise ValueError('Either fit the model before transform or set "prefit=True" while passing the fitted estimator to the constructor.')
+    scores = _get_feature_importances(estimator, self.norm_order)
+    threshold = _calculate_threshold(estimator, scores, self.threshold)
+    if self.max_features is not None:
+        mask = np.zeros_like(scores, dtype=bool)
+        candidate_indices = np.argsort(-scores, kind='mergesort')[:self.max_features]
+        mask[candidate_indices] = True
+    else:
+        mask = np.ones_like(scores, dtype=bool)
+    mask[scores < threshold] = False
+    return mask
+
+.sklearn.feature_selection._from_model._get_feature_importances
+
+def _get_feature_importances(estimator, norm_order=1):
+    importances = getattr(estimator, 'feature_importances_', None)
+    coef_ = getattr(estimator, 'coef_', None)
+    if importances is None and coef_ is not None:
+        if estimator.coef_.ndim == 1:
+            importances = np.abs(coef_)
+        else:
+            importances = np.linalg.norm(coef_, axis=0, ord=norm_order)
+    elif importances is None:
+        raise ValueError('The underlying estimator %s has no `coef_` or `feature_importances_` attribute. Either pass a fitted estimator to SelectFromModel or call fit before calling transform.' % estimator.__class__.__name__)
+    return importances
+
+.sklearn.ensemble._forest.BaseForest.feature_importances_
+
+def feature_importances_(self):
+    check_is_fitted(self)
+    all_importances = Parallel(n_jobs=self.n_jobs, **_joblib_parallel_args(prefer='threads'))((delayed(getattr)(tree, 'feature_importances_') for tree in self.estimators_ if tree.tree_.node_count > 1))
+    if not all_importances:
+        return np.zeros(self.n_features_, dtype=np.float64)
+    all_importances = np.mean(all_importances, axis=0, dtype=np.float64)
+    return all_importances / np.sum(all_importances)
+
+.sklearn.utils.validation.check_is_fitted
+
+def check_is_fitted(estimator, attributes='deprecated', msg=None, all_or_any='deprecated'):
+    if attributes != 'deprecated':
+        warnings.warn('Passing attributes to check_is_fitted is deprecated and will be removed in 0.23. The attributes argument is ignored.', FutureWarning)
+    if all_or_any != 'deprecated':
+        warnings.warn('Passing all_or_any to check_is_fitted is deprecated and will be removed in 0.23. The any_or_all argument is ignored.', FutureWarning)
+    if isclass(estimator):
+        raise TypeError('{} is a class, not an instance.'.format(estimator))
+    if msg is None:
+        msg = "This %(name)s instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator."
+    if not hasattr(estimator, 'fit'):
+        raise TypeError('%s is not an estimator instance.' % estimator)
+    attrs = [v for v in vars(estimator) if (v.endswith('_') or v.startswith('_')) and (not v.startswith('__'))]
+    if not attrs:
+        raise NotFittedError(msg % {'name': type(estimator).__name__})
+
+.sklearn.utils.fixes._joblib_parallel_args
+
+def _joblib_parallel_args(**kwargs):
+    import joblib
+    if joblib.__version__ >= LooseVersion('0.12'):
+        return kwargs
+    extra_args = set(kwargs.keys()).difference({'prefer', 'require'})
+    if extra_args:
+        raise NotImplementedError('unhandled arguments %s with joblib %s' % (list(extra_args), joblib.__version__))
+    args = {}
+    if 'prefer' in kwargs:
+        prefer = kwargs['prefer']
+        if prefer not in ['threads', 'processes', None]:
+            raise ValueError('prefer=%s is not supported' % prefer)
+        args['backend'] = {'threads': 'threading', 'processes': 'multiprocessing', None: None}[prefer]
+    if 'require' in kwargs:
+        require = kwargs['require']
+        if require not in [None, 'sharedmem']:
+            raise ValueError('require=%s is not supported' % require)
+        if require == 'sharedmem':
+            args['backend'] = 'threading'
+    return args
+
+
+[/PYTHON]
+What will be the output of `transform`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "estimator": {
+            "alpha": 0.1,
+            "l1_ratio": 1.0,
+            "fit_intercept": true,
+            "normalize": false,
+            "precompute": false,
+            "max_iter": 1000,
+            "copy_X": true,
+            "tol": 0.0001,
+            "warm_start": false,
+            "positive": false,
+            "random_state": 42,
+            "selection": "cyclic"
+        },
+        "threshold": null,
+        "prefit": false,
+        "norm_order": 1,
+        "max_features": null,
+        "estimator_": {
+            "alpha": 0.1,
+            "l1_ratio": 1.0,
+            "fit_intercept": true,
+            "normalize": false,
+            "precompute": false,
+            "max_iter": 1000,
+            "copy_X": true,
+            "tol": 0.0001,
+            "warm_start": false,
+            "positive": false,
+            "random_state": 42,
+            "selection": "cyclic",
+            "n_iter_": 3,
+            "coef_": "[-0.          0.07585148 -0.         -0.          0.02932606 -0.\n -0.          0.          0.         -0.        ]",
+            "dual_gap_": 1.5621395732523524e-08,
+            "intercept_": 0.4623412557173191
+        }
+    },
+    "args": {
+        "X": "[[ 1.85825298e+00 -1.98980636e+00 -1.37361285e+00  2.91634040e-01\n   7.28569828e-02 -1.85542451e-02  1.00037285e-01  4.28080951e-01\n  -1.03978785e+00  2.91228380e-01]\n [ 2.30995454e+00 -2.00350437e+00 -9.21717771e-01 -5.76890440e-03\n  -9.82699680e-01 -8.04159716e-01 -1.19818671e+00  7.66768767e-01\n   2.17525545e-01  2.08444169e+00]\n [ 1.47572479e+00  1.07501650e+00 -4.27094590e-01  1.51347609e+00\n  -2.10082473e+00  1.00607292e+00 -1.03711487e+00 -1.80526763e+00\n  -1.10219609e+00  1.07857910e+00]\n [ 9.21438361e-01  1.91909252e+00  1.47565847e-02 -5.18734066e-01\n  -2.81526351e-01  5.60369332e-01  7.55208981e-01 -1.06089086e+00\n   5.44738496e-02 -1.04278632e-01]\n [ 1.08550982e+00  9.76464463e-02 -1.69350694e+00 -3.51609684e-01\n   5.89799139e-01 -1.47896813e+00 -1.42295597e+00 -8.26461121e-01\n   7.84208626e-01 -1.95417204e-01]\n [ 2.31580755e-01  2.99723497e+00 -7.60471796e-01 -1.26459544e+00\n   8.56933176e-01 -4.93994346e-01  1.46366584e-02 -1.60646646e+00\n   1.61989515e-01  5.35038317e-01]\n [ 1.98662127e+00  1.04376635e-01 -7.56994029e-01  8.30588610e-01\n   1.04362959e+00 -7.60947295e-01 -8.54313176e-02 -7.89963635e-01\n  -4.70839626e-01 -1.03305371e+00]\n [ 1.61842204e+00 -1.30848704e+00 -8.17405876e-01 -2.31186710e-01\n  -1.61024346e+00  1.43060190e+00 -1.72538572e+00  3.59249589e-01\n   8.81934954e-01  2.05013088e-01]\n [ 1.39904258e+00  2.20474963e+00 -3.34520319e-01  1.21136351e+00\n  -2.16942319e+00 -3.35021039e-01 -1.71697153e+00 -1.46186553e+00\n  -5.71102085e-01 -1.96792820e+00]\n [ 2.45509176e+00  1.17574587e+00  6.88397839e-01  6.08832004e-02\n   4.48718882e-01 -2.28156367e+00 -7.88809508e-01  1.18727088e+00\n  -9.41222103e-01 -1.28229697e-01]\n [ 9.55268724e-01  2.37717493e+00 -8.10849468e-01  1.27238613e+00\n  -8.02994742e-01  1.02230320e+00  1.50787592e+00 -9.23341696e-01\n   6.58777556e-01  1.28597256e+00]\n [ 1.01100510e+00  2.35171315e+00 -4.58504439e-01 -1.15506703e+00\n   1.18876454e-01  1.03214498e+00  5.39952432e-01 -2.25126119e+00\n  -3.43617256e-01 -6.79435318e-02]\n [-1.19576120e-01  2.73826765e+00 -7.21954121e-01  1.17658723e+00\n  -1.51501515e+00 -8.93671812e-01 -6.80243627e-01  1.94206644e-01\n  -9.67497398e-01  1.06825969e+00]\n [ 9.45979776e-01  1.24170346e+00 -1.03253746e+00  1.21308761e+00\n   1.14471880e+00  1.67840445e+00  4.78404880e-01  9.17376518e-02\n   4.26534769e-02  1.36425174e+00]\n [ 4.87594623e-01  2.16143176e+00 -8.54671773e-01  1.09958891e+00\n  -6.27734441e-01 -1.29316820e-01 -8.98539413e-01  1.93064772e+00\n   1.98606513e-01 -1.45807253e-01]\n [ 4.43018479e-01  7.93584893e-01 -2.44499934e+00 -2.19114451e-01\n   1.76249777e+00 -1.28223947e+00  2.69826794e-01  8.78698596e-01\n   7.96627365e-03  1.08857292e+00]\n [ 6.19901882e-01  1.99716634e+00 -8.98758004e-01  7.89783026e-02\n   8.06082332e-01  5.19104919e-01 -1.27284450e-01 -8.40984011e-01\n  -4.95306201e-01 -1.37020005e-01]\n [ 1.74408082e+00  4.02634030e-01 -9.41469103e-01  9.87424495e-01\n  -7.18549682e-01  1.93803498e+00  2.20391311e-01 -4.75094890e-01\n   2.38653989e-01  4.05642436e-01]\n [ 7.46976936e-01  1.09511887e-03 -8.83627294e-01  2.99658730e-01\n   6.91165041e-01 -1.90583721e+00  2.82044327e-01 -2.28763993e+00\n  -5.51474125e-01  1.20762067e+00]\n [ 1.00595744e+00  2.25674669e+00 -4.61929909e-01 -1.15179807e+00\n   1.55182596e-01 -6.32009056e-01 -1.81677267e+00 -1.88014899e-01\n   8.90667144e-02 -1.60539390e+00]\n [ 6.16095802e-01  1.86806798e+00 -1.37755966e+00 -7.07515588e-01\n  -2.14910446e+00  1.26303753e-01 -4.36291006e-02  1.01271502e+00\n  -1.74233712e+00 -1.06847438e+00]\n [ 1.00716417e+00 -1.07388574e+00 -1.22093531e+00  1.65534940e+00\n   8.51931977e-01  1.37098216e+00  2.74074532e-01  4.03809029e-01\n  -1.04002865e+00  1.25338482e+00]\n [-9.57086733e-02  2.14467225e+00 -1.32945751e+00 -4.02224817e-01\n  -1.53301551e+00  1.54624556e+00  1.24546645e-01  2.06549848e-01\n  -9.04994546e-01  6.54498125e-01]\n [ 6.40385487e-01  1.62374343e-01 -1.82980550e+00  4.61331047e-01\n  -1.65459123e+00 -1.38543012e+00  4.44631643e-01 -8.46761737e-01\n   8.93276358e-01  3.86761165e-01]\n [ 1.31480704e+00  1.06916261e+00 -1.43667649e+00 -5.13427186e-03\n  -9.30139995e-01 -1.49407352e+00  4.68739268e-01  2.22334149e-01\n  -2.04646486e-01 -4.64435230e-02]\n [ 3.23400957e-02  2.39922700e+00 -1.80094780e+00 -6.97883742e-01\n  -1.12701649e-01 -1.00826485e+00 -5.29337845e-02  3.33005742e-01\n  -6.48981763e-01 -1.54305643e+00]\n [-4.06060001e+00  7.46947451e-01 -1.96841529e+00  1.65946033e+00\n  -9.70092222e-01  1.29233496e+00 -9.38761907e-01 -1.21253290e+00\n   1.67364748e+00  1.97539178e+00]\n [-3.42805379e+00  2.24562395e+00 -2.08410582e+00 -1.17701205e+00\n   1.28612871e+00  8.71773490e-01 -9.85959963e-01  9.34594650e-02\n  -1.61964135e+00 -1.62542609e+00]\n [-8.68079124e-01  4.78750536e-01 -1.20052684e+00 -5.14445498e-01\n   3.12787072e-01  1.56451260e+00  8.18435504e-01  4.02149816e-01\n   1.18055558e-01  3.54427721e-02]\n [ 4.04508861e-03  1.67865008e+00 -1.90969694e+00 -4.77901096e-01\n   6.23693170e-01 -2.46952308e+00 -1.14912376e+00 -5.00970786e-01\n   1.47594784e-02 -3.91050579e-01]\n [-2.62802110e+00  1.11522162e+00 -1.99440882e+00 -3.88419578e-01\n   1.05014196e+00 -3.20693872e-02 -4.77338656e-02 -2.77342949e-01\n  -4.72136268e-01 -1.85329637e-01]\n [-9.99810700e-01  2.34915913e-01 -1.69422985e+00  1.95420226e-01\n   1.48838294e+00  3.24843567e-01 -1.18814232e+00 -1.49414282e-01\n  -3.03328915e-01 -1.35969704e+00]\n [-3.33221787e-01  2.04613745e+00 -1.37096470e+00 -2.13801735e+00\n   4.00937099e-01  7.06842389e-01  7.92607785e-01 -2.33423082e-01\n   8.59745314e-01  3.66280535e-01]\n [-2.17657710e+00  2.34322552e+00 -2.68912154e+00  7.26423161e-01\n   1.79384552e-02 -2.28547991e+00 -1.47884513e+00 -1.35319994e+00\n  -2.89455283e-02 -1.71743247e+00]\n [-3.48009873e+00  1.56159908e+00 -1.76162036e+00 -1.15290926e+00\n   9.41030811e-01 -1.02852693e+00  6.55358098e-02  4.10470290e-01\n  -1.16893036e+00 -1.91440763e+00]\n [-1.06094604e+00  4.01014780e-01  7.38864004e-01  7.32355692e-02\n   7.49688133e-01  8.61383002e-02 -1.73723493e+00  1.54933777e-01\n  -3.06099839e-01  9.01940817e-01]\n [-4.36630320e+00  9.66684149e-01 -1.36577153e+00  8.32378766e-01\n  -4.21705878e-01 -2.25102829e+00 -1.68572411e+00  7.95706156e-01\n  -3.42584529e-01  3.68466907e-01]\n [-1.97219995e+00  1.10853712e+00 -3.36639787e+00 -9.74300398e-02\n   6.38873498e-01  1.06138668e+00 -7.73586770e-01 -6.96015438e-01\n  -4.12356440e-01 -1.81030697e+00]\n [-6.56347352e-01  2.29382288e+00 -1.62114780e+00  1.53082680e+00\n  -3.32510932e-02 -7.19820378e-02  6.86529783e-02  1.16556960e+00\n  -2.48495962e-01 -4.79482926e-01]\n [-6.79200921e-02 -4.87976437e-01  8.09777481e-01 -8.41456671e-01\n  -1.34346249e-01 -7.57249672e-01  1.63389801e-01 -9.39805434e-01\n   5.56344157e-01 -1.46217032e+00]\n [-6.58006077e-01  3.64712167e-01 -5.82721586e-01 -1.64254441e-01\n   6.56636677e-01 -8.01201043e-01 -8.27585338e-01 -5.74829043e-01\n  -2.07515845e-02 -1.14888952e+00]\n [-1.30029722e+00  1.28561144e+00 -1.40293897e+00  1.75039066e+00\n   1.18641832e+00 -4.70147241e-01  7.59823716e-01 -2.82994349e-01\n  -6.55994180e-01  1.24212850e+00]\n [-6.33328049e-01  3.68959450e-02 -2.80323407e-01 -1.46855646e+00\n   8.45067053e-01 -5.84190471e-01 -5.30002369e-01  1.48760981e+00\n  -5.88254817e-01 -1.40026191e+00]\n [-4.37614692e+00  9.36719391e-01 -1.11010691e+00  3.05732433e+00\n   3.25540031e-01  3.85129741e-01  3.44041564e-01 -1.10931502e+00\n   3.42057513e-01 -5.76887123e-01]\n [-3.16284215e+00  1.60820915e-01 -1.40306748e+00  1.13274122e+00\n   4.99166204e-01  8.60161983e-01 -4.27433228e-02 -7.51771468e-02\n  -1.63576967e-01 -6.26979908e-01]\n [ 1.20092391e+00  8.72183204e-01 -8.83740496e-01  1.64650580e+00\n  -1.13275442e-01  1.33844805e+00  3.45790962e-01  5.66636928e-01\n  -1.75982722e+00 -1.25596928e+00]\n [-1.58555095e+00  1.84738090e+00 -5.76645604e-01  9.99327972e-01\n   4.01681980e-02  5.08473989e-01  2.35333669e-01 -8.54504872e-01\n   5.56776133e-01 -1.14480657e+00]\n [-6.49356338e-01 -1.41598983e-01 -3.67996635e-02 -5.24587051e-02\n   5.54647259e-01 -1.78917486e-01 -2.03510357e-01  3.96692602e-01\n   1.04508300e+00 -1.67242863e+00]\n [-5.39911391e-01  8.41410061e-01 -2.79835815e+00  5.68466213e-01\n  -3.69916074e-01  9.49620217e-01 -1.92983748e-02  1.39899247e-01\n  -1.34673130e+00 -1.19974717e+00]\n [-1.25784684e+00  1.75749240e+00 -3.70110723e+00 -1.13613554e+00\n  -2.08212975e+00 -1.65279195e+00  6.83384035e-01 -2.34924655e-01\n   9.20402707e-01  9.37379898e-01]\n [-2.64032452e+00 -2.81982178e-01  1.32367941e+00  6.21740853e-01\n  -1.68086937e+00  6.61217747e-01  6.24507479e-01  1.18991667e+00\n  -6.82961987e-01 -6.53126506e-01]\n [-2.58252871e+00 -4.39138444e-01  1.11118053e+00  4.29766650e-01\n  -1.73271971e-01  1.08060125e+00 -2.89279430e+00 -7.61401332e-01\n   1.97513784e+00  1.10593412e+00]\n [-2.52544490e+00  2.95798151e-01  4.72395984e-01  1.11319836e+00\n  -5.52499373e-03 -1.29947161e+00  1.68392246e+00  1.28237242e+00\n  -3.43690224e-01 -1.15738312e+00]\n [ 6.76455827e-01 -2.31961214e+00  2.70028988e+00 -6.08917010e-01\n  -1.00218322e+00 -5.11008522e-01 -1.97161176e+00  9.92744768e-01\n   1.21169846e+00 -7.42269288e-01]\n [-1.48733742e+00 -2.09188299e+00  2.80110024e+00  1.09854667e+00\n  -1.29482133e+00 -2.30105665e+00  2.65181314e+00  1.24011278e-01\n   9.10395829e-01  5.45170045e-01]\n [-3.14154840e+00  2.32002350e-01 -7.79516662e-01  7.89964813e-01\n   1.99339379e-01 -1.39994935e-01 -1.13065905e-01 -3.09592764e-01\n  -5.71847002e-02 -9.37661759e-01]\n [-1.38291500e+00 -1.81340364e+00  2.40917243e+00 -5.63310038e-01\n   8.93263427e-01 -4.40111295e-01 -9.05112893e-01 -3.24566482e-01\n   2.83288178e-01 -7.97924624e-01]\n [-6.86561437e-01 -1.69233636e+00  1.51291825e+00  1.56672894e+00\n   1.11945991e+00 -9.68579604e-01  1.23322873e+00 -8.88071635e-01\n  -5.45084673e-01  6.08529041e-01]\n [-1.14473926e+00 -5.82821879e-01  2.28671192e-01 -8.66789568e-01\n  -5.66190674e-01 -2.76452748e-01 -2.14204050e+00  1.17151627e+00\n   7.34698736e-02 -2.38254846e-01]\n [-1.91005732e+00 -9.29200047e-01  7.48629275e-01  3.31508150e-01\n  -8.62574894e-01  2.72855164e-01 -1.95718820e+00 -4.51991358e-01\n  -1.88771897e-01 -1.98897469e+00]\n [-1.00117046e+00 -1.37441918e+00  3.37388823e+00 -2.71683402e-01\n   1.44934635e-01  3.56005595e-01  5.74871852e-01  3.48210100e-02\n   4.39764393e-04  1.61204613e-01]\n [-3.12453979e+00  6.40038633e-03  8.67119077e-01 -1.39804320e+00\n  -1.01704708e+00 -1.08937084e+00  7.50761402e-01  1.62118288e-01\n   6.23900444e-01  8.50464703e-01]\n [ 5.94214526e-02 -1.85136997e+00  1.80289957e+00  7.90211266e-01\n   1.10726865e-01  1.07790748e+00 -2.20251153e-02 -4.66046593e-01\n   5.43921150e-01 -1.10468650e+00]\n [-1.22268348e+00 -3.66974013e-01  5.79747031e-01 -7.23721365e-01\n   1.72756670e+00  5.00572525e-02  3.45050086e-02 -9.30303747e-01\n   8.88980112e-01  1.69546183e+00]\n [-1.22077801e+00 -1.90298162e+00  3.12941725e+00 -1.36275092e-02\n  -2.76192007e-01  5.53468585e-02  1.04600797e+00  1.01641982e-01\n   5.60163343e-01 -3.20779869e-01]\n [-2.79545999e+00 -6.01532166e-01  1.67653631e+00 -5.92664816e-01\n  -3.92029426e-01 -3.54314898e-02 -3.11160999e-01 -2.60894165e+00\n   5.11219351e-01 -1.47832026e+00]\n [-5.40163424e-01 -1.31250651e+00  1.16857992e+00 -8.06606856e-01\n   7.73246330e-01  1.51207245e+00  1.30498247e+00 -3.30370129e-02\n   1.20127110e+00 -8.36044283e-02]\n [-1.39628404e+00 -3.60248516e-01  6.23991737e-03 -1.08565485e+00\n  -1.26851699e+00 -7.74727167e-01 -6.02698660e-01 -3.79525367e-01\n  -1.14763415e+00  8.26930893e-02]\n [-2.55838858e+00 -8.04283448e-02  1.95477431e-01  1.02256840e+00\n  -1.47905171e+00  1.90105139e+00 -8.73317724e-01 -8.18601322e-02\n   1.17189492e+00 -1.09348814e-02]\n [-1.55578684e+00 -1.14588226e+00  8.55341874e-01 -3.27425388e-01\n   7.31955483e-01 -5.51449180e-01 -7.52133713e-01 -1.06136058e+00\n   6.75133304e-01  9.13890330e-01]\n [-1.70729866e+00 -3.75747530e-01 -4.40514255e-02  1.77751719e+00\n   5.03479124e-01  6.91955581e-03 -3.01307206e-01 -9.71076399e-02\n   1.93478628e-01  5.76733349e-01]\n [-1.70935021e+00 -7.69818145e-01  3.45385372e-01 -9.45930329e-01\n  -3.11302987e-01 -5.17311351e-01  5.56669627e-02  1.89635392e-01\n  -2.45511846e+00  4.97313271e-01]\n [ 5.37360653e-01 -1.61531358e+00  1.40710078e+00 -5.05013009e-01\n   3.86100654e-01 -4.65020047e-01  1.19697214e-01  5.22751047e-01\n   2.54056325e-01 -2.17701608e+00]\n [-7.04584707e-01 -1.34648160e+00  5.15051882e-01  3.67035539e-01\n   3.32867440e-01 -4.95868029e-01  9.41143562e-02  3.82038320e-01\n  -1.80080112e+00  4.62789703e-01]\n [-3.24335000e+00 -6.45827544e-01  3.09499716e+00 -1.43008571e-01\n   2.62254866e-01  1.00556421e-01  1.50065676e+00 -4.74304137e-02\n  -7.46071191e-01 -1.38334937e+00]\n [-3.04289309e-01  9.20981697e-01 -1.46106691e-01 -2.87390509e-01\n  -1.87314661e+00 -1.00625302e+00 -2.12163514e-01 -1.21710680e+00\n   1.59486295e-01 -1.71468747e+00]\n [ 1.82903403e+00  2.01791323e+00  1.83901760e+00  2.18520383e-01\n   1.31476412e+00  2.82197575e-01 -8.40083657e-01 -9.79970994e-01\n   2.72202195e-01  1.14944062e+00]\n [ 6.77886300e-01  3.01451640e-01  6.21896644e-01 -1.40832679e+00\n   9.63107897e-02 -4.71294408e-02 -8.95927054e-01  1.20207421e+00\n  -2.44402587e-01  1.81983084e-01]\n [ 1.91039177e+00  1.93619068e+00  1.90624191e+00 -1.33840856e+00\n  -5.16967803e-01 -6.60833743e-01  3.05399322e-01 -1.52986900e+00\n  -7.05336005e-01 -2.19112354e+00]\n [ 1.68521522e+00  1.51895879e+00  1.66740311e+00  9.25909732e-02\n  -1.27612782e+00  6.34618476e-01  8.33958569e-01 -6.42409617e-01\n  -1.00020255e-01  2.48384406e-01]\n [ 1.39101924e+00  8.30260607e-01  1.30318480e+00  1.32472804e+00\n   7.07037513e-01 -2.49271276e-01 -1.15888632e+00  5.15970069e-02\n  -2.74490054e-01  1.37188643e+00]\n [ 6.09850446e-01  5.92100017e-01  5.97043665e-01 -2.96105082e-01\n  -2.18016884e-01  4.59657118e-01 -2.98291299e-01 -2.42484631e+00\n   2.52735371e-01  4.60448811e-02]\n [ 1.05164314e+00 -2.29414921e-01  8.78066956e-01 -8.70139251e-01\n   1.55457199e+00  4.14492860e-01 -6.85819297e-01  2.18723312e-01\n   5.65047079e-01 -1.33661320e+00]\n [ 1.25954955e+00  7.12380227e-01  1.17793173e+00 -3.41672277e-01\n   1.41960331e+00 -9.09415697e-01  5.90905303e-01  2.06461417e-01\n   2.33268845e-01  2.70684859e-01]\n [ 1.59488797e+00  4.23578558e-01  1.44072419e+00 -2.44407396e-01\n   4.49612612e-01 -1.37905044e+00 -1.49812229e+00  1.90890194e+00\n   6.85979436e-01 -1.61975312e+00]\n [ 5.06089822e-02  4.85121874e-01  9.75046894e-02 -8.52525820e-01\n   3.86729905e-01  9.10739425e-01  6.33476548e-01 -2.01925572e+00\n   4.92764102e-01  5.06954730e-01]\n [ 1.27262208e+00  2.59591868e+00  1.42297198e+00  1.43182264e-01\n  -5.05563308e-01 -1.28828278e+00  9.57129036e-03  4.17663343e-01\n  -5.37435768e-01  3.12334895e-01]\n [ 3.47483388e+00  2.65996104e+00  3.37073006e+00  4.37740072e-02\n  -2.62019165e-01 -1.60160988e+00 -7.42722142e-01  6.45057527e-01\n  -1.30223596e+00  2.74850289e-01]\n [ 8.54329169e-01  7.68427150e-01  8.34380281e-01  1.83530126e+00\n  -8.39939858e-01 -7.80424051e-01 -1.85233956e-01 -1.26128171e-01\n  -2.48586565e-01  3.62151560e-01]\n [ 2.35591190e+00  8.25965273e-01  2.16249561e+00 -4.13496072e-01\n   1.54038891e+00  1.91435438e+00  4.80689295e-01  1.23092949e-02\n   1.21424357e+00 -5.74215222e-01]\n [-9.72127850e-01 -1.74111785e+00 -1.07770654e+00 -2.12295070e+00\n   1.12475605e+00  1.12060791e-01  5.19141226e-01 -2.10944804e-01\n  -9.74857047e-01  6.99210125e-01]\n [ 4.59846403e-02  6.02537082e-01  1.03880988e-01  1.01619520e+00\n  -1.97651391e-01  3.41988824e-01 -2.47415048e-01  1.59205834e+00\n   5.62919999e-01  9.10596658e-02]\n [ 1.68491804e+00  1.48845667e+00  1.64981464e+00  8.24386339e-01\n  -2.99608423e-01 -9.74980966e-01  1.93050135e+00  1.49385428e+00\n   1.09907658e-02  7.83704523e-01]\n [-2.97861010e-01  4.15053582e-01 -1.96717062e-01  6.62119196e-01\n   9.52040078e-01 -6.30947375e-01 -1.42027726e+00  2.60087917e+00\n  -3.04736481e-01 -5.83134624e-01]\n [-1.14107653e+00  1.21680084e-01 -9.84808213e-01 -3.79564509e-01\n  -1.43223234e-01 -1.22614079e+00 -1.15146565e+00 -2.83185876e-01\n  -6.98597551e-02  4.83376747e-01]\n [-1.39110805e-01 -6.32590150e-01 -1.91213197e-01  9.96739464e-01\n  -5.49801958e-01 -1.74971277e+00  6.28205254e-01  1.04562595e+00\n   1.65080687e-01  5.96687779e-01]\n [ 1.22239501e+00  2.52931692e+00  1.38156571e+00  7.60782600e-01\n   9.66481353e-01 -1.33892235e-01 -5.75767902e-01  3.86551672e-01\n  -3.99352841e-01  6.75381363e-01]\n [ 4.92098576e-01  1.14108402e+00  5.79328250e-01  3.53540107e-01\n   1.03034223e+00 -5.02940554e-01 -2.56005329e-01  5.42708444e-01\n   3.35635696e-01  4.03416893e-02]\n [-1.91864533e-02 -3.51001040e-01 -5.64478140e-02  1.67106186e+00\n  -1.00292551e+00  1.40244569e+00 -5.18321382e-01 -1.58978847e+00\n   1.67864515e-01 -9.26909137e-01]\n [ 4.72894081e-01  6.73166092e-01  5.04768488e-01 -8.76158446e-01\n   1.86125222e+00  2.96060703e-01  1.16046856e-01  2.68629115e-01\n  -5.71806466e-01  4.85655601e-01]]"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "output": XXX        
+}
+```
+[/STRUCTURE]

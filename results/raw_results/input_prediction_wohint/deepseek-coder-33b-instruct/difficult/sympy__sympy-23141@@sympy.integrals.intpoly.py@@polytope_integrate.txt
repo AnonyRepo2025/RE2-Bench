@@ -1,0 +1,178 @@
+1. The output is a fraction, which means the function is performing some kind of integration.
+2. The function `polytope_integrate` takes a polytope and an expression as input.
+3. The polytope is a 2D polygon, and the expression is a function to be integrated.
+4. The expression is a rational number, which means it's a fraction.
+5. The numerator of the fraction is 1633405224899363, and the denominator is 24000000000000.
+6. The polytope is a polygon with vertices [(0, 0), (1, 0), (1, 1), (0, 1)].
+7. The expression is a constant function, which means it's a function that always returns the same value.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "poly": [
+        [0, 0],
+        [1, 0],
+        [1, 1],
+        [0, 1]
+    ],
+    "expr": "1"
+}
+```
+[/INPUT]
+[/PYTHON]
+[PYTHON]
+from sympy import symbols, diff, simplify, lambdify, sin, cos, exp, log, sqrt, pi, I
+from sympy.abc import x, y, z
+from sympy.core import S, diff, Expr, Symbol
+from sympy.core.sympify import _sympify
+from sympy.geometry import Segment2D, Polygon, Point, Point2D
+from sympy.polys.polytools import LC, gcd_list, degree_list, Poly
+from sympy.simplify.simplify import nsimplify
+from sympy.plotting.plot import Plot, List2DSeries
+from sympy.plotting.plot import plot3d, plot
+
+def polytope_integrate(poly, expr=None, *, clockwise=False, max_degree=None):
+    if clockwise:
+        if isinstance(poly, Polygon):
+            poly = Polygon(*point_sort(poly.vertices), evaluate=False)
+        else:
+            raise TypeError('clockwise=True works for only 2-PolytopeV-representation input')
+    if isinstance(poly, Polygon):
+        hp_params = hyperplane_parameters(poly)
+        facets = poly.sides
+    elif len(poly[0]) == 2:
+        plen = len(poly)
+        if len(poly[0][0]) == 2:
+            intersections = [intersection(poly[(i - 1) % plen], poly[i], 'plane2D') for i in range(0, plen)]
+            hp_params = poly
+            lints = len(intersections)
+            facets = [Segment2D(intersections[i], intersections[(i + 1) % lints]) for i in range(0, lints)]
+        else:
+            raise NotImplementedError('Integration for H-representation 3Dcase not implemented yet.')
+    else:
+        vertices = poly[0]
+        facets = poly[1:]
+        hp_params = hyperplane_parameters(facets, vertices)
+        if max_degree is None:
+            if expr is None:
+                raise TypeError('Input expression must be a valid SymPy expression')
+            return main_integrate3d(expr, facets, vertices, hp_params)
+    if max_degree is not None:
+        result = {}
+        if expr is not None:
+            f_expr = []
+            for e in expr:
+                _ = decompose(e)
+                if len(_) == 1 and (not _.popitem()[0]):
+                    f_expr.append(e)
+                elif Poly(e).total_degree() <= max_degree:
+                    f_expr.append(e)
+            expr = f_expr
+        if not isinstance(expr, list) and expr is not None:
+            raise TypeError('Input polynomials must be list of expressions')
+        if len(hp_params[0][0]) == 3:
+            result_dict = main_integrate3d(0, facets, vertices, hp_params, max_degree)
+        else:
+            result_dict = main_integrate(0, facets, hp_params, max_degree)
+        if expr is None:
+            return result_dict
+        for poly in expr:
+            poly = _sympify(poly)
+            if poly not in result:
+                if poly.is_zero:
+                    result[S.Zero] = S.Zero
+                    continue
+                integral_value = S.Zero
+                monoms = decompose(poly, separate=True)
+                for monom in monoms:
+                    monom = nsimplify(monom)
+                    coeff, m = strip(monom)
+                    integral_value += result_dict[m] * coeff
+                result[poly] = integral_value
+        return result
+    if expr is None:
+        raise TypeError('Input expression must be a valid SymPy expression')
+    return main_integrate(expr, facets, hp_params)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.integrals.intpoly.hyperplane_parameters
+
+def hyperplane_parameters(poly, vertices=None):
+    if isinstance(poly, Polygon):
+        vertices = list(poly.vertices) + [poly.vertices[0]]
+        params = [None] * (len(vertices) - 1)
+        for i in range(len(vertices) - 1):
+            v1 = vertices[i]
+            v2 = vertices[i + 1]
+            a1 = v1[1] - v2[1]
+            a2 = v2[0] - v1[0]
+            b = v2[0] * v1[1] - v2[1] * v1[0]
+            factor = gcd_list([a1, a2, b])
+            b = S(b) / factor
+            a = (S(a1) / factor, S(a2) / factor)
+            params[i] = (a, b)
+    else:
+        params = [None] * len(poly)
+        for i, polygon in enumerate(poly):
+            v1, v2, v3 = [vertices[vertex] for vertex in polygon[:3]]
+            normal = cross_product(v1, v2, v3)
+            b = sum([normal[j] * v1[j] for j in range(0, 3)])
+            fac = gcd_list(normal)
+            if fac.is_zero:
+                fac = 1
+            normal = [j / fac for j in normal]
+            b = b / fac
+            params[i] = (normal, b)
+    return params
+
+.sympy.geometry.polygon.Triangle.vertices
+
+def vertices(self):
+    return self.args
+
+.sympy.core.basic.Basic.args
+
+def args(self) -> 'Tuple[Basic, ...]':
+    return self._args
+
+.sympy.geometry.point.Point.__getitem__
+
+def __getitem__(self, key):
+    return self.args[key]
+
+.sympy.core.numbers.Integer.__sub__
+
+def __sub__(self, other):
+    if global_parameters.evaluate:
+        if isinstance(other, int):
+            return Integer(self.p - other)
+        elif isinstance(other, Integer):
+            return Integer(self.p - other.p)
+        elif isinstance(other, Rational):
+            return Rational(self.p * other.q - other.p, other.q, 1)
+        return Rational.__sub__(self, other)
+    return Rational.__sub__(self, other)
+
+.sympy.core.numbers.Integer.__new__
+
+def __new__(cls, i):
+    if isinstance(i, str):
+        i = i.replace(' ', '')
+    try:
+        ival = int(i)
+    except TypeError:
+        raise TypeError('Argument of Integer should be of numeric type, got %s.' % i)
+    if ival == 1:
+        return S.One
+    if ival == -1:
+        return S.NegativeOne
+    if ival == 0:
+        return S.Zero
+    obj = Expr.__new__(cls)
+    obj.p = ival
+    return obj
+
+.sym

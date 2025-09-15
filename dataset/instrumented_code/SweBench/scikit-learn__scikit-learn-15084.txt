@@ -1,0 +1,622 @@
+diff --git a/sklearn/ensemble/_stacking.py b/sklearn/ensemble/_stacking.py
+index 97f66aa..004ef79 100644
+--- a/sklearn/ensemble/_stacking.py
++++ b/sklearn/ensemble/_stacking.py
+@@ -15,6 +15,7 @@ from ..base import is_classifier, is_regressor
+ from ..base import MetaEstimatorMixin
+ 
+ from .base import _parallel_fit_estimator
++from .base import _BaseHeterogeneousEnsemble
+ 
+ from ..linear_model import LogisticRegression
+ from ..linear_model import RidgeCV
+@@ -32,80 +33,26 @@ from ..utils.validation import check_is_fitted
+ from ..utils.validation import column_or_1d
+ 
+ 
+-class _BaseStacking(TransformerMixin, MetaEstimatorMixin, _BaseComposition,
++class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble,
+                     metaclass=ABCMeta):
+     """Base class for stacking method."""
+-    _required_parameters = ['estimators']
+ 
+     @abstractmethod
+     def __init__(self, estimators, final_estimator=None, cv=None,
+                  stack_method='auto', n_jobs=None, verbose=0):
+-        self.estimators = estimators
++        super().__init__(estimators=estimators)
+         self.final_estimator = final_estimator
+         self.cv = cv
+         self.stack_method = stack_method
+         self.n_jobs = n_jobs
+         self.verbose = verbose
+ 
+-    @abstractmethod
+-    def _validate_estimators(self):
+-        if self.estimators is None or len(self.estimators) == 0:
+-            raise ValueError(
+-                "Invalid 'estimators' attribute, 'estimators' should be a list"
+-                " of (string, estimator) tuples."
+-            )
+-        names, estimators = zip(*self.estimators)
+-        self._validate_names(names)
+-        return names, estimators
+-
+     def _clone_final_estimator(self, default):
+         if self.final_estimator is not None:
+             self.final_estimator_ = clone(self.final_estimator)
+         else:
+             self.final_estimator_ = clone(default)
+ 
+-    def set_params(self, **params):
+-        """Set the parameters for the stacking estimator.
+-
+-        Valid parameter keys can be listed with `get_params()`.
+-
+-        Parameters
+-        ----------
+-        params : keyword arguments
+-            Specific parameters using e.g.
+-            `set_params(parameter_name=new_value)`. In addition, to setting the
+-            parameters of the stacking estimator, the individual estimator of
+-            the stacking estimators can also be set, or can be removed by
+-            setting them to 'drop'.
+-
+-        Examples
+-        --------
+-        In this example, the RandomForestClassifier is removed.
+-
+-        >>> from sklearn.linear_model import LogisticRegression
+-        >>> from sklearn.ensemble import RandomForestClassifier
+-        >>> from sklearn.ensemble import VotingClassifier
+-        >>> clf1 = LogisticRegression()
+-        >>> clf2 = RandomForestClassifier()
+-        >>> eclf = StackingClassifier(estimators=[('lr', clf1), ('rf', clf2)])
+-        >>> eclf.set_params(rf='drop')
+-        StackingClassifier(estimators=[('lr', LogisticRegression()),
+-                                        ('rf', 'drop')])
+-        """
+-        super()._set_params('estimators', **params)
+-        return self
+-
+-    def get_params(self, deep=True):
+-        """Get the parameters of the stacking estimator.
+-
+-        Parameters
+-        ----------
+-        deep : bool
+-            Setting it to True gets the various classifiers and the parameters
+-            of the classifiers as well.
+-        """
+-        return super()._get_params('estimators', deep=deep)
+-
+     def _concatenate_predictions(self, predictions):
+         """Concatenate the predictions of each first layer learner.
+ 
+@@ -172,13 +119,6 @@ class _BaseStacking(TransformerMixin, MetaEstimatorMixin, _BaseComposition,
+         names, all_estimators = self._validate_estimators()
+         self._validate_final_estimator()
+ 
+-        has_estimator = any(est != 'drop' for est in all_estimators)
+-        if not has_estimator:
+-            raise ValueError(
+-                "All estimators are dropped. At least one is required "
+-                "to be an estimator."
+-            )
+-
+         stack_method = [self.stack_method] * len(all_estimators)
+ 
+         # Fit the base estimators on the whole training data. Those
+@@ -416,16 +356,6 @@ class StackingClassifier(ClassifierMixin, _BaseStacking):
+             verbose=verbose
+         )
+ 
+-    def _validate_estimators(self):
+-        names, estimators = super()._validate_estimators()
+-        for est in estimators:
+-            if est != 'drop' and not is_classifier(est):
+-                raise ValueError(
+-                    "The estimator {} should be a classifier."
+-                    .format(est.__class__.__name__)
+-                )
+-        return names, estimators
+-
+     def _validate_final_estimator(self):
+         self._clone_final_estimator(default=LogisticRegression())
+         if not is_classifier(self.final_estimator_):
+@@ -651,16 +581,6 @@ class StackingRegressor(RegressorMixin, _BaseStacking):
+             verbose=verbose
+         )
+ 
+-    def _validate_estimators(self):
+-        names, estimators = super()._validate_estimators()
+-        for est in estimators:
+-            if est != 'drop' and not is_regressor(est):
+-                raise ValueError(
+-                    "The estimator {} should be a regressor."
+-                    .format(est.__class__.__name__)
+-                )
+-        return names, estimators
+-
+     def _validate_final_estimator(self):
+         self._clone_final_estimator(default=RidgeCV())
+         if not is_regressor(self.final_estimator_):
+diff --git a/sklearn/ensemble/base.py b/sklearn/ensemble/base.py
+index b266c38..964313b 100644
+--- a/sklearn/ensemble/base.py
++++ b/sklearn/ensemble/base.py
+@@ -5,16 +5,20 @@ Base class for ensemble-based estimators.
+ # Authors: Gilles Louppe
+ # License: BSD 3 clause
+ 
+-import numpy as np
++from abc import ABCMeta, abstractmethod
+ import numbers
+ 
++import numpy as np
++
+ from joblib import effective_n_jobs
+ 
+ from ..base import clone
++from ..base import is_classifier, is_regressor
+ from ..base import BaseEstimator
+ from ..base import MetaEstimatorMixin
++from ..utils import Bunch
+ from ..utils import check_random_state
+-from abc import ABCMeta, abstractmethod
++from ..utils.metaestimators import _BaseComposition
+ 
+ MAX_RAND_SEED = np.iinfo(np.int32).max
+ 
+@@ -178,3 +182,92 @@ def _partition_estimators(n_estimators, n_jobs):
+     starts = np.cumsum(n_estimators_per_job)
+ 
+     return n_jobs, n_estimators_per_job.tolist(), [0] + starts.tolist()
++
++
++class _BaseHeterogeneousEnsemble(MetaEstimatorMixin, _BaseComposition,
++                                 metaclass=ABCMeta):
++    """Base class for heterogeneous ensemble of learners.
++
++    Parameters
++    ----------
++    estimators : list of (str, estimator) tuples
++        The ensemble of estimators to use in the ensemble. Each element of the
++        list is defined as a tuple of string (i.e. name of the estimator) and
++        an estimator instance. An estimator can be set to `'drop'` using
++        `set_params`.
++
++    Attributes
++    ----------
++    estimators_ : list of estimators
++        The elements of the estimators parameter, having been fitted on the
++        training data. If an estimator has been set to `'drop'`, it will not
++        appear in `estimators_`.
++    """
++    _required_parameters = ['estimators']
++
++    @property
++    def named_estimators(self):
++        return Bunch(**dict(self.estimators))
++
++    @abstractmethod
++    def __init__(self, estimators):
++        self.estimators = estimators
++
++    def _validate_estimators(self):
++        if self.estimators is None or len(self.estimators) == 0:
++            raise ValueError(
++                "Invalid 'estimators' attribute, 'estimators' should be a list"
++                " of (string, estimator) tuples."
++            )
++        names, estimators = zip(*self.estimators)
++        # defined by MetaEstimatorMixin
++        self._validate_names(names)
++
++        has_estimator = any(est not in (None, 'drop') for est in estimators)
++        if not has_estimator:
++            raise ValueError(
++                "All estimators are dropped. At least one is required "
++                "to be an estimator."
++            )
++
++        is_estimator_type = (is_classifier if is_classifier(self)
++                             else is_regressor)
++
++        for est in estimators:
++            if est not in (None, 'drop') and not is_estimator_type(est):
++                raise ValueError(
++                    "The estimator {} should be a {}."
++                    .format(
++                        est.__class__.__name__, is_estimator_type.__name__[3:]
++                    )
++                )
++
++        return names, estimators
++
++    def set_params(self, **params):
++        """Set the parameters of an estimator from the ensemble.
++
++        Valid parameter keys can be listed with `get_params()`.
++
++        Parameters
++        ----------
++        **params : keyword arguments
++            Specific parameters using e.g.
++            `set_params(parameter_name=new_value)`. In addition, to setting the
++            parameters of the stacking estimator, the individual estimator of
++            the stacking estimators can also be set, or can be removed by
++            setting them to 'drop'.
++        """
++        super()._set_params('estimators', **params)
++        return self
++
++    def get_params(self, deep=True):
++        """Get the parameters of an estimator from the ensemble.
++
++        Parameters
++        ----------
++        deep : bool
++            Setting it to True gets the various classifiers and the parameters
++            of the classifiers as well.
++        """
++        return super()._get_params('estimators', deep=deep)
+diff --git a/sklearn/ensemble/tests/test_voting.py b/sklearn/ensemble/tests/test_voting.py
+index 84fafc4..b6839c0 100644
+--- a/sklearn/ensemble/tests/test_voting.py
++++ b/sklearn/ensemble/tests/test_voting.py
+@@ -37,9 +37,9 @@ X_r, y_r = datasets.load_boston(return_X_y=True)
+ 
+ def test_estimator_init():
+     eclf = VotingClassifier(estimators=[])
+-    msg = ('Invalid `estimators` attribute, `estimators` should be'
+-           ' a list of (string, estimator) tuples')
+-    assert_raise_message(AttributeError, msg, eclf.fit, X, y)
++    msg = ("Invalid 'estimators' attribute, 'estimators' should be"
++           " a list of (string, estimator) tuples.")
++    assert_raise_message(ValueError, msg, eclf.fit, X, y)
+ 
+     clf = LogisticRegression(random_state=1)
+ 
+@@ -417,7 +417,7 @@ def test_set_estimator_none(drop):
+     eclf2.set_params(voting='soft').fit(X, y)
+     assert_array_equal(eclf1.predict(X), eclf2.predict(X))
+     assert_array_almost_equal(eclf1.predict_proba(X), eclf2.predict_proba(X))
+-    msg = 'All estimators are None or "drop". At least one is required!'
++    msg = 'All estimators are dropped. At least one is required'
+     assert_raise_message(
+         ValueError, msg, eclf2.set_params(lr=drop, rf=drop, nb=drop).fit, X, y)
+ 
+diff --git a/sklearn/ensemble/voting.py b/sklearn/ensemble/voting.py
+index 9189600..109a075 100644
+--- a/sklearn/ensemble/voting.py
++++ b/sklearn/ensemble/voting.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-15084/sklearn/ensemble/voting.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Soft Voting/Majority Rule classifier and Voting regressor.
+ 
+@@ -24,25 +217,20 @@ from ..base import RegressorMixin
+ from ..base import TransformerMixin
+ from ..base import clone
+ from .base import _parallel_fit_estimator
++from .base import _BaseHeterogeneousEnsemble
+ from ..preprocessing import LabelEncoder
+ from ..utils import Bunch
+ from ..utils.validation import check_is_fitted
+-from ..utils.metaestimators import _BaseComposition
+ from ..utils.multiclass import check_classification_targets
+ from ..utils.validation import column_or_1d
+ 
+ 
+-class _BaseVoting(TransformerMixin, _BaseComposition):
++class _BaseVoting(TransformerMixin, _BaseHeterogeneousEnsemble):
+     """Base class for voting.
+ 
+     Warning: This class should not be used directly. Use derived classes
+     instead.
+     """
+-    _required_parameters = ['estimators']
+-
+-    @property
+-    def named_estimators(self):
+-        return Bunch(**dict(self.estimators))
+ 
+     @property
+     def _weights_not_none(self):
+@@ -56,15 +244,13 @@ class _BaseVoting(TransformerMixin, _BaseComposition):
+         """Collect results from clf.predict calls. """
+         return np.asarray([est.predict(X) for est in self.estimators_]).T
+ 
++    @inspect_code
+     @abstractmethod
+     def fit(self, X, y, sample_weight=None):
+         """
+         common fit operations.
+         """
+-        if self.estimators is None or len(self.estimators) == 0:
+-            raise AttributeError('Invalid `estimators` attribute, `estimators`'
+-                                 ' should be a list of (string, estimator)'
+-                                 ' tuples')
++        names, clfs = self._validate_estimators()
+ 
+         if (self.weights is not None and
+                 len(self.weights) != len(self.estimators)):
+@@ -72,17 +258,6 @@ class _BaseVoting(TransformerMixin, _BaseComposition):
+                              '; got %d weights, %d estimators'
+                              % (len(self.weights), len(self.estimators)))
+ 
+-        names, clfs = zip(*self.estimators)
+-        self._validate_names(names)
+-
+-        n_isnone = np.sum(
+-            [clf in (None, 'drop') for _, clf in self.estimators]
+-        )
+-        if n_isnone == len(self.estimators):
+-            raise ValueError(
+-                'All estimators are None or "drop". At least one is required!'
+-            )
+-
+         self.estimators_ = Parallel(n_jobs=self.n_jobs)(
+                 delayed(_parallel_fit_estimator)(clone(clf), X, y,
+                                                  sample_weight=sample_weight)
+@@ -94,46 +269,6 @@ class _BaseVoting(TransformerMixin, _BaseComposition):
+             self.named_estimators_[k[0]] = e
+         return self
+ 
+-    def set_params(self, **params):
+-        """ Setting the parameters for the ensemble estimator
+-
+-        Valid parameter keys can be listed with get_params().
+-
+-        Parameters
+-        ----------
+-        **params : keyword arguments
+-            Specific parameters using e.g. set_params(parameter_name=new_value)
+-            In addition, to setting the parameters of the ensemble estimator,
+-            the individual estimators of the ensemble estimator can also be
+-            set or replaced by setting them to None.
+-
+-        Examples
+-        --------
+-        In this example, the RandomForestClassifier is removed.
+-
+-        >>> from sklearn.linear_model import LogisticRegression
+-        >>> from sklearn.ensemble import RandomForestClassifier
+-        >>> from sklearn.ensemble import VotingClassifier
+-        >>> clf1 = LogisticRegression()
+-        >>> clf2 = RandomForestClassifier()
+-        >>> eclf = VotingClassifier(estimators=[('lr', clf1), ('rf', clf2)])
+-        >>> eclf.set_params(rf=None)
+-        VotingClassifier(estimators=[('lr', LogisticRegression()),
+-                                     ('rf', None)])
+-        """
+-        return self._set_params('estimators', **params)
+-
+-    def get_params(self, deep=True):
+-        """ Get the parameters of the ensemble estimator
+-
+-        Parameters
+-        ----------
+-        deep : bool
+-            Setting it to True gets the various estimators and the parameters
+-            of the estimators as well
+-        """
+-        return self._get_params('estimators', deep=deep)
+-
+ 
+ class VotingClassifier(ClassifierMixin, _BaseVoting):
+     """Soft Voting/Majority Rule classifier for unfitted estimators.
+@@ -228,9 +363,10 @@ class VotingClassifier(ClassifierMixin, _BaseVoting):
+     VotingRegressor: Prediction voting regressor.
+     """
+ 
++    @inspect_code
+     def __init__(self, estimators, voting='hard', weights=None, n_jobs=None,
+                  flatten_transform=True):
+-        self.estimators = estimators
++        super().__init__(estimators=estimators)
+         self.voting = voting
+         self.weights = weights
+         self.n_jobs = n_jobs
+@@ -423,7 +559,7 @@ class VotingRegressor(RegressorMixin, _BaseVoting):
+     """
+ 
+     def __init__(self, estimators, weights=None, n_jobs=None):
+-        self.estimators = estimators
++        super().__init__(estimators=estimators)
+         self.weights = weights
+         self.n_jobs = n_jobs
+ 

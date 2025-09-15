@@ -1,0 +1,84 @@
+
+[OUTPUT]
+```
+{
+    "with_mean": true,
+    "with_std": true,
+    "copy": true,
+    "mean_": "[ 0.01856024  0.33028013  0.08692573 -0.35475727 -0.19924864  0.34906594\n  0.02357614  0.82576568  1.1583156   0.56363053  0.42663319 -0.37481204\n -0.03596331  0.835155   -0.95414806 -1.33377147 -1.08470163  0.60253935\n  0.56290546  0.54326148  1.00014819  1.04243206 -0.58960405  0.3972959\n -0.89649733  0.20513497 -0.34519141  0.85053853  0.07194541 -0.14454634]",
+    "n_samples_seen_": 469,
+    "var_": "[ 12.84079879  61.15274581  27.15060793  33.92451448   1.31040928\n  42.23818341  40.09099943  48.41470578  94.00380335  43.8312197\n  19.09216297  25.23121805  47.80387777   2.35076492  43.37509125\n  49.91844725   8.2038302    4.62251144  16.21165689  17.0954297\n  34.28859426  24.53611115 101.77636959   3.53132617   8.90150635\n   5.80941359  41.54170135   9.55204984  24.86872545   9.9422166 ]",
+    "scale_": "[ 3.58340603  7.82002211  5.21062452  5.82447547  1.14473109  6.49909097\n  6.33174537  6.95806768  9.69555586  6.62051506  4.36945797  5.02306859\n  6.91403484  1.53322044  6.58597686  7.06529881  2.86423292  2.15000266\n  4.02637019  4.13466198  5.85564636  4.9533939  10.08842751  1.87918231\n  2.98353923  2.41027251  6.4452852   3.09063907  4.98685527  3.15312807]"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[EXAMPLE]
+[PYTHON]
+import numpy as np
+from sklearn.preprocessing import OneHotEncoder
+
+class OneHotEncoder(BaseEstimator, TransformerMixin):
+
+    def __init__(self, categories='auto', drop=None, sparse=True, dtype=np.float64, handle_unknown='error'):
+        self.categories = categories
+        self.drop = drop
+        self.sparse = sparse
+        self.dtype = dtype
+        self.handle_unknown = handle_unknown
+
+    def fit(self, X, y=None):
+        self.n_features_in_ = X.shape[1]
+        X_list, n_samples, n_features = self._check_X(X)
+        if self.handle_unknown not in ['error', 'ignore']:
+            template = ("handle_unknown should be either 'error' or 'ignore', "
+                        "got {}".format(self.handle_unknown))
+            raise ValueError(template)
+        self._validate_keywords()
+        self._check_n_features(X, reset=True)
+        self._label_binarizers_ = [LabelBinarizer() for _ in range(n_features)]
+        for i, label_binarizer in enumerate(self._label_binarizers_):
+            label_binarizer.fit(X_list[i])
+        self.drop_idx_ = _get_drop_index(n_features, self.drop)
+        return self
+
+    def _more_tags(self):
+        return {'X_types': ['2darray']}
+
+    def _check_n_features(self, X, reset):
+        d = X.shape[1]
+        if reset:
+            self.n_features_ = d
+        elif self.n_features_ != d:
+            raise ValueError("X has different shape than during fitting."
+                             " Resetting.")
+
+    def _check_X(self, X):
+        X_list, n_samples, n_features = check_array(X, dtype=None).T
+        self._check_n_features(X, reset=False)
+        return X_list, n_samples, n_features
+
+    def transform(self, X):
+        X_list, n_samples, n_features = self._check_X(X)
+        X_int, X_mask = self._transform(X_list, n_samples, n_features)
+        if self.drop is not None:
+            X_int = np.delete(X_int, self.drop_idx_, axis=1)
+            X_mask = np.delete(X_mask, self.drop_idx_, axis=1)
+        return X_int
+
+    def _transform(self, X_list, n_samples, n_features):
+        X_int = np.zeros((n_samples, n_features), dtype=self.dtype)
+        X_mask = np.ones((n_samples, n_features), dtype=bool)
+        for i in range(n_features):
+            X_int[:, i], X_mask[:, i] = self._label_binarizers_[i].transform(X_list[i], self.handle_unknown)
+        return X_int, X_mask
+
+    def inverse_transform(self, X):
+        if self.drop is not None:
+            raise NotImplementedError("Inverse transform not implemented for "
+                                      "drop='if_binary'")
+        X = check_array(X, accept_sparse='csc', dtype='numeric', force_all_finite='allow-nan')
+        n_samples, n_features = X.shape
+        self._check_n_features(X, reset=False)
+        X_mask = (X >= 0.5)
+        X_int

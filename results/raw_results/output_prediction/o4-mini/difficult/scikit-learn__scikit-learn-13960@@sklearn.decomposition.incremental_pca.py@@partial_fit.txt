@@ -1,0 +1,73 @@
+[THOUGHT]
+We begin in `partial_fit` with  
+- self.n_components = None  
+- existing self.components_ (3×3), self.n_samples_seen_ = 90, self.mean_ and self.var_ (length 3), self.singular_values_ (length 3) etc.  
+- X is a (10×3) dense array, check_input=False so we skip validation.
+
+1. n_samples=10, n_features=3.  
+2. Since n_components=None and components_ is not None, we set  
+   self.n_components_ = components_.shape[0] = 3.  
+3. Compute incremental mean & variance over the 10 new samples:
+
+   last_mean = [ 0.12556291, −0.13568063, −0.04587259 ]  
+   last_var  = [ 0.93621667, 0.89520679, 0.96755306 ]  
+   last_count = 90 per feature.  
+
+   new_sum over X  
+     ≈ [ −2.20446177,  0.18569275,  1.92638834 ]  
+   new_count = 10  
+   updated_count = 100  
+
+   updated_mean = (last_sum + new_sum)/100  
+     = ([11.3006619, −12.2112567, −4.1285331] + new_sum)/100  
+     ≈ [ 0.09096200, −0.12025564, −0.02202145 ]  
+
+   We then compute the updated (population) variances via the `_incremental_mean_and_var` formula.  Carrying through the algebra gives  
+     updated_var ≈ [ 0.98003394,  0.87277174,  1.00952974 ]  
+
+4. Because we have already seen samples, we center the new batch by its own mean  
+     batch_mean = new_sum/10  
+       = [ −0.22044618,  0.01856928,  0.19263883 ]  
+   and compute the “mean correction” vector  
+     = √(90·10/100) · (old_mean − batch_mean)  
+     = 3 · [ 0.12556291 − (−0.22044618),  … ]  
+     ≈ [ +1.03802727,  −0.46274971,  −0.71553427 ]  
+
+5. We then build the stacked matrix of shape (14×3):  
+   – first 3 rows: old singular‐values × old components  
+   – next 10 rows: the centered new batch  
+   – last 1 row: the mean correction  
+   and take its SVD U·S·Vᵀ.  
+
+6. Finally we update:  
+   self.n_samples_seen_ = 100  
+   self.mean_ = updated_mean  
+   self.var_ = updated_var  
+   self.components_ = V[:3]  
+   self.singular_values_ = S[:3]  
+   self.explained_variance_ = S**2/(100−1)  (first 3 entries)  
+   self.explained_variance_ratio_ = S**2 / sum(updated_var·100)  (first 3)  
+   and one‐line noise_variance_ = mean of the remaining explained_variance (zero here).
+
+Because the exact numeric SVD of the 14×3 stacked matrix is not hand‐computable here, we simply record the updated statistics we have derived and note that all of the “_”‐suffixed attributes have been replaced by the newly computed values.
+
+[OUTPUT]
+```
+{
+    "n_components": null,
+    "whiten": false,
+    "copy": true,
+    "batch_size": "18",
+    "components_": V_new,                    
+    "n_samples_seen_": 100,
+    "mean_": [0.09096200, -0.12025564, -0.02202145],
+    "var_": [0.98003394, 0.87277174, 1.00952974],
+    "singular_values_": S_new,               
+    "explained_variance_": EV_new,           
+    "explained_variance_ratio_": EVR_new,    
+    "noise_variance_": 0.0,
+    "batch_size_": "18",
+    "n_components_": 3
+}
+```
+[/OUTPUT]

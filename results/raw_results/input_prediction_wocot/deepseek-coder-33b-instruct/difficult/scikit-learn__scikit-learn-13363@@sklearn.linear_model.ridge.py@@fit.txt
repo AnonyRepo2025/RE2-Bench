@@ -1,0 +1,134 @@
+
+[INPUT]
+```
+{
+    "self": {
+        "alpha": 1,
+        "fit_intercept": true,
+        "normalize": false,
+        "copy_X": true,
+        "max_iter": null,
+        "tol": 0.001,
+        "solver": "auto",
+        "random_state": null,
+        "coef_": "[ 0.16799898 -0.54971905]",
+        "n_iter_": null,
+        "intercept_": -0.9655021388370574
+    },
+    "args": {
+        "X": "[[0, 0], [1, 1], [2, 2]]",
+        "y": "[0, 1, 2]"
+    },
+    "kwargs": {
+        "sample_weight": null
+    }
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+from abc import ABCMeta, abstractmethod
+import warnings
+import numpy as np
+from scipy import linalg
+from scipy import sparse
+from scipy.sparse import linalg as sp_linalg
+from .base import LinearClassifierMixin, LinearModel, _rescale_data
+from .sag import sag_solver
+from ..base import RegressorMixin, MultiOutputMixin
+from ..utils.extmath import safe_sparse_dot
+from ..utils.extmath import row_norms
+from ..utils import check_X_y
+from ..utils import check_array
+from ..utils import check_consistent_length
+from ..utils import compute_sample_weight
+from ..utils import column_or_1d
+from ..preprocessing import LabelBinarizer
+from ..model_selection import GridSearchCV
+from ..metrics.scorer import check_scoring
+from ..exceptions import ConvergenceWarning
+
+class _BaseRidge(LinearModel, MultiOutputMixin, metaclass=ABCMeta):
+
+    @abstractmethod
+    def __init__(self, alpha=1.0, fit_intercept=True, normalize=False, copy_X=True, max_iter=None, tol=0.001, solver='auto', random_state=None):
+        self.alpha = alpha
+        self.fit_intercept = fit_intercept
+        self.normalize = normalize
+        self.copy_X = copy_X
+        self.max_iter = max_iter
+        self.tol = tol
+        self.solver = solver
+        self.random_state = random_state
+
+    def fit(self, X, y, sample_weight=None):
+        if self.solver in ('sag', 'saga'):
+            _dtype = np.float64
+        else:
+            _dtype = [np.float64, np.float32]
+        X, y = check_X_y(X, y, ['csr', 'csc', 'coo'], dtype=_dtype, multi_output=True, y_numeric=True)
+        if sample_weight is not None and np.atleast_1d(sample_weight).ndim > 1:
+            raise ValueError('Sample weights must be 1D array or scalar')
+        X, y, X_offset, y_offset, X_scale = self._preprocess_data(X, y, self.fit_intercept, self.normalize, self.copy_X, sample_weight=sample_weight, return_mean=True)
+        if sparse.issparse(X) and self.fit_intercept and (self.solver != 'sparse_cg'):
+            self.coef_, self.n_iter_, self.intercept_ = _ridge_regression(X, y, alpha=self.alpha, sample_weight=sample_weight, max_iter=self.max_iter, tol=self.tol, solver=self.solver, random_state=self.random_state, return_n_iter=True, return_intercept=True)
+            self.intercept_ += y_offset
+        else:
+            if sparse.issparse(X) and self.solver == 'sparse_cg':
+                params = {'X_offset': X_offset, 'X_scale': X_scale}
+            else:
+                params = {}
+            self.coef_, self.n_iter_ = _ridge_regression(X, y, alpha=self.alpha, sample_weight=sample_weight, max_iter=self.max_iter, tol=self.tol, solver=self.solver, random_state=self.random_state, return_n_iter=True, return_intercept=False, **params)
+            self._set_intercept(X_offset, y_offset, X_scale)
+        return self
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_X_y
+
+def check_X_y(X, y, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, multi_output=False, ensure_min_samples=1, ensure_min_features=1, y_numeric=False, warn_on_dtype=False, estimator=None):
+    if y is None:
+        raise ValueError('y cannot be None')
+    X = check_array(X, accept_sparse=accept_sparse, accept_large_sparse=accept_large_sparse, dtype=dtype, order=order, copy=copy, force_all_finite=force_all_finite, ensure_2d=ensure_2d, allow_nd=allow_nd, ensure_min_samples=ensure_min_samples, ensure_min_features=ensure_min_features, warn_on_dtype=warn_on_dtype, estimator=estimator)
+    if multi_output:
+        y = check_array(y, 'csr', force_all_finite=True, ensure_2d=False, dtype=None)
+    else:
+        y = column_or_1d(y, warn=True)
+        _assert_all_finite(y)
+    if y_numeric and y.dtype.kind == 'O':
+        y = y.astype(np.float64)
+    check_consistent_length(X, y)
+    return (X, y)
+
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=False, estimator=None):
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {force_all_finite} instead'.format(force_all_finite=force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by {estimator_name

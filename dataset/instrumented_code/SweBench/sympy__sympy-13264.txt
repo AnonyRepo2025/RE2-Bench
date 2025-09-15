@@ -1,0 +1,382 @@
+diff --git a/sympy/integrals/tests/test_transforms.py b/sympy/integrals/tests/test_transforms.py
+index e8f53f0..6015098 100644
+--- a/sympy/integrals/tests/test_transforms.py
++++ b/sympy/integrals/tests/test_transforms.py
+@@ -507,8 +507,8 @@ def test_laplace_transform():
+         ((-sin(s**2/(2*pi))*fresnels(s/pi) + sin(s**2/(2*pi))/2 -
+             cos(s**2/(2*pi))*fresnelc(s/pi) + cos(s**2/(2*pi))/2)/s, 0, True)
+     assert laplace_transform(fresnelc(t), t, s) == (
+-        (sin(s**2/(2*pi))*fresnelc(s/pi)/s - cos(s**2/(2*pi))*fresnels(s/pi)/s
+-        + sqrt(2)*cos(s**2/(2*pi) + pi/4)/(2*s), 0, True))
++        ((2*sin(s**2/(2*pi))*fresnelc(s/pi) - 2*cos(s**2/(2*pi))*fresnels(s/pi)
++        + sqrt(2)*cos(s**2/(2*pi) + pi/4))/(2*s), 0, True))
+ 
+     assert LT(Matrix([[exp(t), t*exp(-t)], [t*exp(-t), exp(t)]]), t, s) ==\
+         Matrix([
+@@ -779,10 +779,12 @@ def test_issue_8514():
+     a, b, c, = symbols('a b c', positive=True)
+     t = symbols('t', positive=True)
+     ft = simplify(inverse_laplace_transform(1/(a*s**2+b*s+c),s, t))
+-    assert ft == ((exp(t*(exp(I*atan2(0, -4*a*c + b**2)/2) -
+-                  exp(-I*atan2(0, -4*a*c + b**2)/2))*
+-                  sqrt(Abs(4*a*c - b**2))/(4*a))*exp(t*cos(atan2(0, -4*a*c + b**2)/2)
+-                  *sqrt(Abs(4*a*c - b**2))/a) + I*sin(t*sin(atan2(0, -4*a*c + b**2)/2)
+-                  *sqrt(Abs(4*a*c - b**2))/(2*a)) - cos(t*sin(atan2(0, -4*a*c + b**2)/2)
+-                  *sqrt(Abs(4*a*c - b**2))/(2*a)))*exp(-t*(b + cos(atan2(0, -4*a*c + b**2)/2)
+-                  *sqrt(Abs(4*a*c - b**2)))/(2*a))/sqrt(-4*a*c + b**2))
++    assert ft == (I*exp(t*cos(atan2(0, -4*a*c + b**2)/2)*sqrt(Abs(4*a*c -
++                  b**2))/a)*sin(t*sin(atan2(0, -4*a*c + b**2)/2)*sqrt(Abs(
++                  4*a*c - b**2))/(2*a)) + exp(t*cos(atan2(0, -4*a*c + b**2)
++                  /2)*sqrt(Abs(4*a*c - b**2))/a)*cos(t*sin(atan2(0, -4*a*c
++                  + b**2)/2)*sqrt(Abs(4*a*c - b**2))/(2*a)) + I*sin(t*sin(
++                  atan2(0, -4*a*c + b**2)/2)*sqrt(Abs(4*a*c - b**2))/(2*a))
++                  - cos(t*sin(atan2(0, -4*a*c + b**2)/2)*sqrt(Abs(4*a*c -
++                  b**2))/(2*a)))*exp(-t*(b + cos(atan2(0, -4*a*c + b**2)/2)
++                  *sqrt(Abs(4*a*c - b**2)))/(2*a))/sqrt(-4*a*c + b**2)
+diff --git a/sympy/simplify/simplify.py b/sympy/simplify/simplify.py
+index f1609aa..49447d0 100644
+--- a/sympy/simplify/simplify.py
++++ b/sympy/simplify/simplify.py
+@@ -1,4 +1,197 @@
+ from __future__ import print_function, division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-13264/sympy/simplify/simplify.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ from collections import defaultdict
+ 
+@@ -9,7 +202,7 @@
+ from sympy.core.compatibility import (iterable,
+     ordered, range, as_int)
+ from sympy.core.numbers import Float, I, pi, Rational, Integer
+-from sympy.core.function import expand_log, count_ops, _mexpand, _coeff_isneg
++from sympy.core.function import expand_log, count_ops, _mexpand, _coeff_isneg, nfloat
+ from sympy.core.rules import Transform
+ from sympy.core.evaluate import global_evaluate
+ from sympy.functions import (
+@@ -382,7 +575,8 @@ def signsimp(expr, evaluate=None):
+     return e
+ 
+ 
+-def simplify(expr, ratio=1.7, measure=count_ops, fu=False):
++@inspect_code
++def simplify(expr, ratio=1.7, measure=count_ops, rational=False):
+     """
+     Simplifies the given expression.
+ 
+@@ -504,6 +698,11 @@ def simplify(expr, ratio=1.7, measure=count_ops, fu=False):
+     simplification strategies and then compares them using the measure
+     function, we get a completely different result that is still different
+     from the input expression by doing this.
++
++    If rational=True, Floats will be recast as Rationals before simplification.
++    If rational=None, Floats will be recast as Rationals but the result will
++    be recast as Floats. If rational=False(default) then nothing will be done
++    to the Floats.
+     """
+     expr = sympify(expr)
+ 
+@@ -526,8 +725,8 @@ def simplify(expr, ratio=1.7, measure=count_ops, fu=False):
+             if len(expr.args) == 1 and len(expr.args[0].args) == 1 and \
+                isinstance(expr.args[0], expr.inverse(argindex=1)):
+                 return simplify(expr.args[0].args[0], ratio=ratio,
+-                                measure=measure, fu=fu)
+-        return expr.func(*[simplify(x, ratio=ratio, measure=measure, fu=fu)
++                                measure=measure, rational=rational)
++        return expr.func(*[simplify(x, ratio=ratio, measure=measure, rational=rational)
+                          for x in expr.args])
+ 
+     # TODO: Apply different strategies, considering expression pattern:
+@@ -541,6 +740,12 @@ def shorter(*choices):
+             return choices[0]
+         return min(choices, key=measure)
+ 
++    # rationalize Floats
++    floats = False
++    if rational is not False and expr.has(Float):
++        floats = True
++        expr = nsimplify(expr, rational=True)
++
+     expr = bottom_up(expr, lambda w: w.normal())
+     expr = Mul(*powsimp(expr).as_content_primitive())
+     _e = cancel(expr)
+@@ -564,8 +769,7 @@ def shorter(*choices):
+     if expr.has(BesselBase):
+         expr = besselsimp(expr)
+ 
+-    if expr.has(TrigonometricFunction) and not fu or expr.has(
+-            HyperbolicFunction):
++    if expr.has(TrigonometricFunction, HyperbolicFunction):
+         expr = trigsimp(expr, deep=True)
+ 
+     if expr.has(log):
+@@ -581,6 +785,7 @@ def shorter(*choices):
+         expr = product_simplify(expr)
+ 
+     short = shorter(powsimp(expr, combine='exp', deep=True), powsimp(expr), expr)
++    short = shorter(short, cancel(short))
+     short = shorter(short, factor_terms(short), expand_power_exp(expand_mul(short)))
+     if short.has(TrigonometricFunction, HyperbolicFunction, ExpBase):
+         short = exptrigsimp(short, simplify=False)
+@@ -610,6 +815,10 @@ def shorter(*choices):
+     if measure(expr) > ratio*measure(original_expr):
+         expr = original_expr
+ 
++    # restore floats
++    if floats and rational is None:
++        expr = nfloat(expr, exponent=False)
++
+     return expr
+ 
+ 
+diff --git a/sympy/simplify/tests/test_simplify.py b/sympy/simplify/tests/test_simplify.py
+index 6acf690..eaaaf50 100644
+--- a/sympy/simplify/tests/test_simplify.py
++++ b/sympy/simplify/tests/test_simplify.py
+@@ -73,6 +73,42 @@ def test_simplify_expr():
+     f = -x + y/(z + t) + z*x/(z + t) + z*a/(z + t) + t*x/(z + t)
+     assert simplify(f) == (y + a*z)/(z + t)
+ 
++    # issue 10347
++    expr = -x*(y**2 - 1)*(2*y**2*(x**2 - 1)/(a*(x**2 - y**2)**2) + (x**2 - 1)
++        /(a*(x**2 - y**2)))/(a*(x**2 - y**2)) + x*(-2*x**2*sqrt(-x**2*y**2 + x**2
++        + y**2 - 1)*sin(z)/(a*(x**2 - y**2)**2) - x**2*sqrt(-x**2*y**2 + x**2 +
++        y**2 - 1)*sin(z)/(a*(x**2 - 1)*(x**2 - y**2)) + (x**2*sqrt((-x**2 + 1)*
++        (y**2 - 1))*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*sin(z)/(x**2 - 1) + sqrt(
++        (-x**2 + 1)*(y**2 - 1))*(x*(-x*y**2 + x)/sqrt(-x**2*y**2 + x**2 + y**2 -
++        1) + sqrt(-x**2*y**2 + x**2 + y**2 - 1))*sin(z))/(a*sqrt((-x**2 + 1)*(
++        y**2 - 1))*(x**2 - y**2)))*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*sin(z)/(a*
++        (x**2 - y**2)) + x*(-2*x**2*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*cos(z)/(a*
++        (x**2 - y**2)**2) - x**2*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*cos(z)/(a*
++        (x**2 - 1)*(x**2 - y**2)) + (x**2*sqrt((-x**2 + 1)*(y**2 - 1))*sqrt(-x**2
++        *y**2 + x**2 + y**2 - 1)*cos(z)/(x**2 - 1) + x*sqrt((-x**2 + 1)*(y**2 -
++        1))*(-x*y**2 + x)*cos(z)/sqrt(-x**2*y**2 + x**2 + y**2 - 1) + sqrt((-x**2
++        + 1)*(y**2 - 1))*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*cos(z))/(a*sqrt((-x**2
++        + 1)*(y**2 - 1))*(x**2 - y**2)))*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*cos(
++        z)/(a*(x**2 - y**2)) - y*sqrt((-x**2 + 1)*(y**2 - 1))*(-x*y*sqrt(-x**2*
++        y**2 + x**2 + y**2 - 1)*sin(z)/(a*(x**2 - y**2)*(y**2 - 1)) + 2*x*y*sqrt(
++        -x**2*y**2 + x**2 + y**2 - 1)*sin(z)/(a*(x**2 - y**2)**2) + (x*y*sqrt((
++        -x**2 + 1)*(y**2 - 1))*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*sin(z)/(y**2 -
++        1) + x*sqrt((-x**2 + 1)*(y**2 - 1))*(-x**2*y + y)*sin(z)/sqrt(-x**2*y**2
++        + x**2 + y**2 - 1))/(a*sqrt((-x**2 + 1)*(y**2 - 1))*(x**2 - y**2)))*sin(
++        z)/(a*(x**2 - y**2)) + y*(x**2 - 1)*(-2*x*y*(x**2 - 1)/(a*(x**2 - y**2)
++        **2) + 2*x*y/(a*(x**2 - y**2)))/(a*(x**2 - y**2)) + y*(x**2 - 1)*(y**2 -
++        1)*(-x*y*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*cos(z)/(a*(x**2 - y**2)*(y**2
++        - 1)) + 2*x*y*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*cos(z)/(a*(x**2 - y**2)
++        **2) + (x*y*sqrt((-x**2 + 1)*(y**2 - 1))*sqrt(-x**2*y**2 + x**2 + y**2 -
++        1)*cos(z)/(y**2 - 1) + x*sqrt((-x**2 + 1)*(y**2 - 1))*(-x**2*y + y)*cos(
++        z)/sqrt(-x**2*y**2 + x**2 + y**2 - 1))/(a*sqrt((-x**2 + 1)*(y**2 - 1)
++        )*(x**2 - y**2)))*cos(z)/(a*sqrt((-x**2 + 1)*(y**2 - 1))*(x**2 - y**2)
++        ) - x*sqrt((-x**2 + 1)*(y**2 - 1))*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*sin(
++        z)**2/(a**2*(x**2 - 1)*(x**2 - y**2)*(y**2 - 1)) - x*sqrt((-x**2 + 1)*(
++        y**2 - 1))*sqrt(-x**2*y**2 + x**2 + y**2 - 1)*cos(z)**2/(a**2*(x**2 - 1)*(
++        x**2 - y**2)*(y**2 - 1))
++    assert simplify(expr) == 2*x/(a**2*(x**2 - y**2))
++
+     A, B = symbols('A,B', commutative=False)
+ 
+     assert simplify(A*B - B*A) == A*B - B*A
+@@ -152,6 +188,13 @@ def test_simplify_measure():
+     assert measure2(simplify(expr2, measure=measure2)) <= measure2(expr2)
+ 
+ 
++def test_simplify_rational():
++    expr = 2**x*2.**y
++    assert simplify(expr, rational = True) == 2**(x+y)
++    assert simplify(expr, rational = None) == 2.0**(x+y)
++    assert simplify(expr, rational = False) == expr
++
++
+ def test_simplify_issue_1308():
+     assert simplify(exp(-Rational(1, 2)) + exp(-Rational(3, 2))) == \
+         (1 + E)*exp(-Rational(3, 2))

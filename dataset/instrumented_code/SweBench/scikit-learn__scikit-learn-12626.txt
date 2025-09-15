@@ -1,0 +1,406 @@
+diff --git a/sklearn/compose/_column_transformer.py b/sklearn/compose/_column_transformer.py
+index 68b9c65..ba5c933 100644
+--- a/sklearn/compose/_column_transformer.py
++++ b/sklearn/compose/_column_transformer.py
+@@ -7,10 +7,204 @@ different columns.
+ #         Joris Van den Bossche
+ # License: BSD
+ from __future__ import division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-12626/sklearn/compose/_column_transformer.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ from itertools import chain
+ 
+ import numpy as np
++import warnings
+ from scipy import sparse
+ 
+ from ..base import clone, TransformerMixin
+@@ -681,19 +875,69 @@ def _is_empty_column_selection(column):
+         return False
+ 
+ 
++def _validate_transformers(transformers):
++    """Checks if given transformers are valid.
++
++    This is a helper function to support the deprecated tuple order.
++    XXX Remove in v0.22
++    """
++    if not transformers:
++        return True
++
++    for t in transformers:
++        if t in ('drop', 'passthrough'):
++            continue
++        if (not (hasattr(t, "fit") or hasattr(t, "fit_transform")) or not
++                hasattr(t, "transform")):
++            return False
++
++    return True
++
++
++def _is_deprecated_tuple_order(tuples):
++    """Checks if the input follows the deprecated tuple order.
++
++    Returns
++    -------
++    Returns true if (transformer, columns) is not a valid assumption for the
++    input, but (columns, transformer) is valid. The latter is deprecated and
++    its support will stop in v0.22.
++
++    XXX Remove in v0.22
++    """
++    transformers, columns = zip(*tuples)
++    if (not _validate_transformers(transformers)
++            and _validate_transformers(columns)):
++        return True
++
++    return False
++
++
+ def _get_transformer_list(estimators):
+     """
+     Construct (name, trans, column) tuples from list
+ 
+     """
+-    transformers = [trans[1] for trans in estimators]
+-    columns = [trans[0] for trans in estimators]
+-    names = [trans[0] for trans in _name_estimators(transformers)]
++    message = ('`make_column_transformer` now expects (transformer, columns) '
++               'as input tuples instead of (columns, transformer). This '
++               'has been introduced in v0.20.1. `make_column_transformer` '
++               'will stop accepting the deprecated (columns, transformer) '
++               'order in v0.22.')
++
++    transformers, columns = zip(*estimators)
++
++    # XXX Remove in v0.22
++    if _is_deprecated_tuple_order(estimators):
++        transformers, columns = columns, transformers
++        warnings.warn(message, DeprecationWarning)
++
++    names, _ = zip(*_name_estimators(transformers))
+ 
+     transformer_list = list(zip(names, transformers, columns))
+     return transformer_list
+ 
+ 
++@inspect_code
+ def make_column_transformer(*transformers, **kwargs):
+     """Construct a ColumnTransformer from the given transformers.
+ 
+@@ -704,7 +948,7 @@ def make_column_transformer(*transformers, **kwargs):
+ 
+     Parameters
+     ----------
+-    *transformers : tuples of column selections and transformers
++    *transformers : tuples of transformers and column selections
+ 
+     remainder : {'drop', 'passthrough'} or estimator, default 'drop'
+         By default, only the specified columns in `transformers` are
+@@ -747,8 +991,8 @@ def make_column_transformer(*transformers, **kwargs):
+     >>> from sklearn.preprocessing import StandardScaler, OneHotEncoder
+     >>> from sklearn.compose import make_column_transformer
+     >>> make_column_transformer(
+-    ...     (['numerical_column'], StandardScaler()),
+-    ...     (['categorical_column'], OneHotEncoder()))
++    ...     (StandardScaler(), ['numerical_column']),
++    ...     (OneHotEncoder(), ['categorical_column']))
+     ...     # doctest: +NORMALIZE_WHITESPACE +ELLIPSIS
+     ColumnTransformer(n_jobs=None, remainder='drop', sparse_threshold=0.3,
+              transformer_weights=None,
+diff --git a/sklearn/compose/tests/test_column_transformer.py b/sklearn/compose/tests/test_column_transformer.py
+index b763133..c201cfe 100644
+--- a/sklearn/compose/tests/test_column_transformer.py
++++ b/sklearn/compose/tests/test_column_transformer.py
+@@ -13,6 +13,7 @@ from sklearn.utils.testing import assert_false
+ from sklearn.utils.testing import assert_dict_equal
+ from sklearn.utils.testing import assert_array_equal
+ from sklearn.utils.testing import assert_allclose_dense_sparse
++from sklearn.utils.testing import assert_almost_equal
+ 
+ from sklearn.base import BaseEstimator
+ from sklearn.externals import six
+@@ -373,8 +374,8 @@ def test_column_transformer_mixed_cols_sparse():
+                   dtype='O')
+ 
+     ct = make_column_transformer(
+-        ([0], OneHotEncoder()),
+-        ([1, 2], 'passthrough'),
++        (OneHotEncoder(), [0]),
++        ('passthrough', [1, 2]),
+         sparse_threshold=1.0
+     )
+ 
+@@ -386,8 +387,8 @@ def test_column_transformer_mixed_cols_sparse():
+                                                     [0, 1, 2, 0]]))
+ 
+     ct = make_column_transformer(
+-        ([0], OneHotEncoder()),
+-        ([0], 'passthrough'),
++        (OneHotEncoder(), [0]),
++        ('passthrough', [0]),
+         sparse_threshold=1.0
+     )
+     with pytest.raises(ValueError,
+@@ -516,21 +517,39 @@ def test_column_transformer_invalid_transformer():
+ def test_make_column_transformer():
+     scaler = StandardScaler()
+     norm = Normalizer()
+-    ct = make_column_transformer(('first', scaler), (['second'], norm))
++    ct = make_column_transformer((scaler, 'first'), (norm, ['second']))
+     names, transformers, columns = zip(*ct.transformers)
+     assert_equal(names, ("standardscaler", "normalizer"))
+     assert_equal(transformers, (scaler, norm))
+     assert_equal(columns, ('first', ['second']))
+ 
++    # XXX remove in v0.22
++    with pytest.warns(DeprecationWarning,
++                      match='`make_column_transformer` now expects'):
++        ct1 = make_column_transformer(([0], norm))
++    ct2 = make_column_transformer((norm, [0]))
++    X_array = np.array([[0, 1, 2], [2, 4, 6]]).T
++    assert_almost_equal(ct1.fit_transform(X_array),
++                        ct2.fit_transform(X_array))
++
++    with pytest.warns(DeprecationWarning,
++                      match='`make_column_transformer` now expects'):
++        make_column_transformer(('first', 'drop'))
++
++    with pytest.warns(DeprecationWarning,
++                      match='`make_column_transformer` now expects'):
++        make_column_transformer(('passthrough', 'passthrough'),
++                                ('first', 'drop'))
++
+ 
+ def test_make_column_transformer_kwargs():
+     scaler = StandardScaler()
+     norm = Normalizer()
+-    ct = make_column_transformer(('first', scaler), (['second'], norm),
++    ct = make_column_transformer((scaler, 'first'), (norm, ['second']),
+                                  n_jobs=3, remainder='drop',
+                                  sparse_threshold=0.5)
+     assert_equal(ct.transformers, make_column_transformer(
+-        ('first', scaler), (['second'], norm)).transformers)
++        (scaler, 'first'), (norm, ['second'])).transformers)
+     assert_equal(ct.n_jobs, 3)
+     assert_equal(ct.remainder, 'drop')
+     assert_equal(ct.sparse_threshold, 0.5)
+@@ -538,7 +557,7 @@ def test_make_column_transformer_kwargs():
+     assert_raise_message(
+         TypeError,
+         'Unknown keyword arguments: "transformer_weights"',
+-        make_column_transformer, ('first', scaler), (['second'], norm),
++        make_column_transformer, (scaler, 'first'), (norm, ['second']),
+         transformer_weights={'pca': 10, 'Transf': 1}
+     )
+ 
+@@ -547,7 +566,7 @@ def test_make_column_transformer_remainder_transformer():
+     scaler = StandardScaler()
+     norm = Normalizer()
+     remainder = StandardScaler()
+-    ct = make_column_transformer(('first', scaler), (['second'], norm),
++    ct = make_column_transformer((scaler, 'first'), (norm, ['second']),
+                                  remainder=remainder)
+     assert ct.remainder == remainder
+ 
+@@ -757,7 +776,7 @@ def test_column_transformer_remainder():
+         "or estimator.", ct.fit_transform, X_array)
+ 
+     # check default for make_column_transformer
+-    ct = make_column_transformer(([0], Trans()))
++    ct = make_column_transformer((Trans(), [0]))
+     assert ct.remainder == 'drop'
+ 
+ 

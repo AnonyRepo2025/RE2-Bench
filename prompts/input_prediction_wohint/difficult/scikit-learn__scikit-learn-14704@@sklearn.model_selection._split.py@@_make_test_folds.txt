@@ -1,0 +1,262 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. You only need to predict input variable values, and print input between [INPUT] and [\INPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT]. 
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+from collections.abc import Iterable
+import warnings
+from itertools import chain, combinations
+from math import ceil, floor
+import numbers
+from abc import ABCMeta, abstractmethod
+from inspect import signature
+import numpy as np
+from ..utils import indexable, check_random_state, safe_indexing
+from ..utils import _approximate_mode
+from ..utils.validation import _num_samples, column_or_1d
+from ..utils.validation import check_array
+from ..utils.multiclass import type_of_target
+from ..utils.fixes import comb
+from ..base import _pprint
+__all__ = ['BaseCrossValidator', 'KFold', 'GroupKFold', 'LeaveOneGroupOut', 'LeaveOneOut', 'LeavePGroupsOut', 'LeavePOut', 'RepeatedStratifiedKFold', 'RepeatedKFold', 'ShuffleSplit', 'GroupShuffleSplit', 'StratifiedKFold', 'StratifiedShuffleSplit', 'PredefinedSplit', 'train_test_split', 'check_cv']
+train_test_split.__test__ = False
+
+class StratifiedKFold(_BaseKFold):
+
+    def __init__(self, n_splits=5, shuffle=False, random_state=None):
+        super().__init__(n_splits, shuffle, random_state)
+
+    def _make_test_folds(self, X, y=None):
+        rng = check_random_state(self.random_state)
+        y = np.asarray(y)
+        type_of_target_y = type_of_target(y)
+        allowed_target_types = ('binary', 'multiclass')
+        if type_of_target_y not in allowed_target_types:
+            raise ValueError('Supported target types are: {}. Got {!r} instead.'.format(allowed_target_types, type_of_target_y))
+        y = column_or_1d(y)
+        _, y_idx, y_inv = np.unique(y, return_index=True, return_inverse=True)
+        _, class_perm = np.unique(y_idx, return_inverse=True)
+        y_encoded = class_perm[y_inv]
+        n_classes = len(y_idx)
+        y_counts = np.bincount(y_encoded)
+        min_groups = np.min(y_counts)
+        if np.all(self.n_splits > y_counts):
+            raise ValueError('n_splits=%d cannot be greater than the number of members in each class.' % self.n_splits)
+        if self.n_splits > min_groups:
+            warnings.warn('The least populated class in y has only %d members, which is less than n_splits=%d.' % (min_groups, self.n_splits), UserWarning)
+        y_order = np.sort(y_encoded)
+        allocation = np.asarray([np.bincount(y_order[i::self.n_splits], minlength=n_classes) for i in range(self.n_splits)])
+        test_folds = np.empty(len(y), dtype='i')
+        for k in range(n_classes):
+            folds_for_class = np.arange(self.n_splits).repeat(allocation[:, k])
+            if self.shuffle:
+                rng.shuffle(folds_for_class)
+            test_folds[y_encoded == k] = folds_for_class
+        return test_folds
+
+    def _iter_test_masks(self, X, y=None, groups=None):
+        test_folds = self._make_test_folds(X, y)
+        for i in range(self.n_splits):
+            yield (test_folds == i)
+
+    def split(self, X, y, groups=None):
+        y = check_array(y, ensure_2d=False, dtype=None)
+        return super().split(X, y, groups)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_random_state
+
+def check_random_state(seed):
+    if seed is None or seed is np.random:
+        return np.random.mtrand._rand
+    if isinstance(seed, numbers.Integral):
+        return np.random.RandomState(seed)
+    if isinstance(seed, np.random.RandomState):
+        return seed
+    raise ValueError('%r cannot be used to seed a numpy.random.RandomState instance' % seed)
+
+.sklearn.utils.multiclass.type_of_target
+
+def type_of_target(y):
+    valid = (isinstance(y, (Sequence, spmatrix)) or hasattr(y, '__array__')) and (not isinstance(y, str))
+    if not valid:
+        raise ValueError('Expected array-like (array or non-string sequence), got %r' % y)
+    sparse_pandas = y.__class__.__name__ in ['SparseSeries', 'SparseArray']
+    if sparse_pandas:
+        raise ValueError("y cannot be class 'SparseSeries' or 'SparseArray'")
+    if is_multilabel(y):
+        return 'multilabel-indicator'
+    try:
+        y = np.asarray(y)
+    except ValueError:
+        return 'unknown'
+    try:
+        if not hasattr(y[0], '__array__') and isinstance(y[0], Sequence) and (not isinstance(y[0], str)):
+            raise ValueError('You appear to be using a legacy multi-label data representation. Sequence of sequences are no longer supported; use a binary array or sparse matrix instead - the MultiLabelBinarizer transformer can convert to this format.')
+    except IndexError:
+        pass
+    if y.ndim > 2 or (y.dtype == object and len(y) and (not isinstance(y.flat[0], str))):
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] == 0:
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] > 1:
+        suffix = '-multioutput'
+    else:
+        suffix = ''
+    if y.dtype.kind == 'f' and np.any(y != y.astype(int)):
+        _assert_all_finite(y)
+        return 'continuous' + suffix
+    if len(np.unique(y)) > 2 or (y.ndim >= 2 and len(y[0]) > 1):
+        return 'multiclass' + suffix
+    else:
+        return 'binary'
+
+.sklearn.utils.multiclass.is_multilabel
+
+def is_multilabel(y):
+    if hasattr(y, '__array__'):
+        y = np.asarray(y)
+    if not (hasattr(y, 'shape') and y.ndim == 2 and (y.shape[1] > 1)):
+        return False
+    if issparse(y):
+        if isinstance(y, (dok_matrix, lil_matrix)):
+            y = y.tocsr()
+        return len(y.data) == 0 or (np.unique(y.data).size == 1 and (y.dtype.kind in 'biu' or _is_integral_float(np.unique(y.data))))
+    else:
+        labels = np.unique(y)
+        return len(labels) < 3 and (y.dtype.kind in 'biu' or _is_integral_float(labels))
+
+.sklearn.utils.validation.column_or_1d
+
+def column_or_1d(y, warn=False):
+    shape = np.shape(y)
+    if len(shape) == 1:
+        return np.ravel(y)
+    if len(shape) == 2 and shape[1] == 1:
+        if warn:
+            warnings.warn('A column-vector y was passed when a 1d array was expected. Please change the shape of y to (n_samples, ), for example using ravel().', DataConversionWarning, stacklevel=2)
+        return np.ravel(y)
+    raise ValueError('bad input shape {0}'.format(shape))
+
+
+[/PYTHON]
+What will be the input of `_make_test_folds`, given the following input:
+[OUTPUT]
+```
+{
+    "output": "[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 1 0 1 1 0 1 1 1\n 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 1 1 1 1 1 1 1 2 2 2 2 2 2 1 2 2 2 2 2 2 2\n 2 2 2 2 2 2 2 2 2 2 2 3 3 2 2 3 2 3 3 3 2 3 3 2 3 3 3 3 3 3 3 3 3 3 3 3 3\n 3 3 3 3 4 3 4 3 3 3 4 4 4 4 4 3 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4 4\n 4 4]"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]

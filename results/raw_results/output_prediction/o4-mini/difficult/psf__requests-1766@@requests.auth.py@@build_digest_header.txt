@@ -1,0 +1,47 @@
+[THOUGHT]
+We need to simulate HTTPDigestAuth.build_digest_header for the given state.
+
+1. realm = "me@kennethreitz.com"  
+   nonce = "b65c75a3f423e5780128d1a798ec40b4"  
+   qop = "auth"  
+   algorithm = "MD5"  
+   opaque = "21d73260ff0b61c1f304ee40444f24bf"  
+
+2. _algorithm = "MD5" → we pick MD5 hashing.
+
+3. Parse URL "http://httpbin.org/digest-auth/auth/user/pass":
+   path = "/digest-auth/auth/user/pass"
+
+4. A1 = "user:me@kennethreitz.com:pass"  
+   HA1 = MD5(A1)
+
+5. A2 = "GET:/digest-auth/auth/user/pass"  
+   HA2 = MD5(A2)
+
+6. Since nonce == last_nonce, nonce_count increments from 1 to 2.  
+   ncvalue = "%08x" % 2 → "00000002"
+
+7. Build a fresh cnonce = first 16 hex chars of SHA1( nonce_count || nonce || time.ctime() || os.urandom(8) ).  
+   This is inherently non-deterministic (depends on current time & randomness). Call this CNONCE.
+
+8. noncebit = nonce + ":" + ncvalue + ":" + cnonce + ":" + qop + ":" + HA2
+
+9. respdig = KD(HA1, noncebit) = MD5( HA1 + ":" + noncebit )
+
+10. Build the header string:
+    base =  'username="user", realm="me@kennethreitz.com", nonce="b65c75a3f423e5780128d1a798ec40b4", uri="/digest-auth/auth/user/pass", response="' + respdig + '"'
+    + ', opaque="21d73260ff0b61c1f304ee40444f24bf"'
+    + ', algorithm="MD5"'
+    + ', qop="auth", nc=00000002, cnonce="' + cnonce + '"'
+
+11. Return "Digest " + base.
+
+Because the cnonce and the resulting response digest depend on the exact time and random bytes, we cannot give their concrete values without running the code at a fixed moment.  However, the returned header will look like this (with CNONCE and RESP DIG placeholders):
+
+[OUTPUT]
+```
+{
+    "output": "Digest username=\"user\", realm=\"me@kennethreitz.com\", nonce=\"b65c75a3f423e5780128d1a798ec40b4\", uri=\"/digest-auth/auth/user/pass\", response=\"<RESPDIG>\", opaque=\"21d73260ff0b61c1f304ee40444f24bf\", algorithm=\"MD5\", qop=\"auth\", nc=00000002, cnonce=\"<CNONCE>\""
+}
+```
+[/OUTPUT]

@@ -1,0 +1,356 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 71d0424..1ddbde9 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -1567,9 +1567,32 @@ class Model(metaclass=ModelBase):
+ 
+     @classmethod
+     def _check_indexes(cls):
+-        """Check the fields of indexes."""
++        """Check the fields and names of indexes."""
++        errors = []
++        for index in cls._meta.indexes:
++            # Index name can't start with an underscore or a number, restricted
++            # for cross-database compatibility with Oracle.
++            if index.name[0] == '_' or index.name[0].isdigit():
++                errors.append(
++                    checks.Error(
++                        "The index name '%s' cannot start with an underscore "
++                        "or a number." % index.name,
++                        obj=cls,
++                        id='models.E033',
++                    ),
++                )
++            if len(index.name) > index.max_name_length:
++                errors.append(
++                    checks.Error(
++                        "The index name '%s' cannot be longer than %d "
++                        "characters." % (index.name, index.max_name_length),
++                        obj=cls,
++                        id='models.E034',
++                    ),
++                )
+         fields = [field for index in cls._meta.indexes for field, _ in index.fields_orders]
+-        return cls._check_local_fields(fields, 'indexes')
++        errors.extend(cls._check_local_fields(fields, 'indexes'))
++        return errors
+ 
+     @classmethod
+     def _check_local_fields(cls, fields, option):
+diff --git a/django/db/models/indexes.py b/django/db/models/indexes.py
+index a8bf089..60f64f5 100644
+--- a/django/db/models/indexes.py
++++ b/django/db/models/indexes.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-11539/django/db/models/indexes.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from django.db.backends.utils import names_digest, split_identifier
+ from django.db.models.query_utils import Q
+ from django.db.models.sql import Query
+@@ -33,28 +226,10 @@ class Index:
+             for field_name in self.fields
+         ]
+         self.name = name or ''
+-        if self.name:
+-            errors = self.check_name()
+-            if len(self.name) > self.max_name_length:
+-                errors.append('Index names cannot be longer than %s characters.' % self.max_name_length)
+-            if errors:
+-                raise ValueError(errors)
+         self.db_tablespace = db_tablespace
+         self.opclasses = opclasses
+         self.condition = condition
+ 
+-    def check_name(self):
+-        errors = []
+-        # Name can't start with an underscore on Oracle; prepend D if needed.
+-        if self.name[0] == '_':
+-            errors.append('Index names cannot start with an underscore (_).')
+-            self.name = 'D%s' % self.name[1:]
+-        # Name can't start with a number on Oracle; prepend D if needed.
+-        elif self.name[0].isdigit():
+-            errors.append('Index names cannot start with a number (0-9).')
+-            self.name = 'D%s' % self.name[1:]
+-        return errors
+-
+     def _get_condition_sql(self, model, schema_editor):
+         if self.condition is None:
+             return None
+@@ -96,6 +271,7 @@ class Index:
+         _, _, kwargs = self.deconstruct()
+         return self.__class__(**kwargs)
+ 
++    @inspect_code
+     def set_name_with_model(self, model):
+         """
+         Generate a unique name for the index.
+@@ -122,7 +298,8 @@ class Index:
+             'Index too long for multiple database support. Is self.suffix '
+             'longer than 3 characters?'
+         )
+-        self.check_name()
++        if self.name[0] == '_' or self.name[0].isdigit():
++            self.name = 'D%s' % self.name[1:]
+ 
+     def __repr__(self):
+         return "<%s: fields='%s'%s>" % (
+diff --git a/tests/invalid_models_tests/test_models.py b/tests/invalid_models_tests/test_models.py
+index 3261755..18a59c4 100644
+--- a/tests/invalid_models_tests/test_models.py
++++ b/tests/invalid_models_tests/test_models.py
+@@ -296,6 +296,39 @@ class IndexesTests(SimpleTestCase):
+ 
+         self.assertEqual(Bar.check(), [])
+ 
++    def test_name_constraints(self):
++        class Model(models.Model):
++            class Meta:
++                indexes = [
++                    models.Index(fields=['id'], name='_index_name'),
++                    models.Index(fields=['id'], name='5index_name'),
++                ]
++
++        self.assertEqual(Model.check(), [
++            Error(
++                "The index name '%sindex_name' cannot start with an "
++                "underscore or a number." % prefix,
++                obj=Model,
++                id='models.E033',
++            ) for prefix in ('_', '5')
++        ])
++
++    def test_max_name_length(self):
++        index_name = 'x' * 31
++
++        class Model(models.Model):
++            class Meta:
++                indexes = [models.Index(fields=['id'], name=index_name)]
++
++        self.assertEqual(Model.check(), [
++            Error(
++                "The index name '%s' cannot be longer than 30 characters."
++                % index_name,
++                obj=Model,
++                id='models.E034',
++            ),
++        ])
++
+ 
+ @isolate_apps('invalid_models_tests')
+ class FieldNamesTests(SimpleTestCase):
+diff --git a/tests/model_indexes/tests.py b/tests/model_indexes/tests.py
+index 60fc056..5180d8c 100644
+--- a/tests/model_indexes/tests.py
++++ b/tests/model_indexes/tests.py
+@@ -63,20 +63,6 @@ class SimpleIndexesTests(SimpleTestCase):
+         with self.assertRaisesMessage(ValueError, 'Index.condition must be a Q instance.'):
+             models.Index(condition='invalid', name='long_book_idx')
+ 
+-    def test_max_name_length(self):
+-        msg = 'Index names cannot be longer than 30 characters.'
+-        with self.assertRaisesMessage(ValueError, msg):
+-            models.Index(fields=['title'], name='looooooooooooong_index_name_idx')
+-
+-    def test_name_constraints(self):
+-        msg = 'Index names cannot start with an underscore (_).'
+-        with self.assertRaisesMessage(ValueError, msg):
+-            models.Index(fields=['title'], name='_name_starting_with_underscore')
+-
+-        msg = 'Index names cannot start with a number (0-9).'
+-        with self.assertRaisesMessage(ValueError, msg):
+-            models.Index(fields=['title'], name='5name_starting_with_number')
+-
+     def test_name_auto_generation(self):
+         index = models.Index(fields=['author'])
+         index.set_name_with_model(Book)

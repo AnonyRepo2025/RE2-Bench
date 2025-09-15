@@ -1,0 +1,445 @@
+diff --git a/src/_pytest/hookspec.py b/src/_pytest/hookspec.py
+index 33ca782..e499b74 100644
+--- a/src/_pytest/hookspec.py
++++ b/src/_pytest/hookspec.py
+@@ -808,6 +808,27 @@ def pytest_warning_recorded(
+     """
+ 
+ 
++# -------------------------------------------------------------------------
++# Hooks for influencing skipping
++# -------------------------------------------------------------------------
++
++
++def pytest_markeval_namespace(config: "Config") -> Dict[str, Any]:
++    """Called when constructing the globals dictionary used for
++    evaluating string conditions in xfail/skipif markers.
++
++    This is useful when the condition for a marker requires
++    objects that are expensive or impossible to obtain during
++    collection time, which is required by normal boolean
++    conditions.
++
++    .. versionadded:: 6.2
++
++    :param _pytest.config.Config config: The pytest config object.
++    :returns: A dictionary of additional globals to add.
++    """
++
++
+ # -------------------------------------------------------------------------
+ # error handling and internal debugging hooks
+ # -------------------------------------------------------------------------
+diff --git a/src/_pytest/skipping.py b/src/_pytest/skipping.py
+index afc3610..ce5df3b 100644
+--- a/src/_pytest/skipping.py
++++ b/src/_pytest/skipping.py
+@@ -1,8 +1,202 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pytest-dev__pytest-8124/src/_pytest/skipping.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """Support for skip/xfail functions and markers."""
+ import os
+ import platform
+ import sys
+ import traceback
++from collections.abc import Mapping
+ from typing import Generator
+ from typing import Optional
+ from typing import Tuple
+@@ -81,6 +275,7 @@ def pytest_configure(config: Config) -> None:
+     )
+ 
+ 
++@inspect_code
+ def evaluate_condition(item: Item, mark: Mark, condition: object) -> Tuple[bool, str]:
+     """Evaluate a single skipif/xfail condition.
+ 
+@@ -98,6 +293,16 @@ def evaluate_condition(item: Item, mark: Mark, condition: object) -> Tuple[bool,
+             "platform": platform,
+             "config": item.config,
+         }
++        for dictionary in reversed(
++            item.ihook.pytest_markeval_namespace(config=item.config)
++        ):
++            if not isinstance(dictionary, Mapping):
++                raise ValueError(
++                    "pytest_markeval_namespace() needs to return a dict, got {!r}".format(
++                        dictionary
++                    )
++                )
++            globals_.update(dictionary)
+         if hasattr(item, "obj"):
+             globals_.update(item.obj.__globals__)  # type: ignore[attr-defined]
+         try:
+diff --git a/testing/test_skipping.py b/testing/test_skipping.py
+index cfc0cdb..fc66eb1 100644
+--- a/testing/test_skipping.py
++++ b/testing/test_skipping.py
+@@ -1,4 +1,5 @@
+ import sys
++import textwrap
+ 
+ import pytest
+ from _pytest.pytester import Pytester
+@@ -155,6 +156,136 @@ class TestEvaluation:
+         assert skipped
+         assert skipped.reason == "condition: config._hackxyz"
+ 
++    def test_skipif_markeval_namespace(self, pytester: Pytester) -> None:
++        pytester.makeconftest(
++            """
++            import pytest
++
++            def pytest_markeval_namespace():
++                return {"color": "green"}
++            """
++        )
++        p = pytester.makepyfile(
++            """
++            import pytest
++
++            @pytest.mark.skipif("color == 'green'")
++            def test_1():
++                assert True
++
++            @pytest.mark.skipif("color == 'red'")
++            def test_2():
++                assert True
++        """
++        )
++        res = pytester.runpytest(p)
++        assert res.ret == 0
++        res.stdout.fnmatch_lines(["*1 skipped*"])
++        res.stdout.fnmatch_lines(["*1 passed*"])
++
++    def test_skipif_markeval_namespace_multiple(self, pytester: Pytester) -> None:
++        """Keys defined by ``pytest_markeval_namespace()`` in nested plugins override top-level ones."""
++        root = pytester.mkdir("root")
++        root.joinpath("__init__.py").touch()
++        root.joinpath("conftest.py").write_text(
++            textwrap.dedent(
++                """\
++            import pytest
++
++            def pytest_markeval_namespace():
++                return {"arg": "root"}
++            """
++            )
++        )
++        root.joinpath("test_root.py").write_text(
++            textwrap.dedent(
++                """\
++            import pytest
++
++            @pytest.mark.skipif("arg == 'root'")
++            def test_root():
++                assert False
++            """
++            )
++        )
++        foo = root.joinpath("foo")
++        foo.mkdir()
++        foo.joinpath("__init__.py").touch()
++        foo.joinpath("conftest.py").write_text(
++            textwrap.dedent(
++                """\
++            import pytest
++
++            def pytest_markeval_namespace():
++                return {"arg": "foo"}
++            """
++            )
++        )
++        foo.joinpath("test_foo.py").write_text(
++            textwrap.dedent(
++                """\
++            import pytest
++
++            @pytest.mark.skipif("arg == 'foo'")
++            def test_foo():
++                assert False
++            """
++            )
++        )
++        bar = root.joinpath("bar")
++        bar.mkdir()
++        bar.joinpath("__init__.py").touch()
++        bar.joinpath("conftest.py").write_text(
++            textwrap.dedent(
++                """\
++            import pytest
++
++            def pytest_markeval_namespace():
++                return {"arg": "bar"}
++            """
++            )
++        )
++        bar.joinpath("test_bar.py").write_text(
++            textwrap.dedent(
++                """\
++            import pytest
++
++            @pytest.mark.skipif("arg == 'bar'")
++            def test_bar():
++                assert False
++            """
++            )
++        )
++
++        reprec = pytester.inline_run("-vs", "--capture=no")
++        reprec.assertoutcome(skipped=3)
++
++    def test_skipif_markeval_namespace_ValueError(self, pytester: Pytester) -> None:
++        pytester.makeconftest(
++            """
++            import pytest
++
++            def pytest_markeval_namespace():
++                return True
++            """
++        )
++        p = pytester.makepyfile(
++            """
++            import pytest
++
++            @pytest.mark.skipif("color == 'green'")
++            def test_1():
++                assert True
++        """
++        )
++        res = pytester.runpytest(p)
++        assert res.ret == 1
++        res.stdout.fnmatch_lines(
++            [
++                "*ValueError: pytest_markeval_namespace() needs to return a dict, got True*"
++            ]
++        )
++
+ 
+ class TestXFail:
+     @pytest.mark.parametrize("strict", [True, False])
+@@ -577,6 +708,33 @@ class TestXFail:
+         result.stdout.fnmatch_lines(["*1 failed*" if strict else "*1 xpassed*"])
+         assert result.ret == (1 if strict else 0)
+ 
++    def test_xfail_markeval_namespace(self, pytester: Pytester) -> None:
++        pytester.makeconftest(
++            """
++            import pytest
++
++            def pytest_markeval_namespace():
++                return {"color": "green"}
++            """
++        )
++        p = pytester.makepyfile(
++            """
++            import pytest
++
++            @pytest.mark.xfail("color == 'green'")
++            def test_1():
++                assert False
++
++            @pytest.mark.xfail("color == 'red'")
++            def test_2():
++                assert False
++        """
++        )
++        res = pytester.runpytest(p)
++        assert res.ret == 1
++        res.stdout.fnmatch_lines(["*1 failed*"])
++        res.stdout.fnmatch_lines(["*1 xfailed*"])
++
+ 
+ class TestXFailwithSetupTeardown:
+     def test_failing_setup_issue9(self, pytester: Pytester) -> None:

@@ -1,0 +1,588 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. You only need to predict input variable values, and print input between [INPUT] and [\INPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT]. 
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+from typing import Tuple as tTuple
+from sympy.core.logic import FuzzyBool
+from functools import wraps, reduce
+import collections
+from sympy.core import S, Symbol, Integer, Basic, Expr, Mul, Add
+from sympy.core.decorators import call_highest_priority
+from sympy.core.compatibility import SYMPY_INTS, default_sort_key
+from sympy.core.symbol import Str
+from sympy.core.sympify import SympifyError, _sympify
+from sympy.functions import conjugate, adjoint
+from sympy.functions.special.tensor_functions import KroneckerDelta
+from sympy.matrices.common import NonSquareMatrixError
+from sympy.simplify import simplify
+from sympy.matrices.matrices import MatrixKind
+from sympy.utilities.misc import filldedent
+from sympy.multipledispatch import dispatch
+from .matmul import MatMul
+from .matadd import MatAdd
+from .matpow import MatPow
+from .transpose import Transpose
+from .inverse import Inverse
+from .special import ZeroMatrix, Identity
+from sympy.tensor.array.array_derivatives import ArrayDerivative
+from sympy.tensor.array.expressions.conv_array_to_matrix import convert_array_to_matrix
+from sympy import ImmutableDenseMatrix
+from sympy.matrices.expressions.adjoint import Adjoint
+from sympy.matrices.expressions.transpose import Transpose
+from sympy import I
+from sympy.matrices.expressions.inverse import Inverse
+from sympy.matrices.expressions.adjoint import Adjoint
+from sympy.core.assumptions import check_assumptions
+from sympy.matrices.expressions.transpose import transpose
+from sympy.matrices.immutable import ImmutableDenseMatrix
+from numpy import empty
+from sympy import Sum, Mul, Add, MatMul, transpose, trace
+from sympy.strategies.traverse import bottom_up
+from .applyfunc import ElementwiseApplyFunction
+from sympy import MatrixBase
+from sympy import Sum, symbols, Dummy
+from sympy.core.expr import ExprBuilder
+from sympy.core.expr import ExprBuilder
+from ...tensor.array.expressions.array_expressions import ArrayTensorProduct
+from ...tensor.array.expressions.array_expressions import ArrayContraction
+from sympy.matrices.expressions.slice import MatrixSlice
+from sympy import MatrixBase
+from sympy.matrices.expressions.slice import MatrixSlice
+Basic._constructor_postprocessor_mapping[MatrixExpr] = {'Mul': [get_postprocessor(Mul)], 'Add': [get_postprocessor(Add)]}
+
+def _matrix_derivative(expr, x):
+    from sympy.tensor.array.array_derivatives import ArrayDerivative
+    lines = expr._eval_derivative_matrix_lines(x)
+    parts = [i.build() for i in lines]
+    from sympy.tensor.array.expressions.conv_array_to_matrix import convert_array_to_matrix
+    parts = [[convert_array_to_matrix(j) for j in i] for i in parts]
+
+    def _get_shape(elem):
+        if isinstance(elem, MatrixExpr):
+            return elem.shape
+        return (1, 1)
+
+    def get_rank(parts):
+        return sum([j not in (1, None) for i in parts for j in _get_shape(i)])
+    ranks = [get_rank(i) for i in parts]
+    rank = ranks[0]
+
+    def contract_one_dims(parts):
+        if len(parts) == 1:
+            return parts[0]
+        else:
+            p1, p2 = parts[:2]
+            if p2.is_Matrix:
+                p2 = p2.T
+            if p1 == Identity(1):
+                pbase = p2
+            elif p2 == Identity(1):
+                pbase = p1
+            else:
+                pbase = p1 * p2
+            if len(parts) == 2:
+                return pbase
+            else:
+                if pbase.is_Matrix:
+                    raise ValueError('')
+                return pbase * Mul.fromiter(parts[2:])
+    if rank <= 2:
+        return Add.fromiter([contract_one_dims(i) for i in parts])
+    return ArrayDerivative(expr, x)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.core.expr.Expr._eval_derivative_matrix_lines
+
+def _eval_derivative_matrix_lines(self, x):
+    from sympy.matrices.expressions.matexpr import _LeftRightArgs
+    return [_LeftRightArgs([S.One, S.One], higher=self._eval_derivative(x))]
+
+.sympy.matrices.matrices.MatrixCalculus._eval_derivative
+
+def _eval_derivative(self, arg):
+    return self.applyfunc(lambda x: x.diff(arg))
+
+.sympy.matrices.common.MatrixOperations.applyfunc
+
+def applyfunc(self, f):
+    if not callable(f):
+        raise TypeError('`f` must be callable.')
+    return self._eval_applyfunc(f)
+
+.sympy.matrices.common.MatrixOperations._eval_applyfunc
+
+def _eval_applyfunc(self, f):
+    out = self._new(self.rows, self.cols, [f(x) for x in self])
+    return out
+
+.sympy.matrices.immutable.ImmutableDenseMatrix.rows
+
+def rows(self):
+    return self._rows
+
+.sympy.matrices.immutable.ImmutableDenseMatrix.cols
+
+def cols(self):
+    return self._cols
+
+.sympy.matrices.dense.DenseMatrix.__getitem__
+
+def __getitem__(self, key):
+    if isinstance(key, tuple):
+        i, j = key
+        try:
+            i, j = self.key2ij(key)
+            return self._mat[i * self.cols + j]
+        except (TypeError, IndexError):
+            if isinstance(i, Expr) and (not i.is_number) or (isinstance(j, Expr) and (not j.is_number)):
+                if (j < 0) is True or (j >= self.shape[1]) is True or (i < 0) is True or ((i >= self.shape[0]) is True):
+                    raise ValueError('index out of boundary')
+                from sympy.matrices.expressions.matexpr import MatrixElement
+                return MatrixElement(self, i, j)
+            if isinstance(i, slice):
+                i = range(self.rows)[i]
+            elif is_sequence(i):
+                pass
+            else:
+                i = [i]
+            if isinstance(j, slice):
+                j = range(self.cols)[j]
+            elif is_sequence(j):
+                pass
+            else:
+                j = [j]
+            return self.extract(i, j)
+    else:
+        if isinstance(key, slice):
+            return self._mat[key]
+        return self._mat[a2idx(key)]
+
+.sympy.matrices.common.a2idx
+
+def a2idx(j, n=None):
+    if type(j) is not int:
+        jindex = getattr(j, '__index__', None)
+        if jindex is not None:
+            j = jindex()
+        else:
+            raise IndexError('Invalid index a[%r]' % (j,))
+    if n is not None:
+        if j < 0:
+            j += n
+        if not (j >= 0 and j < n):
+            raise IndexError('Index out of range: a[%s]' % (j,))
+    return int(j)
+
+.sympy.core.expr.Expr.diff
+
+def diff(self, *symbols, **assumptions):
+    assumptions.setdefault('evaluate', True)
+    return _derivative_dispatch(self, *symbols, **assumptions)
+
+.sympy.core.function._derivative_dispatch
+
+def _derivative_dispatch(expr, *variables, **kwargs):
+    from sympy.matrices.common import MatrixCommon
+    from sympy import MatrixExpr
+    from sympy import NDimArray
+    array_types = (MatrixCommon, MatrixExpr, NDimArray, list, tuple, Tuple)
+    if isinstance(expr, array_types) or any((isinstance(i[0], array_types) if isinstance(i, (tuple, list, Tuple)) else isinstance(i, array_types) for i in variables)):
+        from sympy.tensor.array.array_derivatives import ArrayDerivative
+        return ArrayDerivative(expr, *variables, **kwargs)
+    return Derivative(expr, *variables, **kwargs)
+
+.sympy.core.function.Derivative.__new__
+
+def __new__(cls, expr, *variables, **kwargs):
+    from sympy.matrices.common import MatrixCommon
+    from sympy import Integer, MatrixExpr
+    from sympy.tensor.array import Array, NDimArray
+    from sympy.utilities.misc import filldedent
+    expr = sympify(expr)
+    symbols_or_none = getattr(expr, 'free_symbols', None)
+    has_symbol_set = isinstance(symbols_or_none, set)
+    if not has_symbol_set:
+        raise ValueError(filldedent('\n            Since there are no variables in the expression %s,\n            it cannot be differentiated.' % expr))
+    if not variables:
+        variables = expr.free_symbols
+        if len(variables) != 1:
+            if expr.is_number:
+                return S.Zero
+            if len(variables) == 0:
+                raise ValueError(filldedent('\n                    Since there are no variables in the expression,\n                    the variable(s) of differentiation must be supplied\n                    to differentiate %s' % expr))
+            else:
+                raise ValueError(filldedent('\n                    Since there is more than one variable in the\n                    expression, the variable(s) of differentiation\n                    must be supplied to differentiate %s' % expr))
+    variables = list(sympify(variables))
+    variable_count = []
+    array_likes = (tuple, list, Tuple)
+    for i, v in enumerate(variables):
+        if isinstance(v, Integer):
+            if i == 0:
+                raise ValueError('First variable cannot be a number: %i' % v)
+            count = v
+            prev, prevcount = variable_count[-1]
+            if prevcount != 1:
+                raise TypeError('tuple {} followed by number {}'.format((prev, prevcount), v))
+            if count == 0:
+                variable_count.pop()
+            else:
+                variable_count[-1] = Tuple(prev, count)
+        else:
+            if isinstance(v, array_likes):
+                if len(v) == 0:
+                    continue
+                if isinstance(v[0], array_likes):
+                    if len(v) == 1:
+                        v = Array(v[0])
+                        count = 1
+                    else:
+                        v, count = v
+                        v = Array(v)
+                else:
+                    v, count = v
+                if count == 0:
+                    continue
+            elif isinstance(v, UndefinedFunction):
+                raise TypeError('cannot differentiate wrt UndefinedFunction: %s' % v)
+            else:
+                count = 1
+            variable_count.append(Tuple(v, count))
+    merged = []
+    for t in variable_count:
+        v, c = t
+        if c.is_negative:
+            raise ValueError('order of differentiation must be nonnegative')
+        if merged and merged[-1][0] == v:
+            c += merged[-1][1]
+            if not c:
+                merged.pop()
+            else:
+                merged[-1] = Tuple(v, c)
+        else:
+            merged.append(t)
+    variable_count = merged
+    for v, c in variable_count:
+        if not v._diff_wrt:
+            __ = ''
+            raise ValueError(filldedent("\n                Can't calculate derivative wrt %s.%s" % (v, __)))
+    if len(variable_count) == 0:
+        return expr
+    evaluate = kwargs.get('evaluate', False)
+    if evaluate:
+        if isinstance(expr, Derivative):
+            expr = expr.canonical
+        variable_count = [(v.canonical if isinstance(v, Derivative) else v, c) for v, c in variable_count]
+        zero = False
+        free = expr.free_symbols
+        for v, c in variable_count:
+            vfree = v.free_symbols
+            if c.is_positive and vfree:
+                if isinstance(v, AppliedUndef):
+                    D = Dummy()
+                    if not expr.xreplace({v: D}).has(D):
+                        zero = True
+                        break
+                elif isinstance(v, MatrixExpr):
+                    zero = False
+                    break
+                elif isinstance(v, Symbol) and v not in free:
+                    zero = True
+                    break
+                elif not free & vfree:
+                    zero = True
+                    break
+        if zero:
+            return cls._get_zero_with_shape_like(expr)
+        variable_count = cls._sort_variable_count(variable_count)
+    if isinstance(expr, Derivative):
+        variable_count = list(expr.variable_count) + variable_count
+        expr = expr.expr
+        return _derivative_dispatch(expr, *variable_count, **kwargs)
+    if not evaluate or not hasattr(expr, '_eval_derivative'):
+        if evaluate and variable_count == [(expr, 1)] and expr.is_scalar:
+            return S.One
+        return Expr.__new__(cls, expr, *variable_count)
+    nderivs = 0
+    unhandled = []
+    for i, (v, count) in enumerate(variable_count):
+        old_expr = expr
+        old_v = None
+        is_symbol = v.is_symbol or isinstance(v, (Iterable, Tuple, MatrixCommon, NDimArray))
+        if not is_symbol:
+            old_v = v
+            v = Dummy('xi')
+            expr = expr.xreplace({old_v: v})
+            clashing = not (isinstance(old_v, Derivative) or isinstance(old_v, AppliedUndef))
+            if not v in expr.free_symbols and (not clashing):
+                return expr.diff(v)
+            if not old_v.is_scalar and (not hasattr(old_v, '_eval_derivative')):
+                expr *= old_v.diff(old_v)
+        obj = cls._dispatch_eval_derivative_n_times(expr, v, count)
+        if obj is not None and obj.is_zero:
+            return obj
+        nderivs += count
+        if old_v is not None:
+            if obj is not None:
+                obj = obj.subs(v, old_v)
+            expr = old_expr
+        if obj is None:
+            unhandled = variable_count[i:]
+            break
+        expr = obj
+    expr = expr.replace(lambda x: isinstance(x, Derivative), lambda x: x.canonical)
+    if unhandled:
+        if isinstance(expr, Derivative):
+            unhandled = list(expr.variable_count) + unhandled
+            expr = expr.expr
+        expr = Expr.__new__(cls, expr, *unhandled)
+    if (nderivs > 1) == True and kwargs.get('simplify', True):
+        from sympy.core.exprtools import factor_terms
+        from sympy.simplify.simplify import signsimp
+        expr = factor_terms(signsimp(expr))
+    return expr
+
+.sympy.core.sympify.sympify
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    is_sympy = getattr(a, '__sympy__', None)
+    if is_sympy is True:
+        return a
+    elif is_sympy is not None:
+        if not strict:
+            return a
+        else:
+            raise SympifyError(a)
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    cls = getattr(a, '__class__', None)
+    if cls is None:
+        cls = type(a)
+    conv = converter.get(cls, None)
+    if conv is not None:
+        return conv(a)
+    for superclass in getmro(cls):
+        try:
+            return converter[superclass](a)
+        except KeyError:
+            continue
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if evaluate is None:
+        evaluate = global_parameters.evaluate
+    if _is_numpy_instance(a):
+        import numpy as np
+        if np.isscalar(a):
+            return _convert_numpy_types(a, locals=locals, convert_xor=convert_xor, strict=strict, rational=rational, evaluate=evaluate)
+    _sympy_ = getattr(a, '_sympy_', None)
+    if _sympy_ is not None:
+        try:
+            return a._sympy_()
+        except AttributeError:
+            pass
+    if not strict:
+        flat = getattr(a, 'flat', None)
+        if flat is not None:
+            shape = getattr(a, 'shape', None)
+            if shape is not None:
+                from ..tensor.array import Array
+                return Array(a.flat, a.shape)
+    if not isinstance(a, str):
+        if _is_numpy_instance(a):
+            import numpy as np
+            assert not isinstance(a, np.number)
+            if isinstance(a, np.ndarray):
+                if a.ndim == 0:
+                    try:
+                        return sympify(a.item(), locals=locals, convert_xor=convert_xor, strict=strict, rational=rational, evaluate=evaluate)
+                    except SympifyError:
+                        pass
+        else:
+            for coerce in (float, int):
+                try:
+                    return sympify(coerce(a))
+                except (TypeError, ValueError, AttributeError, SympifyError):
+                    continue
+    if strict:
+        raise SympifyError(a)
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    if not isinstance(a, str):
+        try:
+            a = str(a)
+        except Exception as exc:
+            raise SympifyError(a, exc)
+        from sympy.utilities.exceptions import SymPyDeprecationWarning
+        SymPyDeprecationWarning(feature='String fallback in sympify', useinstead='sympify(str(obj)) or ' + 'sympy.core.sympify.converter or obj._sympy_', issue=18066, deprecated_since_version='1.6').warn()
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+.sympy.core.symbol.Symbol.free_symbols
+
+def free_symbols(self):
+    return {self}
+
+.sympy.core.expr.Expr.__hash__
+
+def __hash__(self) -> int:
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+.sympy.core.containers.Tuple.__new__
+
+def __new__(cls, *args, **kwargs):
+    if kwargs.get('sympify', True):
+        args = (sympify(arg) for arg in args)
+    obj = Basic.__new__(cls, *args)
+    return obj
+
+
+[/PYTHON]
+What will be the input of `_matrix_derivative`, given the following input:
+[OUTPUT]
+```
+{
+    "_rows": 2,
+    "_cols": 2,
+    "_mat": null
+}
+```
+[/OUTPUT]
+
+[THOUGHT]

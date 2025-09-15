@@ -1,0 +1,481 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import copy
+import datetime
+import re
+import warnings
+from collections import defaultdict
+from itertools import chain
+from django.conf import settings
+from django.forms.utils import to_current_timezone
+from django.templatetags.static import static
+from django.utils import datetime_safe, formats
+from django.utils.datastructures import OrderedSet
+from django.utils.dates import MONTHS
+from django.utils.formats import get_format
+from django.utils.html import format_html, html_safe
+from django.utils.safestring import mark_safe
+from django.utils.topological_sort import CyclicDependencyError, stable_topological_sort
+from django.utils.translation import gettext_lazy as _
+from .renderers import get_default_renderer
+__all__ = ('Media', 'MediaDefiningClass', 'Widget', 'TextInput', 'NumberInput', 'EmailInput', 'URLInput', 'PasswordInput', 'HiddenInput', 'MultipleHiddenInput', 'FileInput', 'ClearableFileInput', 'Textarea', 'DateInput', 'DateTimeInput', 'TimeInput', 'CheckboxInput', 'Select', 'NullBooleanSelect', 'SelectMultiple', 'RadioSelect', 'CheckboxSelectMultiple', 'MultiWidget', 'SplitDateTimeWidget', 'SplitHiddenDateTimeWidget', 'SelectDateWidget')
+MEDIA_TYPES = ('css', 'js')
+FILE_INPUT_CONTRADICTION = object()
+
+class SelectDateWidget(Widget):
+    none_value = ('', '---')
+    month_field = '%s_month'
+    day_field = '%s_day'
+    year_field = '%s_year'
+    template_name = 'django/forms/widgets/select_date.html'
+    input_type = 'select'
+    select_widget = Select
+    date_re = re.compile('(\\d{4}|0)-(\\d\\d?)-(\\d\\d?)$')
+
+    def get_context(self, name, value, attrs):
+        context = super().get_context(name, value, attrs)
+        date_context = {}
+        year_choices = [(i, str(i)) for i in self.years]
+        if not self.is_required:
+            year_choices.insert(0, self.year_none_value)
+        year_name = self.year_field % name
+        date_context['year'] = self.select_widget(attrs, choices=year_choices).get_context(name=year_name, value=context['widget']['value']['year'], attrs={**context['widget']['attrs'], 'id': 'id_%s' % year_name, 'placeholder': _('Year') if self.is_required else False})
+        month_choices = list(self.months.items())
+        if not self.is_required:
+            month_choices.insert(0, self.month_none_value)
+        month_name = self.month_field % name
+        date_context['month'] = self.select_widget(attrs, choices=month_choices).get_context(name=month_name, value=context['widget']['value']['month'], attrs={**context['widget']['attrs'], 'id': 'id_%s' % month_name, 'placeholder': _('Month') if self.is_required else False})
+        day_choices = [(i, i) for i in range(1, 32)]
+        if not self.is_required:
+            day_choices.insert(0, self.day_none_value)
+        day_name = self.day_field % name
+        date_context['day'] = self.select_widget(attrs, choices=day_choices).get_context(name=day_name, value=context['widget']['value']['day'], attrs={**context['widget']['attrs'], 'id': 'id_%s' % day_name, 'placeholder': _('Day') if self.is_required else False})
+        subwidgets = []
+        for field in self._parse_date_fmt():
+            subwidgets.append(date_context[field]['widget'])
+        context['widget']['subwidgets'] = subwidgets
+        return context
+
+    def format_value(self, value):
+        year, month, day = (None, None, None)
+        if isinstance(value, (datetime.date, datetime.datetime)):
+            year, month, day = (value.year, value.month, value.day)
+        elif isinstance(value, str):
+            match = self.date_re.match(value)
+            if match:
+                year, month, day = [int(val) or '' for val in match.groups()]
+            elif settings.USE_L10N:
+                input_format = get_format('DATE_INPUT_FORMATS')[0]
+                try:
+                    d = datetime.datetime.strptime(value, input_format)
+                except ValueError:
+                    pass
+                else:
+                    year, month, day = (d.year, d.month, d.day)
+        return {'year': year, 'month': month, 'day': day}
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.django.forms.widgets.Widget.get_context
+
+def get_context(self, name, value, attrs):
+    context = {}
+    context['widget'] = {'name': name, 'is_hidden': self.is_hidden, 'required': self.is_required, 'value': self.format_value(value), 'attrs': self.build_attrs(self.attrs, attrs), 'template_name': self.template_name}
+    return context
+
+.django.forms.widgets.Widget.is_hidden
+
+def is_hidden(self):
+    return self.input_type == 'hidden' if hasattr(self, 'input_type') else False
+
+.django.conf.__init__.LazySettings.__getattr__
+
+def __getattr__(self, name):
+    if self._wrapped is empty:
+        self._setup(name)
+    val = getattr(self._wrapped, name)
+    self.__dict__[name] = val
+    return val
+
+.django.forms.widgets.Widget.build_attrs
+
+def build_attrs(self, base_attrs, extra_attrs=None):
+    return {**base_attrs, **(extra_attrs or {})}
+
+.django.utils.formats.get_format
+
+def get_format(format_type, lang=None, use_l10n=None):
+    use_l10n = use_l10n or (use_l10n is None and settings.USE_L10N)
+    if use_l10n and lang is None:
+        lang = get_language()
+    cache_key = (format_type, lang)
+    try:
+        return _format_cache[cache_key]
+    except KeyError:
+        pass
+    val = None
+    if use_l10n:
+        for module in get_format_modules(lang):
+            val = getattr(module, format_type, None)
+            if val is not None:
+                break
+    if val is None:
+        if format_type not in FORMAT_SETTINGS:
+            return format_type
+        val = getattr(settings, format_type)
+    elif format_type in ISO_INPUT_FORMATS:
+        val = list(val)
+        for iso_input in ISO_INPUT_FORMATS.get(format_type, ()):
+            if iso_input not in val:
+                val.append(iso_input)
+    _format_cache[cache_key] = val
+    return val
+
+.django.utils.translation.__init__.get_language
+
+def get_language():
+    return _trans.get_language()
+
+.django.utils.translation.trans_real.get_language
+
+def get_language():
+    t = getattr(_active, 'value', None)
+    if t is not None:
+        try:
+            return t.to_language()
+        except AttributeError:
+            pass
+    return settings.LANGUAGE_CODE
+
+.django.utils.translation.trans_real.DjangoTranslation.to_language
+
+def to_language(self):
+    return self.__to_language
+
+.django.utils.formats.get_format_modules
+
+def get_format_modules(lang=None, reverse=False):
+    if lang is None:
+        lang = get_language()
+    if lang not in _format_modules_cache:
+        _format_modules_cache[lang] = list(iter_format_modules(lang, settings.FORMAT_MODULE_PATH))
+    modules = _format_modules_cache[lang]
+    if reverse:
+        return list(reversed(modules))
+    return modules
+
+.django.conf.__init__.UserSettingsHolder.__getattr__
+
+def __getattr__(self, name):
+    if not name.isupper() or name in self._deleted:
+        raise AttributeError
+    return getattr(self.default_settings, name)
+
+.django.utils.formats.iter_format_modules
+
+def iter_format_modules(lang, format_module_path=None):
+    if not check_for_language(lang):
+        return
+    if format_module_path is None:
+        format_module_path = settings.FORMAT_MODULE_PATH
+    format_locations = []
+    if format_module_path:
+        if isinstance(format_module_path, str):
+            format_module_path = [format_module_path]
+        for path in format_module_path:
+            format_locations.append(path + '.%s')
+    format_locations.append('django.conf.locale.%s')
+    locale = to_locale(lang)
+    locales = [locale]
+    if '_' in locale:
+        locales.append(locale.split('_')[0])
+    for location in format_locations:
+        for loc in locales:
+            try:
+                yield import_module('%s.formats' % (location % loc))
+            except ImportError:
+                pass
+
+.django.utils.translation.__init__.check_for_language
+
+def check_for_language(lang_code):
+    return _trans.check_for_language(lang_code)
+
+.django.utils.translation.trans_real.check_for_language
+
+def check_for_language(lang_code):
+    if lang_code is None or not language_code_re.search(lang_code):
+        return False
+    return any((gettext_module.find('django', path, [to_locale(lang_code)]) is not None for path in all_locale_paths()))
+
+.django.utils.translation.trans_real.all_locale_paths
+
+def all_locale_paths():
+    globalpath = os.path.join(os.path.dirname(sys.modules[settings.__module__].__file__), 'locale')
+    app_paths = []
+    for app_config in apps.get_app_configs():
+        locale_path = os.path.join(app_config.path, 'locale')
+        if os.path.exists(locale_path):
+            app_paths.append(locale_path)
+    return [globalpath, *settings.LOCALE_PATHS, *app_paths]
+
+.django.apps.registry.Apps.get_app_configs
+
+def get_app_configs(self):
+    self.check_apps_ready()
+    return self.app_configs.values()
+
+
+[/PYTHON]
+What will be the output of `get_context`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "attrs": {},
+        "years": [
+            2007
+        ],
+        "months": {
+            "1": {
+                "_proxy____args": [
+                    "January"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "2": {
+                "_proxy____args": [
+                    "February"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "3": {
+                "_proxy____args": [
+                    "March"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "4": {
+                "_proxy____args": [
+                    "April"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "5": {
+                "_proxy____args": [
+                    "May"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "6": {
+                "_proxy____args": [
+                    "June"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "7": {
+                "_proxy____args": [
+                    "July"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "8": {
+                "_proxy____args": [
+                    "August"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "9": {
+                "_proxy____args": [
+                    "September"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "10": {
+                "_proxy____args": [
+                    "October"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "11": {
+                "_proxy____args": [
+                    "November"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            },
+            "12": {
+                "_proxy____args": [
+                    "December"
+                ],
+                "_proxy____kw": {},
+                "_proxy____prepared": true
+            }
+        },
+        "year_none_value": [
+            "",
+            "---"
+        ],
+        "month_none_value": [
+            "",
+            "---"
+        ],
+        "day_none_value": [
+            "",
+            "---"
+        ]
+    },
+    "args": {
+        "name": "mydate",
+        "value": "",
+        "attrs": null
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "widget": {
+        "name": XXX,
+        "is_hidden": XXX,
+        "required": XXX,
+        "value": {
+            "year": XXX,
+            "month": XXX,
+            "day": XXX
+        },
+        "attrs": {},
+        "template_name": XXX,
+        "subwidgets": XXX
+    }
+}
+```
+[/STRUCTURE]

@@ -1,0 +1,609 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 1623263..adc6afa 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-13170/django/db/models/sql/query.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Create SQL statements for QuerySets.
+ 
+@@ -1419,16 +1612,33 @@ class Query(BaseExpression):
+     def add_filtered_relation(self, filtered_relation, alias):
+         filtered_relation.alias = alias
+         lookups = dict(get_children_from_q(filtered_relation.condition))
+-        for lookup in chain((filtered_relation.relation_name,), lookups):
+-            lookup_parts, field_parts, _ = self.solve_lookup_type(lookup)
++        relation_lookup_parts, relation_field_parts, _ = self.solve_lookup_type(filtered_relation.relation_name)
++        if relation_lookup_parts:
++            raise ValueError(
++                "FilteredRelation's relation_name cannot contain lookups "
++                "(got %r)." % filtered_relation.relation_name
++            )
++        for lookup in chain(lookups):
++            lookup_parts, lookup_field_parts, _ = self.solve_lookup_type(lookup)
+             shift = 2 if not lookup_parts else 1
+-            if len(field_parts) > (shift + len(lookup_parts)):
+-                raise ValueError(
+-                    "FilteredRelation's condition doesn't support nested "
+-                    "relations (got %r)." % lookup
+-                )
++            lookup_field_path = lookup_field_parts[:-shift]
++            for idx, lookup_field_part in enumerate(lookup_field_path):
++                if len(relation_field_parts) > idx:
++                    if relation_field_parts[idx] != lookup_field_part:
++                        raise ValueError(
++                            "FilteredRelation's condition doesn't support "
++                            "relations outside the %r (got %r)."
++                            % (filtered_relation.relation_name, lookup)
++                        )
++                else:
++                    raise ValueError(
++                        "FilteredRelation's condition doesn't support nested "
++                        "relations deeper than the relation_name (got %r for "
++                        "%r)." % (lookup, filtered_relation.relation_name)
++                    )
+         self._filtered_relations[filtered_relation.alias] = filtered_relation
+ 
++    @inspect_code
+     def names_to_path(self, names, opts, allow_many=True, fail_on_missing=False):
+         """
+         Walk the list of names and turns them into PathInfo tuples. A single
+@@ -1459,7 +1669,14 @@ class Query(BaseExpression):
+                     field = self.annotation_select[name].output_field
+                 elif name in self._filtered_relations and pos == 0:
+                     filtered_relation = self._filtered_relations[name]
+-                    field = opts.get_field(filtered_relation.relation_name)
++                    if LOOKUP_SEP in filtered_relation.relation_name:
++                        parts = filtered_relation.relation_name.split(LOOKUP_SEP)
++                        filtered_relation_path, field, _, _ = self.names_to_path(
++                            parts, opts, allow_many, fail_on_missing,
++                        )
++                        path.extend(filtered_relation_path[:-1])
++                    else:
++                        field = opts.get_field(filtered_relation.relation_name)
+             if field is not None:
+                 # Fields that contain one-to-many relations with a generic
+                 # model (like a GenericForeignKey) cannot generate reverse
+diff --git a/tests/filtered_relation/models.py b/tests/filtered_relation/models.py
+index 60b3678..c7efa4c 100644
+--- a/tests/filtered_relation/models.py
++++ b/tests/filtered_relation/models.py
+@@ -88,3 +88,34 @@ class RentalSession(models.Model):
+         related_query_name='rental_session',
+     )
+     state = models.CharField(max_length=7, choices=STATES, default=NEW)
++
++
++class Seller(models.Model):
++    name = models.CharField(max_length=255)
++
++
++class Currency(models.Model):
++    currency = models.CharField(max_length=3)
++
++
++class ExchangeRate(models.Model):
++    rate_date = models.DateField()
++    from_currency = models.ForeignKey(
++        Currency,
++        models.CASCADE,
++        related_name='rates_from',
++    )
++    to_currency = models.ForeignKey(
++        Currency,
++        models.CASCADE,
++        related_name='rates_to',
++    )
++    rate = models.DecimalField(max_digits=6, decimal_places=4)
++
++
++class BookDailySales(models.Model):
++    book = models.ForeignKey(Book, models.CASCADE, related_name='daily_sales')
++    sale_date = models.DateField()
++    currency = models.ForeignKey(Currency, models.CASCADE)
++    seller = models.ForeignKey(Seller, models.CASCADE)
++    sales = models.DecimalField(max_digits=10, decimal_places=2)
+diff --git a/tests/filtered_relation/tests.py b/tests/filtered_relation/tests.py
+index 05869a2..5ab273a 100644
+--- a/tests/filtered_relation/tests.py
++++ b/tests/filtered_relation/tests.py
+@@ -1,11 +1,18 @@
++from datetime import date
++from decimal import Decimal
+ from unittest import mock
+ 
+ from django.db import connection, transaction
+-from django.db.models import Case, Count, F, FilteredRelation, Q, When
++from django.db.models import (
++    Case, Count, DecimalField, F, FilteredRelation, Q, Sum, When,
++)
+ from django.test import TestCase
+ from django.test.testcases import skipUnlessDBFeature
+ 
+-from .models import Author, Book, Borrower, Editor, RentalSession, Reservation
++from .models import (
++    Author, Book, BookDailySales, Borrower, Currency, Editor, ExchangeRate,
++    RentalSession, Reservation, Seller,
++)
+ 
+ 
+ class FilteredRelationTests(TestCase):
+@@ -279,28 +286,148 @@ class FilteredRelationTests(TestCase):
+         qs = Author.objects.filter(id__in=inner_qs)
+         self.assertSequenceEqual(qs, [self.author1])
+ 
+-    def test_with_foreign_key_error(self):
++    def test_nested_foreign_key(self):
++        qs = Author.objects.annotate(
++            book_editor_worked_with=FilteredRelation(
++                'book__editor',
++                condition=Q(book__title__icontains='book by'),
++            ),
++        ).filter(
++            book_editor_worked_with__isnull=False,
++        ).select_related(
++            'book_editor_worked_with',
++        ).order_by('pk', 'book_editor_worked_with__pk')
++        with self.assertNumQueries(1):
++            self.assertQuerysetEqual(qs, [
++                (self.author1, self.editor_a),
++                (self.author2, self.editor_b),
++                (self.author2, self.editor_b),
++            ], lambda x: (x, x.book_editor_worked_with))
++
++    def test_nested_foreign_key_nested_field(self):
++        qs = Author.objects.annotate(
++            book_editor_worked_with=FilteredRelation(
++                'book__editor',
++                condition=Q(book__title__icontains='book by')
++            ),
++        ).filter(
++            book_editor_worked_with__isnull=False,
++        ).values(
++            'name', 'book_editor_worked_with__name',
++        ).order_by('name', 'book_editor_worked_with__name').distinct()
++        self.assertSequenceEqual(qs, [
++            {'name': self.author1.name, 'book_editor_worked_with__name': self.editor_a.name},
++            {'name': self.author2.name, 'book_editor_worked_with__name': self.editor_b.name},
++        ])
++
++    def test_nested_foreign_key_filtered_base_object(self):
++        qs = Author.objects.annotate(
++            alice_editors=FilteredRelation(
++                'book__editor',
++                condition=Q(name='Alice'),
++            ),
++        ).values(
++            'name', 'alice_editors__pk',
++        ).order_by('name', 'alice_editors__name').distinct()
++        self.assertSequenceEqual(qs, [
++            {'name': self.author1.name, 'alice_editors__pk': self.editor_a.pk},
++            {'name': self.author2.name, 'alice_editors__pk': None},
++        ])
++
++    def test_nested_m2m_filtered(self):
++        qs = Book.objects.annotate(
++            favorite_book=FilteredRelation(
++                'author__favorite_books',
++                condition=Q(author__favorite_books__title__icontains='book by')
++            ),
++        ).values(
++            'title', 'favorite_book__pk',
++        ).order_by('title', 'favorite_book__title')
++        self.assertSequenceEqual(qs, [
++            {'title': self.book1.title, 'favorite_book__pk': self.book2.pk},
++            {'title': self.book1.title, 'favorite_book__pk': self.book3.pk},
++            {'title': self.book4.title, 'favorite_book__pk': self.book2.pk},
++            {'title': self.book4.title, 'favorite_book__pk': self.book3.pk},
++            {'title': self.book2.title, 'favorite_book__pk': None},
++            {'title': self.book3.title, 'favorite_book__pk': None},
++        ])
++
++    def test_nested_chained_relations(self):
++        qs = Author.objects.annotate(
++            my_books=FilteredRelation(
++                'book', condition=Q(book__title__icontains='book by'),
++            ),
++            preferred_by_authors=FilteredRelation(
++                'my_books__preferred_by_authors',
++                condition=Q(my_books__preferred_by_authors__name='Alice'),
++            ),
++        ).annotate(
++            author=F('name'),
++            book_title=F('my_books__title'),
++            preferred_by_author_pk=F('preferred_by_authors'),
++        ).order_by('author', 'book_title', 'preferred_by_author_pk')
++        self.assertQuerysetEqual(qs, [
++            ('Alice', 'The book by Alice', None),
++            ('Jane', 'The book by Jane A', self.author1.pk),
++            ('Jane', 'The book by Jane B', self.author1.pk),
++        ], lambda x: (x.author, x.book_title, x.preferred_by_author_pk))
++
++    def test_deep_nested_foreign_key(self):
++        qs = Book.objects.annotate(
++            author_favorite_book_editor=FilteredRelation(
++                'author__favorite_books__editor',
++                condition=Q(author__favorite_books__title__icontains='Jane A'),
++            ),
++        ).filter(
++            author_favorite_book_editor__isnull=False,
++        ).select_related(
++            'author_favorite_book_editor',
++        ).order_by('pk', 'author_favorite_book_editor__pk')
++        with self.assertNumQueries(1):
++            self.assertQuerysetEqual(qs, [
++                (self.book1, self.editor_b),
++                (self.book4, self.editor_b),
++            ], lambda x: (x, x.author_favorite_book_editor))
++
++    def test_relation_name_lookup(self):
+         msg = (
+-            "FilteredRelation's condition doesn't support nested relations "
+-            "(got 'author__favorite_books__author')."
++            "FilteredRelation's relation_name cannot contain lookups (got "
++            "'book__title__icontains')."
+         )
+         with self.assertRaisesMessage(ValueError, msg):
+-            list(Book.objects.annotate(
+-                alice_favorite_books=FilteredRelation(
+-                    'author__favorite_books',
+-                    condition=Q(author__favorite_books__author=self.author1),
+-                )
+-            ))
++            Author.objects.annotate(
++                book_title=FilteredRelation(
++                    'book__title__icontains',
++                    condition=Q(book__title='Poem by Alice'),
++                ),
++            )
++
++    def test_condition_outside_relation_name(self):
++        msg = (
++            "FilteredRelation's condition doesn't support relations outside "
++            "the 'book__editor' (got 'book__author__name__icontains')."
++        )
++        with self.assertRaisesMessage(ValueError, msg):
++            Author.objects.annotate(
++                book_editor=FilteredRelation(
++                    'book__editor',
++                    condition=Q(book__author__name__icontains='book'),
++                ),
++            )
+ 
+-    def test_with_foreign_key_on_condition_error(self):
++    def test_condition_deeper_relation_name(self):
+         msg = (
+             "FilteredRelation's condition doesn't support nested relations "
+-            "(got 'book__editor__name__icontains')."
++            "deeper than the relation_name (got "
++            "'book__editor__name__icontains' for 'book')."
+         )
+         with self.assertRaisesMessage(ValueError, msg):
+-            list(Author.objects.annotate(
+-                book_edited_by_b=FilteredRelation('book', condition=Q(book__editor__name__icontains='b')),
+-            ))
++            Author.objects.annotate(
++                book_editor=FilteredRelation(
++                    'book',
++                    condition=Q(book__editor__name__icontains='b'),
++                ),
++            )
+ 
+     def test_with_empty_relation_name_error(self):
+         with self.assertRaisesMessage(ValueError, 'relation_name cannot be empty.'):
+@@ -424,3 +551,123 @@ class FilteredRelationAggregationTests(TestCase):
+         ).distinct()
+         self.assertEqual(qs.count(), 1)
+         self.assertSequenceEqual(qs.annotate(total=Count('pk')).values('total'), [{'total': 1}])
++
++
++class FilteredRelationAnalyticalAggregationTests(TestCase):
++    @classmethod
++    def setUpTestData(cls):
++        author = Author.objects.create(name='Author')
++        editor = Editor.objects.create(name='Editor')
++        cls.book1 = Book.objects.create(
++            title='Poem by Alice',
++            editor=editor,
++            author=author,
++        )
++        cls.book2 = Book.objects.create(
++            title='The book by Jane A',
++            editor=editor,
++            author=author,
++        )
++        cls.book3 = Book.objects.create(
++            title='The book by Jane B',
++            editor=editor,
++            author=author,
++        )
++        cls.seller1 = Seller.objects.create(name='Seller 1')
++        cls.seller2 = Seller.objects.create(name='Seller 2')
++        cls.usd = Currency.objects.create(currency='USD')
++        cls.eur = Currency.objects.create(currency='EUR')
++        cls.sales_date1 = date(2020, 7, 6)
++        cls.sales_date2 = date(2020, 7, 7)
++        ExchangeRate.objects.bulk_create([
++            ExchangeRate(
++                rate_date=cls.sales_date1,
++                from_currency=cls.usd,
++                to_currency=cls.eur,
++                rate=0.40,
++            ),
++            ExchangeRate(
++                rate_date=cls.sales_date1,
++                from_currency=cls.eur,
++                to_currency=cls.usd,
++                rate=1.60,
++            ),
++            ExchangeRate(
++                rate_date=cls.sales_date2,
++                from_currency=cls.usd,
++                to_currency=cls.eur,
++                rate=0.50,
++            ),
++            ExchangeRate(
++                rate_date=cls.sales_date2,
++                from_currency=cls.eur,
++                to_currency=cls.usd,
++                rate=1.50,
++            ),
++            ExchangeRate(
++                rate_date=cls.sales_date2,
++                from_currency=cls.usd,
++                to_currency=cls.usd,
++                rate=1.00,
++            ),
++        ])
++        BookDailySales.objects.bulk_create([
++            BookDailySales(
++                book=cls.book1,
++                sale_date=cls.sales_date1,
++                currency=cls.usd,
++                sales=100.00,
++                seller=cls.seller1,
++            ),
++            BookDailySales(
++                book=cls.book2,
++                sale_date=cls.sales_date1,
++                currency=cls.eur,
++                sales=200.00,
++                seller=cls.seller1,
++            ),
++            BookDailySales(
++                book=cls.book1,
++                sale_date=cls.sales_date2,
++                currency=cls.usd,
++                sales=50.00,
++                seller=cls.seller2,
++            ),
++            BookDailySales(
++                book=cls.book2,
++                sale_date=cls.sales_date2,
++                currency=cls.eur,
++                sales=100.00,
++                seller=cls.seller2,
++            ),
++        ])
++
++    def test_aggregate(self):
++        tests = [
++            Q(daily_sales__sale_date__gte=self.sales_date2),
++            ~Q(daily_sales__seller=self.seller1),
++        ]
++        for condition in tests:
++            with self.subTest(condition=condition):
++                qs = Book.objects.annotate(
++                    recent_sales=FilteredRelation('daily_sales', condition=condition),
++                    recent_sales_rates=FilteredRelation(
++                        'recent_sales__currency__rates_from',
++                        condition=Q(
++                            recent_sales__currency__rates_from__rate_date=F('recent_sales__sale_date'),
++                            recent_sales__currency__rates_from__to_currency=self.usd,
++                        ),
++                    ),
++                ).annotate(
++                    sales_sum=Sum(
++                        F('recent_sales__sales') * F('recent_sales_rates__rate'),
++                        output_field=DecimalField(),
++                    ),
++                ).values('title', 'sales_sum').order_by(
++                    F('sales_sum').desc(nulls_last=True),
++                )
++                self.assertSequenceEqual(qs, [
++                    {'title': self.book2.title, 'sales_sum': Decimal(150.00)},
++                    {'title': self.book1.title, 'sales_sum': Decimal(50.00)},
++                    {'title': self.book3.title, 'sales_sum': None},
++                ])

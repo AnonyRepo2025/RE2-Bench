@@ -1,0 +1,191 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. You only need to predict input variable values, and print input between [INPUT] and [\INPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT]. 
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import numpy as np
+from abc import abstractmethod
+from ..base import ClassifierMixin
+from ..base import RegressorMixin
+from ..base import TransformerMixin
+from ..base import clone
+from ..preprocessing import LabelEncoder
+from ..utils._joblib import Parallel, delayed
+from ..utils.validation import has_fit_parameter, check_is_fitted
+from ..utils.metaestimators import _BaseComposition
+from ..utils import Bunch
+
+class _BaseVoting(_BaseComposition, TransformerMixin):
+    _required_parameters = ['estimators']
+
+    @property
+    def named_estimators(self):
+        return Bunch(**dict(self.estimators))
+
+    @property
+    def _weights_not_none(self):
+        if self.weights is None:
+            return None
+        return [w for est, w in zip(self.estimators, self.weights) if est[1] is not None]
+
+    def _predict(self, X):
+        return np.asarray([clf.predict(X) for clf in self.estimators_]).T
+
+    @abstractmethod
+    def fit(self, X, y, sample_weight=None):
+        if self.estimators is None or len(self.estimators) == 0:
+            raise AttributeError('Invalid `estimators` attribute, `estimators` should be a list of (string, estimator) tuples')
+        if self.weights is not None and len(self.weights) != len(self.estimators):
+            raise ValueError('Number of `estimators` and weights must be equal; got %d weights, %d estimators' % (len(self.weights), len(self.estimators)))
+        if sample_weight is not None:
+            for name, step in self.estimators:
+                if step is None:
+                    continue
+                if not has_fit_parameter(step, 'sample_weight'):
+                    raise ValueError("Underlying estimator '%s' does not support sample weights." % name)
+        names, clfs = zip(*self.estimators)
+        self._validate_names(names)
+        n_isnone = np.sum([clf is None for _, clf in self.estimators])
+        if n_isnone == len(self.estimators):
+            raise ValueError('All estimators are None. At least one is required!')
+        self.estimators_ = Parallel(n_jobs=self.n_jobs)((delayed(_parallel_fit_estimator)(clone(clf), X, y, sample_weight=sample_weight) for clf in clfs if clf is not None))
+        self.named_estimators_ = Bunch()
+        for k, e in zip(self.estimators, self.estimators_):
+            self.named_estimators_[k[0]] = e
+        return self
+
+    def set_params(self, **params):
+        return self._set_params('estimators', **params)
+
+    def get_params(self, deep=True):
+        return self._get_params('estimators', deep=deep)
+[/PYTHON]
+
+What will be the input of `fit`, given the following input:
+[OUTPUT]
+```
+{
+    "estimators": null,
+    "voting": "soft",
+    "weights": null,
+    "n_jobs": null,
+    "flatten_transform": true,
+    "le_": {
+        "classes_": "[0 1 2]"
+    },
+    "classes_": "[0 1 2]",
+    "estimators_": null,
+    "named_estimators_": {}
+}
+```
+[/OUTPUT]
+
+[THOUGHT]

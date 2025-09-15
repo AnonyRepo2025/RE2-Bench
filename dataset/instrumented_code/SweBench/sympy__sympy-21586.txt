@@ -1,0 +1,599 @@
+diff --git a/sympy/abc.py b/sympy/abc.py
+index 7fb2bdf..48f8e96 100644
+--- a/sympy/abc.py
++++ b/sympy/abc.py
+@@ -98,10 +98,10 @@
+ while ns:
+     _k, _ = ns.popitem()
+     if _k in _greek:
+-        _clash2[_k] = Symbol(_k)
++        _clash2[_k] = None
+         _greek.remove(_k)
+     elif _k in _latin:
+-        _clash1[_k] = Symbol(_k)
++        _clash1[_k] = None
+         _latin.remove(_k)
+ _clash = {}
+ _clash.update(_clash1)
+diff --git a/sympy/core/assumptions.py b/sympy/core/assumptions.py
+index c957931..7570940 100644
+--- a/sympy/core/assumptions.py
++++ b/sympy/core/assumptions.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-21586/sympy/core/assumptions.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ This module contains the machinery handling assumptions.
+ 
+@@ -349,6 +542,7 @@ def failing_assumptions(expr, **assumptions):
+     return failed  # {} or {assumption: value != desired}
+ 
+ 
++@inspect_code
+ def check_assumptions(expr, against=None, **assume):
+     """
+     Checks whether assumptions of ``expr`` match the T/F assumptions
+@@ -385,6 +579,14 @@ def check_assumptions(expr, against=None, **assume):
+     >>> check_assumptions(2*x + 1, x)
+     True
+ 
++    To see if a number matches the assumptions of an expression, pass
++    the number as the first argument, else its specific assumptions
++    may not have a non-None value in the expression:
++
++    >>> check_assumptions(x, 3)
++    >>> check_assumptions(3, x)
++    True
++
+     ``None`` is returned if ``check_assumptions()`` could not conclude.
+ 
+     >>> check_assumptions(2*x - 1, x)
+@@ -399,8 +601,8 @@ def check_assumptions(expr, against=None, **assume):
+ 
+     """
+     expr = sympify(expr)
+-    if against:
+-        if against is not None and assume:
++    if against is not None:
++        if assume:
+             raise ValueError(
+                 'Expecting `against` or `assume`, not both.')
+         assume = assumptions(against)
+diff --git a/sympy/core/sympify.py b/sympy/core/sympify.py
+index 5dbf59b..7540b90 100644
+--- a/sympy/core/sympify.py
++++ b/sympy/core/sympify.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-21586/sympy/core/sympify.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """sympify -- convert objects SymPy internal format"""
+ 
+ import typing
+@@ -89,6 +282,7 @@ def _convert_numpy_types(a, **sympify_args):
+                                'is not implemented' % a)
+ 
+ 
++@inspect_code
+ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False,
+         evaluate=None):
+     """
+@@ -180,8 +374,8 @@ def sympify(a, locals=None, convert_xor=True, strict=False, rational=False,
+     names that are defined in abc).
+ 
+     >>> from sympy.abc import _clash1
+-    >>> _clash1
+-    {'E': E, 'I': I, 'N': N, 'O': O, 'Q': Q, 'S': S}
++    >>> set(_clash1)
++    {'E', 'I', 'N', 'O', 'Q', 'S'}
+     >>> sympify('I & Q', _clash1)
+     I & Q
+ 
+diff --git a/sympy/core/tests/test_assumptions.py b/sympy/core/tests/test_assumptions.py
+index de71bf5..bef5be2 100644
+--- a/sympy/core/tests/test_assumptions.py
++++ b/sympy/core/tests/test_assumptions.py
+@@ -1238,6 +1238,7 @@ def test_assumptions_copy():
+ 
+ 
+ def test_check_assumptions():
++    assert check_assumptions(1, 0) is False
+     x = Symbol('x', positive=True)
+     assert check_assumptions(1, x) is True
+     assert check_assumptions(1, 1) is True
+diff --git a/sympy/core/tests/test_sympify.py b/sympy/core/tests/test_sympify.py
+index d88a76b..e7f1e13 100644
+--- a/sympy/core/tests/test_sympify.py
++++ b/sympy/core/tests/test_sympify.py
+@@ -530,10 +530,16 @@ def test_issue_6540_6552():
+ def test_issue_6046():
+     assert str(S("Q & C", locals=_clash1)) == 'C & Q'
+     assert str(S('pi(x)', locals=_clash2)) == 'pi(x)'
+-    assert str(S('pi(C, Q)', locals=_clash)) == 'pi(C, Q)'
+     locals = {}
+     exec("from sympy.abc import Q, C", locals)
+     assert str(S('C&Q', locals)) == 'C & Q'
++    # clash can act as Symbol or Function
++    assert str(S('pi(C, Q)', locals=_clash)) == 'pi(C, Q)'
++    assert len(S('pi + x', locals=_clash2).free_symbols) == 2
++    # but not both
++    raises(TypeError, lambda: S('pi + pi(x)', locals=_clash2))
++    assert all(set(i.values()) == {None} for i in (
++        _clash, _clash1, _clash2))
+ 
+ 
+ def test_issue_8821_highprec_from_str():
+diff --git a/sympy/parsing/sympy_parser.py b/sympy/parsing/sympy_parser.py
+index a74e3a6..d79f075 100644
+--- a/sympy/parsing/sympy_parser.py
++++ b/sympy/parsing/sympy_parser.py
+@@ -13,7 +13,7 @@
+ from sympy.core.compatibility import iterable
+ from sympy.core.basic import Basic
+ from sympy.core import Symbol
+-from sympy.core.function import arity
++from sympy.core.function import arity, Function
+ from sympy.utilities.misc import filldedent, func_name
+ 
+ 
+@@ -550,22 +550,23 @@ def auto_symbol(tokens, local_dict, global_dict):
+             name = tokVal
+ 
+             if (name in ['True', 'False', 'None']
+-                or iskeyword(name)
+-                # Don't convert attribute access
+-                or (prevTok[0] == OP and prevTok[1] == '.')
+-                # Don't convert keyword arguments
+-                or (prevTok[0] == OP and prevTok[1] in ('(', ',')
+-                    and nextTokNum == OP and nextTokVal == '=')):
++                    or iskeyword(name)
++                    # Don't convert attribute access
++                    or (prevTok[0] == OP and prevTok[1] == '.')
++                    # Don't convert keyword arguments
++                    or (prevTok[0] == OP and prevTok[1] in ('(', ',')
++                        and nextTokNum == OP and nextTokVal == '=')
++                    # the name has already been defined
++                    or name in local_dict and local_dict[name] is not None):
+                 result.append((NAME, name))
+                 continue
+             elif name in local_dict:
+-                if isinstance(local_dict[name], Symbol) and nextTokVal == '(':
+-                    result.extend([(NAME, 'Function'),
+-                                   (OP, '('),
+-                                   (NAME, repr(str(local_dict[name]))),
+-                                   (OP, ')')])
++                local_dict.setdefault(None, set()).add(name)
++                if nextTokVal == '(':
++                    local_dict[name] = Function(name)
+                 else:
+-                    result.append((NAME, name))
++                    local_dict[name] = Symbol(name)
++                result.append((NAME, name))
+                 continue
+             elif name in global_dict:
+                 obj = global_dict[name]
+@@ -1013,8 +1014,15 @@ def parse_expr(s, local_dict=None, transformations=standard_transformations,
+         code = compile(evaluateFalse(code), '<string>', 'eval')
+ 
+     try:
+-        return eval_expr(code, local_dict, global_dict)
++        rv = eval_expr(code, local_dict, global_dict)
++        # restore neutral definitions for names
++        for i in local_dict.pop(None, ()):
++            local_dict[i] = None
++        return rv
+     except Exception as e:
++        # restore neutral definitions for names
++        for i in local_dict.pop(None, ()):
++            local_dict[i] = None
+         raise e from ValueError(f"Error from parse_expr with transformed code: {code!r}")
+ 
+ 
+diff --git a/sympy/parsing/tests/test_sympy_parser.py b/sympy/parsing/tests/test_sympy_parser.py
+index 0a7bdc3..c92df70 100644
+--- a/sympy/parsing/tests/test_sympy_parser.py
++++ b/sympy/parsing/tests/test_sympy_parser.py
+@@ -131,9 +131,8 @@ def test_local_dict_symbol_to_fcn():
+     x = Symbol('x')
+     d = {'foo': Function('bar')}
+     assert parse_expr('foo(x)', local_dict=d) == d['foo'](x)
+-    # XXX: bit odd, but would be error if parser left the Symbol
+     d = {'foo': Symbol('baz')}
+-    assert parse_expr('foo(x)', local_dict=d) == Function('baz')(x)
++    raises(TypeError, lambda: parse_expr('foo(x)', local_dict=d))
+ 
+ 
+ def test_global_dict():
+@@ -270,3 +269,11 @@ def test_python3_features():
+     assert parse_expr('.[3_4]') == parse_expr('.[34]') == Rational(34, 99)
+     assert parse_expr('.1[3_4]') == parse_expr('.1[34]') == Rational(133, 990)
+     assert parse_expr('123_123.123_123[3_4]') == parse_expr('123123.123123[34]') == Rational(12189189189211, 99000000)
++
++
++def test_issue_19501():
++    x = Symbol('x')
++    eq = parse_expr('E**x(1+x)', local_dict={'x': x}, transformations=(
++        standard_transformations +
++        (implicit_multiplication_application,)))
++    assert eq.free_symbols == {x}

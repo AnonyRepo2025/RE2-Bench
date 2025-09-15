@@ -1,0 +1,747 @@
+diff --git a/django/contrib/admin/views/autocomplete.py b/django/contrib/admin/views/autocomplete.py
+index 6c52eca..a4905af 100644
+--- a/django/contrib/admin/views/autocomplete.py
++++ b/django/contrib/admin/views/autocomplete.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14031/django/contrib/admin/views/autocomplete.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from django.apps import apps
+ from django.core.exceptions import FieldDoesNotExist, PermissionDenied
+ from django.http import Http404, JsonResponse
+@@ -45,6 +238,7 @@ class AutocompleteJsonView(BaseListView):
+             qs = qs.distinct()
+         return qs
+ 
++    @inspect_code
+     def process_request(self, request):
+         """
+         Validate request integrity, extract and return request parameters.
+@@ -90,7 +284,8 @@ class AutocompleteJsonView(BaseListView):
+                 type(model_admin).__qualname__
+             )
+ 
+-        to_field_name = getattr(source_field.remote_field, 'field_name', model_admin.model._meta.pk.name)
++        to_field_name = getattr(source_field.remote_field, 'field_name', remote_model._meta.pk.attname)
++        to_field_name = remote_model._meta.get_field(to_field_name).attname
+         if not model_admin.to_field_allowed(request, to_field_name):
+             raise PermissionDenied
+ 
+diff --git a/django/contrib/admin/widgets.py b/django/contrib/admin/widgets.py
+index 1f438da..a7f8dc7 100644
+--- a/django/contrib/admin/widgets.py
++++ b/django/contrib/admin/widgets.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14031/django/contrib/admin/widgets.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Form Widget classes specific to the Django admin site.
+ """
+@@ -417,6 +610,7 @@ class AutocompleteMixin:
+         })
+         return attrs
+ 
++    @inspect_code
+     def optgroups(self, name, value, attr=None):
+         """Return selected options based on the ModelChoiceIterator."""
+         default = (None, [], 0)
+@@ -428,7 +622,9 @@ class AutocompleteMixin:
+         }
+         if not self.is_required and not self.allow_multiple_selected:
+             default[1].append(self.create_option(name, '', '', False, 0))
+-        to_field_name = getattr(self.field.remote_field, 'field_name', self.field.model._meta.pk.name)
++        remote_model_opts = self.field.remote_field.model._meta
++        to_field_name = getattr(self.field.remote_field, 'field_name', remote_model_opts.pk.attname)
++        to_field_name = remote_model_opts.get_field(to_field_name).attname
+         choices = (
+             (getattr(obj, to_field_name), self.choices.field.label_from_instance(obj))
+             for obj in self.choices.queryset.using(self.db).filter(**{'%s__in' % to_field_name: selected_choices})
+diff --git a/tests/admin_views/models.py b/tests/admin_views/models.py
+index 81948e0..284a4cf 100644
+--- a/tests/admin_views/models.py
++++ b/tests/admin_views/models.py
+@@ -338,6 +338,24 @@ class Child(models.Model):
+             raise ValidationError('invalid')
+ 
+ 
++class PKChild(models.Model):
++    """
++    Used to check autocomplete to_field resolution when ForeignKey is PK.
++    """
++    parent = models.ForeignKey(Parent, models.CASCADE, primary_key=True)
++    name = models.CharField(max_length=128)
++
++    class Meta:
++        ordering = ['parent']
++
++    def __str__(self):
++        return self.name
++
++
++class Toy(models.Model):
++    child = models.ForeignKey(PKChild, models.CASCADE)
++
++
+ class EmptyModel(models.Model):
+     def __str__(self):
+         return "Primary key = %s" % self.id
+@@ -615,13 +633,28 @@ class Song(models.Model):
+ class Employee(Person):
+     code = models.CharField(max_length=20)
+ 
++    class Meta:
++        ordering = ['name']
++
+ 
+ class WorkHour(models.Model):
+     datum = models.DateField()
+     employee = models.ForeignKey(Employee, models.CASCADE)
+ 
+ 
++class Manager(Employee):
++    """
++    A multi-layer MTI child.
++    """
++    pass
++
++
++class Bonus(models.Model):
++    recipient = models.ForeignKey(Manager, on_delete=models.CASCADE)
++
++
+ class Question(models.Model):
++    big_id = models.BigAutoField(primary_key=True)
+     question = models.CharField(max_length=20)
+     posted = models.DateField(default=datetime.date.today)
+     expires = models.DateTimeField(null=True, blank=True)
+diff --git a/tests/admin_views/test_autocomplete_view.py b/tests/admin_views/test_autocomplete_view.py
+index 1ba8fb1..aa978f7 100644
+--- a/tests/admin_views/test_autocomplete_view.py
++++ b/tests/admin_views/test_autocomplete_view.py
+@@ -12,7 +12,10 @@ from django.test import RequestFactory, override_settings
+ from django.urls import reverse, reverse_lazy
+ 
+ from .admin import AnswerAdmin, QuestionAdmin
+-from .models import Answer, Author, Authorship, Book, Question
++from .models import (
++    Answer, Author, Authorship, Bonus, Book, Employee, Manager, Parent,
++    PKChild, Question, Toy, WorkHour,
++)
+ from .tests import AdminViewBasicTestCase
+ 
+ PAGINATOR_SIZE = AutocompleteJsonView.paginate_by
+@@ -37,6 +40,12 @@ site.register(Question, QuestionAdmin)
+ site.register(Answer, AnswerAdmin)
+ site.register(Author, AuthorAdmin)
+ site.register(Book, BookAdmin)
++site.register(Employee, search_fields=['name'])
++site.register(WorkHour, autocomplete_fields=['employee'])
++site.register(Manager, search_fields=['name'])
++site.register(Bonus, autocomplete_fields=['recipient'])
++site.register(PKChild, search_fields=['name'])
++site.register(Toy, autocomplete_fields=['child'])
+ 
+ 
+ @contextmanager
+@@ -94,6 +103,75 @@ class AutocompleteJsonViewTests(AdminViewBasicTestCase):
+             'pagination': {'more': False},
+         })
+ 
++    def test_custom_to_field_permission_denied(self):
++        Question.objects.create(question='Is this a question?')
++        request = self.factory.get(self.url, {'term': 'is', **self.opts, 'field_name': 'question_with_to_field'})
++        request.user = self.user
++        with self.assertRaises(PermissionDenied):
++            AutocompleteJsonView.as_view(**self.as_view_args)(request)
++
++    def test_custom_to_field_custom_pk(self):
++        q = Question.objects.create(question='Is this a question?')
++        opts = {
++            'app_label': Question._meta.app_label,
++            'model_name': Question._meta.model_name,
++            'field_name': 'related_questions',
++        }
++        request = self.factory.get(self.url, {'term': 'is', **opts})
++        request.user = self.superuser
++        response = AutocompleteJsonView.as_view(**self.as_view_args)(request)
++        self.assertEqual(response.status_code, 200)
++        data = json.loads(response.content.decode('utf-8'))
++        self.assertEqual(data, {
++            'results': [{'id': str(q.big_id), 'text': q.question}],
++            'pagination': {'more': False},
++        })
++
++    def test_to_field_resolution_with_mti(self):
++        """
++        to_field resolution should correctly resolve for target models using
++        MTI. Tests for single and multi-level cases.
++        """
++        tests = [
++            (Employee, WorkHour, 'employee'),
++            (Manager, Bonus, 'recipient'),
++        ]
++        for Target, Remote, related_name in tests:
++            with self.subTest(target_model=Target, remote_model=Remote, related_name=related_name):
++                o = Target.objects.create(name="Frida Kahlo", gender=2, code="painter", alive=False)
++                opts = {
++                    'app_label': Remote._meta.app_label,
++                    'model_name': Remote._meta.model_name,
++                    'field_name': related_name,
++                }
++                request = self.factory.get(self.url, {'term': 'frida', **opts})
++                request.user = self.superuser
++                response = AutocompleteJsonView.as_view(**self.as_view_args)(request)
++                self.assertEqual(response.status_code, 200)
++                data = json.loads(response.content.decode('utf-8'))
++                self.assertEqual(data, {
++                    'results': [{'id': str(o.pk), 'text': o.name}],
++                    'pagination': {'more': False},
++                })
++
++    def test_to_field_resolution_with_fk_pk(self):
++        p = Parent.objects.create(name="Bertie")
++        c = PKChild.objects.create(parent=p, name="Anna")
++        opts = {
++            'app_label': Toy._meta.app_label,
++            'model_name': Toy._meta.model_name,
++            'field_name': 'child',
++        }
++        request = self.factory.get(self.url, {'term': 'anna', **opts})
++        request.user = self.superuser
++        response = AutocompleteJsonView.as_view(**self.as_view_args)(request)
++        self.assertEqual(response.status_code, 200)
++        data = json.loads(response.content.decode('utf-8'))
++        self.assertEqual(data, {
++            'results': [{'id': str(c.pk), 'text': c.name}],
++            'pagination': {'more': False},
++        })
++
+     def test_field_does_not_exist(self):
+         request = self.factory.get(self.url, {'term': 'is', **self.opts, 'field_name': 'does_not_exist'})
+         request.user = self.superuser
+diff --git a/tests/admin_widgets/models.py b/tests/admin_widgets/models.py
+index 85f7174..85ba6c4 100644
+--- a/tests/admin_widgets/models.py
++++ b/tests/admin_widgets/models.py
+@@ -18,7 +18,11 @@ class Member(models.Model):
+         return self.name
+ 
+ 
+-class Band(models.Model):
++class Artist(models.Model):
++    pass
++
++
++class Band(Artist):
+     uuid = models.UUIDField(unique=True, default=uuid.uuid4)
+     name = models.CharField(max_length=100)
+     style = models.CharField(max_length=20)
+@@ -47,6 +51,25 @@ class Album(models.Model):
+         return self.name
+ 
+ 
++class ReleaseEvent(models.Model):
++    """
++    Used to check that autocomplete widget correctly resolves attname for FK as
++    PK example.
++    """
++    album = models.ForeignKey(Album, models.CASCADE, primary_key=True)
++    name = models.CharField(max_length=100)
++
++    class Meta:
++        ordering = ['name']
++
++    def __str__(self):
++        return self.name
++
++
++class VideoStream(models.Model):
++    release_event = models.ForeignKey(ReleaseEvent, models.CASCADE)
++
++
+ class HiddenInventoryManager(models.Manager):
+     def get_queryset(self):
+         return super().get_queryset().filter(hidden=False)
+diff --git a/tests/admin_widgets/test_autocomplete_widget.py b/tests/admin_widgets/test_autocomplete_widget.py
+index d8ee7e9..279acfe 100644
+--- a/tests/admin_widgets/test_autocomplete_widget.py
++++ b/tests/admin_widgets/test_autocomplete_widget.py
+@@ -5,7 +5,7 @@ from django.forms import ModelChoiceField
+ from django.test import TestCase, override_settings
+ from django.utils import translation
+ 
+-from .models import Album, Band
++from .models import Album, Band, ReleaseEvent, VideoStream
+ 
+ 
+ class AlbumForm(forms.ModelForm):
+@@ -41,6 +41,18 @@ class RequiredBandForm(forms.Form):
+     )
+ 
+ 
++class VideoStreamForm(forms.ModelForm):
++    class Meta:
++        model = VideoStream
++        fields = ['release_event']
++        widgets = {
++            'release_event': AutocompleteSelect(
++                VideoStream._meta.get_field('release_event'),
++                admin.site,
++            ),
++        }
++
++
+ @override_settings(ROOT_URLCONF='admin_widgets.urls')
+ class AutocompleteMixinTests(TestCase):
+     empty_option = '<option value=""></option>'
+@@ -114,6 +126,15 @@ class AutocompleteMixinTests(TestCase):
+         output = form.as_table()
+         self.assertNotIn(self.empty_option, output)
+ 
++    def test_render_options_fk_as_pk(self):
++        beatles = Band.objects.create(name='The Beatles', style='rock')
++        rubber_soul = Album.objects.create(name='Rubber Soul', band=beatles)
++        release_event = ReleaseEvent.objects.create(name='Test Target', album=rubber_soul)
++        form = VideoStreamForm(initial={'release_event': release_event.pk})
++        output = form.as_table()
++        selected_option = '<option value="%s" selected>Test Target</option>' % release_event.pk
++        self.assertIn(selected_option, output)
++
+     def test_media(self):
+         rel = Album._meta.get_field('band').remote_field
+         base_files = (
+diff --git a/tests/admin_widgets/tests.py b/tests/admin_widgets/tests.py
+index 3c41d9c..f701f1a 100644
+--- a/tests/admin_widgets/tests.py
++++ b/tests/admin_widgets/tests.py
+@@ -24,7 +24,7 @@ from django.utils import translation
+ from .models import (
+     Advisor, Album, Band, Bee, Car, Company, Event, Honeycomb, Individual,
+     Inventory, Member, MyFileField, Profile, School, Student,
+-    UnsafeLimitChoicesTo,
++    UnsafeLimitChoicesTo, VideoStream,
+ )
+ from .widgetadmin import site as widget_admin_site
+ 
+@@ -624,7 +624,17 @@ class ForeignKeyRawIdWidgetTest(TestCase):
+         self.assertHTMLEqual(
+             w.render('test', None),
+             '<input type="text" name="test" class="vForeignKeyRawIdAdminField">\n'
+-            '<a href="/admin_widgets/band/?name=%22%26%3E%3Cescapeme&amp;_to_field=id" '
++            '<a href="/admin_widgets/band/?name=%22%26%3E%3Cescapeme&amp;_to_field=artist_ptr" '
++            'class="related-lookup" id="lookup_id_test" title="Lookup"></a>'
++        )
++
++    def test_render_fk_as_pk_model(self):
++        rel = VideoStream._meta.get_field('release_event').remote_field
++        w = widgets.ForeignKeyRawIdWidget(rel, widget_admin_site)
++        self.assertHTMLEqual(
++            w.render('test', None),
++            '<input type="text" name="test" class="vForeignKeyRawIdAdminField">\n'
++            '<a href="/admin_widgets/releaseevent/?_to_field=album" '
+             'class="related-lookup" id="lookup_id_test" title="Lookup"></a>'
+         )
+ 
+diff --git a/tests/admin_widgets/widgetadmin.py b/tests/admin_widgets/widgetadmin.py
+index a471a36..a025bc8 100644
+--- a/tests/admin_widgets/widgetadmin.py
++++ b/tests/admin_widgets/widgetadmin.py
+@@ -2,7 +2,7 @@ from django.contrib import admin
+ 
+ from .models import (
+     Advisor, Album, Band, Bee, Car, CarTire, Event, Inventory, Member, Profile,
+-    School, User,
++    ReleaseEvent, School, User, VideoStream,
+ )
+ 
+ 
+@@ -47,6 +47,8 @@ site.register(Member)
+ site.register(Band)
+ site.register(Event, EventAdmin)
+ site.register(Album, AlbumAdmin)
++site.register(ReleaseEvent, search_fields=['name'])
++site.register(VideoStream, autocomplete_fields=['release_event'])
+ 
+ site.register(Inventory)
+ 

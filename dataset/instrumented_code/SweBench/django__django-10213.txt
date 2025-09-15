@@ -1,0 +1,580 @@
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+index 6516745..bef622e 100644
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-10213/django/core/management/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Base classes for writing management commands (named commands which can
+ be executed through ``django-admin`` or ``manage.py``).
+@@ -95,7 +288,7 @@ class DjangoHelpFormatter(HelpFormatter):
+     """
+     show_last = {
+         '--version', '--verbosity', '--traceback', '--settings', '--pythonpath',
+-        '--no-color',
++        '--no-color', '--force_color',
+     }
+ 
+     def _reordered_actions(self, actions):
+@@ -227,13 +420,15 @@ class BaseCommand:
+     # Command-specific options not defined by the argument parser.
+     stealth_options = ()
+ 
+-    def __init__(self, stdout=None, stderr=None, no_color=False):
++    def __init__(self, stdout=None, stderr=None, no_color=False, force_color=False):
+         self.stdout = OutputWrapper(stdout or sys.stdout)
+         self.stderr = OutputWrapper(stderr or sys.stderr)
++        if no_color and force_color:
++            raise CommandError("'no_color' and 'force_color' can't be used together.")
+         if no_color:
+             self.style = no_style()
+         else:
+-            self.style = color_style()
++            self.style = color_style(force_color)
+             self.stderr.style_func = self.style.ERROR
+ 
+     def get_version(self):
+@@ -244,6 +439,7 @@ class BaseCommand:
+         """
+         return django.get_version()
+ 
++    @inspect_code
+     def create_parser(self, prog_name, subcommand, **kwargs):
+         """
+         Create and return the ``ArgumentParser`` which will be used to
+@@ -280,6 +476,10 @@ class BaseCommand:
+             '--no-color', action='store_true',
+             help="Don't colorize the command output.",
+         )
++        parser.add_argument(
++            '--force-color', action='store_true',
++            help='Force colorization of the command output.',
++        )
+         self.add_arguments(parser)
+         return parser
+ 
+@@ -333,13 +533,18 @@ class BaseCommand:
+                 # configured settings).
+                 pass
+ 
++    @inspect_code
+     def execute(self, *args, **options):
+         """
+         Try to execute this command, performing system checks if needed (as
+         controlled by the ``requires_system_checks`` attribute, except if
+         force-skipped).
+         """
+-        if options['no_color']:
++        if options['force_color'] and options['no_color']:
++            raise CommandError("The --no-color and --force-color options can't be used together.")
++        if options['force_color']:
++            self.style = color_style(force_color=True)
++        elif options['no_color']:
+             self.style = no_style()
+             self.stderr.style_func = None
+         if options.get('stdout'):
+diff --git a/django/core/management/color.py b/django/core/management/color.py
+index 42600fa..572329b 100644
+--- a/django/core/management/color.py
++++ b/django/core/management/color.py
+@@ -64,10 +64,10 @@ def no_style():
+     return make_style('nocolor')
+ 
+ 
+-def color_style():
++def color_style(force_color=False):
+     """
+     Return a Style object from the Django color scheme.
+     """
+-    if not supports_color():
++    if not force_color and not supports_color():
+         return no_style()
+     return make_style(os.environ.get('DJANGO_COLORS', ''))
+diff --git a/tests/admin_scripts/tests.py b/tests/admin_scripts/tests.py
+index c60194f..410652e 100644
+--- a/tests/admin_scripts/tests.py
++++ b/tests/admin_scripts/tests.py
+@@ -40,7 +40,7 @@ custom_templates_dir = os.path.join(os.path.dirname(__file__), 'custom_templates
+ SYSTEM_CHECK_MSG = 'System check identified no issues'
+ 
+ 
+-class AdminScriptTestCase(unittest.TestCase):
++class AdminScriptTestCase(SimpleTestCase):
+ 
+     @classmethod
+     def setUpClass(cls):
+@@ -970,9 +970,9 @@ class ManageAlternateSettings(AdminScriptTestCase):
+         out, err = self.run_manage(args)
+         self.assertOutput(
+             out,
+-            "EXECUTE: noargs_command options=[('no_color', False), "
+-            "('pythonpath', None), ('settings', 'alternate_settings'), "
+-            "('traceback', False), ('verbosity', 1)]"
++            "EXECUTE: noargs_command options=[('force_color', False), "
++            "('no_color', False), ('pythonpath', None), ('settings', "
++            "'alternate_settings'), ('traceback', False), ('verbosity', 1)]"
+         )
+         self.assertNoOutput(err)
+ 
+@@ -982,9 +982,9 @@ class ManageAlternateSettings(AdminScriptTestCase):
+         out, err = self.run_manage(args, 'alternate_settings')
+         self.assertOutput(
+             out,
+-            "EXECUTE: noargs_command options=[('no_color', False), "
+-            "('pythonpath', None), ('settings', None), ('traceback', False), "
+-            "('verbosity', 1)]"
++            "EXECUTE: noargs_command options=[('force_color', False), "
++            "('no_color', False), ('pythonpath', None), ('settings', None), "
++            "('traceback', False), ('verbosity', 1)]"
+         )
+         self.assertNoOutput(err)
+ 
+@@ -994,9 +994,9 @@ class ManageAlternateSettings(AdminScriptTestCase):
+         out, err = self.run_manage(args)
+         self.assertOutput(
+             out,
+-            "EXECUTE: noargs_command options=[('no_color', True), "
+-            "('pythonpath', None), ('settings', 'alternate_settings'), "
+-            "('traceback', False), ('verbosity', 1)]"
++            "EXECUTE: noargs_command options=[('force_color', False), "
++            "('no_color', True), ('pythonpath', None), ('settings', "
++            "'alternate_settings'), ('traceback', False), ('verbosity', 1)]"
+         )
+         self.assertNoOutput(err)
+ 
+@@ -1425,7 +1425,7 @@ class ManageTestserver(AdminScriptTestCase):
+             'blah.json',
+             stdout=out, settings=None, pythonpath=None, verbosity=1,
+             traceback=False, addrport='', no_color=False, use_ipv6=False,
+-            skip_checks=True, interactive=True,
++            skip_checks=True, interactive=True, force_color=False,
+         )
+ 
+     @mock.patch('django.db.connection.creation.create_test_db', return_value='test_db')
+@@ -1436,6 +1436,7 @@ class ManageTestserver(AdminScriptTestCase):
+         call_command('testserver', 'blah.json', stdout=out)
+         mock_runserver_handle.assert_called_with(
+             addrport='',
++            force_color=False,
+             insecure_serving=False,
+             no_color=False,
+             pythonpath=None,
+@@ -1459,6 +1460,13 @@ class ManageTestserver(AdminScriptTestCase):
+ # user-space commands are correctly handled - in particular, arguments to
+ # the commands are correctly parsed and processed.
+ ##########################################################################
++class ColorCommand(BaseCommand):
++    requires_system_checks = False
++
++    def handle(self, *args, **options):
++        self.stdout.write('Hello, world!', self.style.ERROR)
++        self.stderr.write('Hello, world!', self.style.ERROR)
++
+ 
+ class CommandTypes(AdminScriptTestCase):
+     "Tests for the various types of base command types that can be defined."
+@@ -1542,16 +1550,9 @@ class CommandTypes(AdminScriptTestCase):
+         self.assertNotEqual(style.ERROR('Hello, world!'), 'Hello, world!')
+ 
+     def test_command_color(self):
+-        class Command(BaseCommand):
+-            requires_system_checks = False
+-
+-            def handle(self, *args, **options):
+-                self.stdout.write('Hello, world!', self.style.ERROR)
+-                self.stderr.write('Hello, world!', self.style.ERROR)
+-
+         out = StringIO()
+         err = StringIO()
+-        command = Command(stdout=out, stderr=err)
++        command = ColorCommand(stdout=out, stderr=err)
+         call_command(command)
+         if color.supports_color():
+             self.assertIn('Hello, world!\n', out.getvalue())
+@@ -1564,27 +1565,48 @@ class CommandTypes(AdminScriptTestCase):
+ 
+     def test_command_no_color(self):
+         "--no-color prevent colorization of the output"
+-        class Command(BaseCommand):
+-            requires_system_checks = False
+-
+-            def handle(self, *args, **options):
+-                self.stdout.write('Hello, world!', self.style.ERROR)
+-                self.stderr.write('Hello, world!', self.style.ERROR)
+-
+         out = StringIO()
+         err = StringIO()
+-        command = Command(stdout=out, stderr=err, no_color=True)
++        command = ColorCommand(stdout=out, stderr=err, no_color=True)
+         call_command(command)
+         self.assertEqual(out.getvalue(), 'Hello, world!\n')
+         self.assertEqual(err.getvalue(), 'Hello, world!\n')
+ 
+         out = StringIO()
+         err = StringIO()
+-        command = Command(stdout=out, stderr=err)
++        command = ColorCommand(stdout=out, stderr=err)
+         call_command(command, no_color=True)
+         self.assertEqual(out.getvalue(), 'Hello, world!\n')
+         self.assertEqual(err.getvalue(), 'Hello, world!\n')
+ 
++    def test_force_color_execute(self):
++        out = StringIO()
++        err = StringIO()
++        with mock.patch.object(sys.stdout, 'isatty', lambda: False):
++            command = ColorCommand(stdout=out, stderr=err)
++            call_command(command, force_color=True)
++        self.assertEqual(out.getvalue(), '\x1b[31;1mHello, world!\n\x1b[0m')
++        self.assertEqual(err.getvalue(), '\x1b[31;1mHello, world!\n\x1b[0m')
++
++    def test_force_color_command_init(self):
++        out = StringIO()
++        err = StringIO()
++        with mock.patch.object(sys.stdout, 'isatty', lambda: False):
++            command = ColorCommand(stdout=out, stderr=err, force_color=True)
++            call_command(command)
++        self.assertEqual(out.getvalue(), '\x1b[31;1mHello, world!\n\x1b[0m')
++        self.assertEqual(err.getvalue(), '\x1b[31;1mHello, world!\n\x1b[0m')
++
++    def test_no_color_force_color_mutually_exclusive_execute(self):
++        msg = "The --no-color and --force-color options can't be used together."
++        with self.assertRaisesMessage(CommandError, msg):
++            call_command(BaseCommand(), no_color=True, force_color=True)
++
++    def test_no_color_force_color_mutually_exclusive_command_init(self):
++        msg = "'no_color' and 'force_color' can't be used together."
++        with self.assertRaisesMessage(CommandError, msg):
++            call_command(BaseCommand(no_color=True, force_color=True))
++
+     def test_custom_stdout(self):
+         class Command(BaseCommand):
+             requires_system_checks = False
+@@ -1662,9 +1684,10 @@ class CommandTypes(AdminScriptTestCase):
+ 
+         expected_out = (
+             "EXECUTE:BaseCommand labels=%s, "
+-            "options=[('no_color', False), ('option_a', %s), ('option_b', %s), "
+-            "('option_c', '3'), ('pythonpath', None), ('settings', None), "
+-            "('traceback', False), ('verbosity', 1)]") % (labels, option_a, option_b)
++            "options=[('force_color', False), ('no_color', False), "
++            "('option_a', %s), ('option_b', %s), ('option_c', '3'), "
++            "('pythonpath', None), ('settings', None), ('traceback', False), "
++            "('verbosity', 1)]") % (labels, option_a, option_b)
+         self.assertNoOutput(err)
+         self.assertOutput(out, expected_out)
+ 
+@@ -1738,9 +1761,9 @@ class CommandTypes(AdminScriptTestCase):
+         self.assertNoOutput(err)
+         self.assertOutput(
+             out,
+-            "EXECUTE: noargs_command options=[('no_color', False), "
+-            "('pythonpath', None), ('settings', None), ('traceback', False), "
+-            "('verbosity', 1)]"
++            "EXECUTE: noargs_command options=[('force_color', False), "
++            "('no_color', False), ('pythonpath', None), ('settings', None), "
++            "('traceback', False), ('verbosity', 1)]"
+         )
+ 
+     def test_noargs_with_args(self):
+@@ -1757,8 +1780,9 @@ class CommandTypes(AdminScriptTestCase):
+         self.assertOutput(out, "EXECUTE:AppCommand name=django.contrib.auth, options=")
+         self.assertOutput(
+             out,
+-            ", options=[('no_color', False), ('pythonpath', None), "
+-            "('settings', None), ('traceback', False), ('verbosity', 1)]"
++            ", options=[('force_color', False), ('no_color', False), "
++            "('pythonpath', None), ('settings', None), ('traceback', False), "
++            "('verbosity', 1)]"
+         )
+ 
+     def test_app_command_no_apps(self):
+@@ -1775,14 +1799,16 @@ class CommandTypes(AdminScriptTestCase):
+         self.assertOutput(out, "EXECUTE:AppCommand name=django.contrib.auth, options=")
+         self.assertOutput(
+             out,
+-            ", options=[('no_color', False), ('pythonpath', None), "
+-            "('settings', None), ('traceback', False), ('verbosity', 1)]"
++            ", options=[('force_color', False), ('no_color', False), "
++            "('pythonpath', None), ('settings', None), ('traceback', False), "
++            "('verbosity', 1)]"
+         )
+         self.assertOutput(out, "EXECUTE:AppCommand name=django.contrib.contenttypes, options=")
+         self.assertOutput(
+             out,
+-            ", options=[('no_color', False), ('pythonpath', None), "
+-            "('settings', None), ('traceback', False), ('verbosity', 1)]"
++            ", options=[('force_color', False), ('no_color', False), "
++            "('pythonpath', None), ('settings', None), ('traceback', False), "
++            "('verbosity', 1)]"
+         )
+ 
+     def test_app_command_invalid_app_label(self):
+@@ -1804,8 +1830,9 @@ class CommandTypes(AdminScriptTestCase):
+         self.assertNoOutput(err)
+         self.assertOutput(
+             out,
+-            "EXECUTE:LabelCommand label=testlabel, options=[('no_color', False), "
+-            "('pythonpath', None), ('settings', None), ('traceback', False), ('verbosity', 1)]"
++            "EXECUTE:LabelCommand label=testlabel, options=[('force_color', "
++            "False), ('no_color', False), ('pythonpath', None), ('settings', "
++            "None), ('traceback', False), ('verbosity', 1)]"
+         )
+ 
+     def test_label_command_no_label(self):
+@@ -1821,13 +1848,15 @@ class CommandTypes(AdminScriptTestCase):
+         self.assertNoOutput(err)
+         self.assertOutput(
+             out,
+-            "EXECUTE:LabelCommand label=testlabel, options=[('no_color', False), "
+-            "('pythonpath', None), ('settings', None), ('traceback', False), ('verbosity', 1)]"
++            "EXECUTE:LabelCommand label=testlabel, options=[('force_color', "
++            "False), ('no_color', False), ('pythonpath', None), "
++            "('settings', None), ('traceback', False), ('verbosity', 1)]"
+         )
+         self.assertOutput(
+             out,
+-            "EXECUTE:LabelCommand label=anotherlabel, options=[('no_color', False), "
+-            "('pythonpath', None), ('settings', None), ('traceback', False), ('verbosity', 1)]"
++            "EXECUTE:LabelCommand label=anotherlabel, options=[('force_color', "
++            "False), ('no_color', False), ('pythonpath', None), "
++            "('settings', None), ('traceback', False), ('verbosity', 1)]"
+         )
+ 
+ 
+@@ -1901,10 +1930,11 @@ class ArgumentOrder(AdminScriptTestCase):
+         self.assertNoOutput(err)
+         self.assertOutput(
+             out,
+-            "EXECUTE:BaseCommand labels=('testlabel',), options=[('no_color', False), "
+-            "('option_a', 'x'), ('option_b', %s), ('option_c', '3'), "
+-            "('pythonpath', None), ('settings', 'alternate_settings'), "
+-            "('traceback', False), ('verbosity', 1)]" % option_b
++            "EXECUTE:BaseCommand labels=('testlabel',), options=["
++            "('force_color', False), ('no_color', False), ('option_a', 'x'), "
++            "('option_b', %s), ('option_c', '3'), ('pythonpath', None), "
++            "('settings', 'alternate_settings'), ('traceback', False), "
++            "('verbosity', 1)]" % option_b
+         )
+ 
+ 
+diff --git a/tests/user_commands/tests.py b/tests/user_commands/tests.py
+index 50b1b42..45fe0aa 100644
+--- a/tests/user_commands/tests.py
++++ b/tests/user_commands/tests.py
+@@ -179,18 +179,18 @@ class CommandTests(SimpleTestCase):
+     def test_call_command_unrecognized_option(self):
+         msg = (
+             'Unknown option(s) for dance command: unrecognized. Valid options '
+-            'are: example, help, integer, no_color, opt_3, option3, '
+-            'pythonpath, settings, skip_checks, stderr, stdout, style, '
+-            'traceback, verbosity, version.'
++            'are: example, force_color, help, integer, no_color, opt_3, '
++            'option3, pythonpath, settings, skip_checks, stderr, stdout, '
++            'style, traceback, verbosity, version.'
+         )
+         with self.assertRaisesMessage(TypeError, msg):
+             management.call_command('dance', unrecognized=1)
+ 
+         msg = (
+             'Unknown option(s) for dance command: unrecognized, unrecognized2. '
+-            'Valid options are: example, help, integer, no_color, opt_3, '
+-            'option3, pythonpath, settings, skip_checks, stderr, stdout, '
+-            'style, traceback, verbosity, version.'
++            'Valid options are: example, force_color, help, integer, no_color, '
++            'opt_3, option3, pythonpath, settings, skip_checks, stderr, '
++            'stdout, style, traceback, verbosity, version.'
+         )
+         with self.assertRaisesMessage(TypeError, msg):
+             management.call_command('dance', unrecognized=1, unrecognized2=1)

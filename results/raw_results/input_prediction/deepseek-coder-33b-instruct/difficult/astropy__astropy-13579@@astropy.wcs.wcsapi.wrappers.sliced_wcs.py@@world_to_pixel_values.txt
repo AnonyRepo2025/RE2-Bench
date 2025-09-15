@@ -1,0 +1,121 @@
+1. The output is the result of `world_to_pixel_values`, which is a function that converts world coordinates to pixel coordinates.
+2. The output is a list of two elements, which suggests that the WCS has two dimensions.
+3. The output is a list of very small numbers, which suggests that the pixel coordinates are very close to zero.
+4. The WCS object has a `_pixel_bounds` attribute, which is a list of tuples, each tuple containing the minimum and maximum pixel coordinates for each dimension.
+5. The WCS object has a `_slices_pixel` attribute, which is a list of slices, each slice specifying the range of pixel coordinates for each dimension.
+6. The WCS object has a `_pixel_keep` attribute, which is a list of indices of the dimensions to keep.
+7. The WCS object has a `_world_keep` attribute, which is a list of indices of the dimensions to keep.
+8. The WCS object has a `_naxis` attribute, which is the number of dimensions.
+9. The WCS object has a `_init_kwargs` attribute, which is a dictionary of keyword arguments used to initialize the WCS object.
+10. The WCS object has a `_slices_array` attribute, which is a list of slices, each slice specifying the range of world coordinates for each dimension.
+11. The WCS object has a `keysel` attribute, which is a dictionary of keys used to select the world coordinates for each dimension.
+12. The WCS object has a `colsel` attribute, which is a dictionary of columns used to select the world coordinates for each dimension.
+13. The WCS object has a `_pixel_bounds` attribute, which is a list of tuples, each tuple containing the minimum and maximum pixel coordinates for each dimension.
+14. The WCS object has a `_slices_pixel` attribute, which is a list of slices, each slice specifying the range of pixel coordinates for each dimension.
+15. The WCS object has a `_pixel_keep` attribute, which is a list of indices of the dimensions to keep.
+16. The WCS object has a `_world_keep` attribute, which is a list of indices of the dimensions to keep.
+17. The WCS object has a `_naxis` attribute, which is the number of dimensions.
+18. The WCS object has a `_init_kwargs` attribute, which is a dictionary of keyword arguments used to initialize the WCS object.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_wcs": {
+            "_init_kwargs": {
+                "keysel": {},
+                "colsel": {}
+            },
+            "naxis": 2,
+            "_naxis": 2,
+            "_pixel_bounds": [(0, 0), (0, 0)]
+        },
+        "_slices_array": [slice(None, None, None), slice(None, None, None)],
+        "_slices_pixel": [slice(None, None, None), slice(None, None, None)],
+        "_pixel_keep": [0, 1],
+        "_world_keep": [0, 1]
+    },
+    "args": {},
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/PYTHON]
+[PYTHON]
+import numpy as np
+from astropy.io import fits
+from astropy.wcs import WCS
+from astropy.wcs.utils import proj_plane_pixel_scales
+from astropy.wcs.wcsapi.fitswcs import FITSWCSAPIMixin
+from astropy.wcs.wcsapi.high_level_api import HighLevelWCSWrapper
+from astropy.wcs.wcsapi.low_level_api import BaseLowLevelWCS
+from astropy.wcs.wcsapi.utils import deserialize_class
+
+__all__ = ['WCS']
+
+class WCS(FITSWCSAPIMixin, HighLevelWCSWrapper, BaseLowLevelWCS):
+
+    def __init__(self, header, keysel=None, colsel=None, **kwargs):
+        self._init_kwargs = dict(header=header, keysel=keysel, colsel=colsel, **kwargs)
+        self._naxis = header.get('NAXIS', 0)
+        self._pixel_bounds = [(0, header.get('NAXIS{0}'.format(i + 1), 0) - 1) for i in range(self._naxis)]
+        self._slices_array = [slice(None, None, None) for i in range(self._naxis)]
+        self._slices_pixel = [slice(None, None, None) for i in range(self._naxis)]
+        self._pixel_keep = list(range(self._naxis))
+        self._world_keep = list(range(self._naxis))
+        self._wcs = deserialize_class(header, keysel, colsel, **kwargs)
+
+    def _pixel_to_world_values_all(self, *pixel_arrays):
+        pixel_arrays = tuple(map(np.asanyarray, pixel_arrays))
+        pixel_arrays_new = []
+        ipix_curr = -1
+        for ipix in range(self._wcs.pixel_n_dim):
+            if isinstance(self._slices_pixel[ipix], numbers.Integral):
+                pixel_arrays_new.append(self._slices_pixel[ipix])
+            else:
+                ipix_curr += 1
+                if self._slices_pixel[ipix].start is not None:
+                    pixel_arrays_new.append(pixel_arrays[ipix_curr] + self._slices_pixel[ipix].start)
+                else:
+                    pixel_arrays_new.append(pixel_arrays[ipix_curr])
+        pixel_arrays_new = np.broadcast_arrays(*pixel_arrays_new)
+        return self._wcs.pixel_to_world_values(*pixel_arrays_new)
+
+    def world_to_pixel_values(self, *world_arrays):
+        sliced_out_world_coords = self._pixel_to_world_values_all(*[0] * len(self._pixel_keep))
+        world_arrays = tuple(map(np.asanyarray, world_arrays))
+        world_arrays_new = []
+        iworld_curr = -1
+        for iworld in range(self._wcs.world_n_dim):
+            if iworld in self._world_keep:
+                iworld_curr += 1
+                world_arrays_new.append(world_arrays[iworld_curr])
+            else:
+                world_arrays_new.append(sliced_out_world_coords[iworld])
+        world_arrays_new = np.broadcast_arrays(*world_arrays_new)
+        pixel_arrays = list(self._wcs.world_to_pixel_values(*world_arrays_new))
+        for ipixel in range(self._wcs.pixel_n_dim):
+            if isinstance(self._slices_pixel[ipixel], slice) and self._slices_pixel[ipixel].start is not None:
+                pixel_arrays[ipixel] -= self._slices_pixel[ipixel].start
+        if isinstance(pixel_arrays, np.ndarray) and (not pixel_arrays.shape):
+            return pixel_arrays
+        pixel = tuple((pixel_arrays[ip] for ip in self._pixel_keep))
+        if self.pixel_n_dim == 1 and self._wcs.pixel_n_dim > 1:
+            pixel = pixel[0]
+        return pixel
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.astropy.wcs.wcs.WCS.pixel_n_dim
+
+def pixel_n_dim(self):
+    return self.naxis
+
+.astropy.wcs.wcs.WCS.pixel_to_world_values
+
+def pixel_to_world_values(self, *pixel_arrays):
+    from astropy.wcs.wcs import NoConvergence
+    try:
+        world = self.all_pix2world(*p

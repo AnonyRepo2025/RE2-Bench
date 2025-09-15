@@ -1,0 +1,46 @@
+`factor_terms` is a function that attempts to factor out common terms from an expression, particularly from the terms of a sum. The main work is done by the nested helper function `do`.
+
+Let's trace the execution with the given input.
+
+1.  **Input Parsing**: The `expr` argument is a string representation of a mathematical expression: `"-(\"sqrt(21)\" + 5)**(1/3) + \"sqrt(3)\"*I*(\"sqrt(21)\" + 5)**(1/3)"`. The `factor_terms` function first calls `sympify` on this string. The escaped quotes `\"` are part of the JSON representation; the actual string passed to `sympify` will be `-(sqrt(21) + 5)**(1/3) + sqrt(3)*I*(sqrt(21) + 5)**(1/3)`. `sympify` parses this into a SymPy expression object. Let's call this object `E`.
+    `E` is an `Add` expression with two terms:
+    *   Term A: `-(5 + sqrt(21))**(1/3)`
+    *   Term B: `I*sqrt(3)*(5 + sqrt(21))**(1/3)`
+
+2.  **`factor_terms` calls `do(E)`**: The `do` function is the core of the implementation.
+
+3.  **Inside `do(E)`**:
+    *   The input `E` is a SymPy `Add` object, so it's a `Basic` instance but not an `Atom`. The initial checks are passed.
+    *   The code proceeds to `cont, p = E.as_content_primitive(radical=False, clear=False)`. This method separates the "content" (numerical GCD of coefficients) from the "primitive" part of the expression.
+        *   For Term A, the content is 1.
+        *   For Term B, the content is 1.
+        *   The GCD of the contents is 1. So, `cont` becomes `1` and `p` remains the original expression `E`.
+    *   Next, `p.is_Add` is `True`. The code enters the `if` block for `Add` expressions.
+    *   `list_args = [do(a) for a in Add.make_args(p)]`: This recursively calls `do` on each term of the sum (`Term A` and `Term B`).
+        *   `do(Term A)`: `Term A` is a `Mul` expression. The recursive call will eventually return `Term A` unchanged because its components (`-1`, `(5 + sqrt(21))**(1/3)`) are already simplified.
+        *   `do(Term B)`: Similarly, this returns `Term B` unchanged.
+        *   So, `list_args` contains the original two terms.
+    *   The code checks if all terms are negative. This is false, as `Term B` is not negative.
+    *   The `special` dictionary logic is for handling non-standard powers, which is not relevant here.
+    *   `p = Add._from_args(list_args)`: `p` is reconstructed but is still equal to `E`.
+    *   `p = gcd_terms(p, ...)`: This is the crucial step. `gcd_terms` finds the greatest common divisor of the terms in an `Add` expression and factors it out.
+        *   The terms are `-(5 + sqrt(21))**(1/3)` and `I*sqrt(3)*(5 + sqrt(21))**(1/3)`.
+        *   The common factor is clearly `(5 + sqrt(21))**(1/3)`.
+        *   Factoring this out leaves `-1` from the first term and `I*sqrt(3)` from the second.
+        *   `gcd_terms` returns a `Mul` expression: `(5 + sqrt(21))**(1/3) * (-1 + I*sqrt(3))`.
+        *   So, `p` is now this factored `Mul` expression.
+    *   `rv = _keep_coeff(cont, p, ...)`: This function handles the final coefficient. Since `cont` is `1`, `_keep_coeff` simply returns `p` itself.
+
+4.  **Final Result**: The function `do` returns the factored expression `p`.
+
+5.  **String Representation**: The final step is to represent this SymPy object as a string. SymPy automatically sorts the arguments of associative operations like `Mul` for a canonical representation.
+    *   The factors are `(-1 + I*sqrt(3))` (an `Add` object) and `(5 + sqrt(21))**(1/3)` (a `Pow` object).
+    *   Based on SymPy's internal sorting order (`default_sort_key`), `Add` objects come before `Pow` objects.
+    *   Therefore, the final string representation will be `(-1 + I*sqrt(3))*(5 + sqrt(21))**(1/3)`.
+
+[OUTPUT]
+```json
+{
+    "return": "(-1 + I*sqrt(3))*(5 + sqrt(21))**(1/3)"
+}
+```

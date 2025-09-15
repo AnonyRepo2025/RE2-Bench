@@ -1,0 +1,59 @@
+import time
+import sys
+import itertools
+from math import ceil
+import numpy as np
+from scipy import linalg
+from joblib import Parallel, delayed, effective_n_jobs
+from ..base import BaseEstimator, TransformerMixin
+from ..utils import check_array, check_random_state, gen_even_slices, gen_batches
+from ..utils.extmath import randomized_svd, row_norms
+from ..utils.validation import check_is_fitted
+from ..linear_model import Lasso, orthogonal_mp_gram, LassoLars, Lars
+
+def _sparse_encode(X, dictionary, gram, cov=None, algorithm='lasso_lars', regularization=None, copy_cov=True, init=None, max_iter=1000, check_input=True, verbose=0, positive=False):
+    if X.ndim == 1:
+        X = X[:, np.newaxis]
+    n_samples, n_features = X.shape
+    n_components = dictionary.shape[0]
+    if dictionary.shape[1] != X.shape[1]:
+        raise ValueError('Dictionary and X have different numbers of features:dictionary.shape: {} X.shape{}'.format(dictionary.shape, X.shape))
+    if cov is None and algorithm != 'lasso_cd':
+        copy_cov = False
+        cov = np.dot(dictionary, X.T)
+    _check_positive_coding(algorithm, positive)
+    if algorithm == 'lasso_lars':
+        alpha = float(regularization) / n_features
+        try:
+            err_mgt = np.seterr(all='ignore')
+            lasso_lars = LassoLars(alpha=alpha, fit_intercept=False, verbose=verbose, normalize=False, precompute=gram, fit_path=False, positive=positive, max_iter=max_iter)
+            lasso_lars.fit(dictionary.T, X.T, Xy=cov)
+            new_code = lasso_lars.coef_
+        finally:
+            np.seterr(**err_mgt)
+    elif algorithm == 'lasso_cd':
+        alpha = float(regularization) / n_features
+        clf = Lasso(alpha=alpha, fit_intercept=False, normalize=False, precompute=gram, max_iter=max_iter, warm_start=True, positive=positive)
+        if init is not None:
+            clf.coef_ = init
+        clf.fit(dictionary.T, X.T, check_input=check_input)
+        new_code = clf.coef_
+    elif algorithm == 'lars':
+        try:
+            err_mgt = np.seterr(all='ignore')
+            lars = Lars(fit_intercept=False, verbose=verbose, normalize=False, precompute=gram, n_nonzero_coefs=int(regularization), fit_path=False)
+            lars.fit(dictionary.T, X.T, Xy=cov)
+            new_code = lars.coef_
+        finally:
+            np.seterr(**err_mgt)
+    elif algorithm == 'threshold':
+        new_code = (np.sign(cov) * np.maximum(np.abs(cov) - regularization, 0)).T
+        if positive:
+            np.clip(new_code, 0, None, out=new_code)
+    elif algorithm == 'omp':
+        new_code = orthogonal_mp_gram(Gram=gram, Xy=cov, n_nonzero_coefs=int(regularization), tol=None, norms_squared=row_norms(X, squared=True), copy_Xy=copy_cov).T
+    else:
+        raise ValueError('Sparse coding method must be "lasso_lars" "lasso_cd", "lasso", "threshold" or "omp", got %s.' % algorithm)
+    if new_code.ndim != 2:
+        return new_code.reshape(n_samples, n_components)
+    return new_code

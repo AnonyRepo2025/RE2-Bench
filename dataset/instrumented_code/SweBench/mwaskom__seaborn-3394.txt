@@ -1,0 +1,601 @@
+diff --git a/seaborn/_core/plot.py b/seaborn/_core/plot.py
+index a73af9b..66e4ec8 100644
+--- a/seaborn/_core/plot.py
++++ b/seaborn/_core/plot.py
+@@ -1392,11 +1392,11 @@ class Plotter:
+                         spec_error = PlotSpecError._during("Scaling operation", var)
+                         raise spec_error from err
+ 
+-            # Now the transformed data series are complete, set update the layer data
++            # Now the transformed data series are complete, update the layer data
+             for layer, new_series in zip(layers, transformed_data):
+                 layer_df = layer["data"].frame
+                 if var in layer_df:
+-                    layer_df[var] = new_series
++                    layer_df[var] = pd.to_numeric(new_series)
+ 
+     def _plot_layer(self, p: Plot, layer: Layer) -> None:
+ 
+diff --git a/seaborn/_core/rules.py b/seaborn/_core/rules.py
+index 7ba5247..f1357ec 100644
+--- a/seaborn/_core/rules.py
++++ b/seaborn/_core/rules.py
+@@ -1,4 +1,197 @@
+ from __future__ import annotations
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/mwaskom__seaborn-3394/seaborn/_core/rules.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ import warnings
+ from collections import UserString
+@@ -35,6 +228,7 @@ class VarType(UserString):
+         return self.data == other
+ 
+ 
++@inspect_code
+ def variable_type(
+     vector: Series,
+     boolean_type: Literal["numeric", "categorical", "boolean"] = "numeric",
+@@ -74,6 +268,9 @@ def variable_type(
+     if pd.isna(vector).all():
+         return VarType("numeric")
+ 
++    # Now drop nulls to simplify further type inference
++    vector = vector.dropna()
++
+     # Special-case binary/boolean data, allow caller to determine
+     # This triggers a numpy warning when vector has strings/objects
+     # https://github.com/numpy/numpy/issues/6784
+@@ -94,7 +291,7 @@ def variable_type(
+                 boolean_dtypes = ["bool"]
+             boolean_vector = vector.dtype in boolean_dtypes
+         else:
+-            boolean_vector = bool(np.isin(vector.dropna(), [0, 1]).all())
++            boolean_vector = bool(np.isin(vector, [0, 1]).all())
+         if boolean_vector:
+             return VarType(boolean_type)
+ 
+diff --git a/seaborn/_oldcore.py b/seaborn/_oldcore.py
+index f1dab46..088316b 100644
+--- a/seaborn/_oldcore.py
++++ b/seaborn/_oldcore.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/mwaskom__seaborn-3394/seaborn/_oldcore.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import warnings
+ import itertools
+ from copy import copy
+@@ -1097,6 +1290,7 @@ class VectorPlotter:
+             yield {}, data.copy()
+ 
+     @property
++    @inspect_code
+     def comp_data(self):
+         """Dataframe with numeric x and y, after unit conversion and log scaling."""
+         if not hasattr(self, "ax"):
+@@ -1128,7 +1322,7 @@ class VectorPlotter:
+                             # it is similar to GH2419, but more complicated because
+                             # supporting `order` in categorical plots is tricky
+                             orig = orig[orig.isin(self.var_levels[var])]
+-                    comp = pd.to_numeric(converter.convert_units(orig))
++                    comp = pd.to_numeric(converter.convert_units(orig)).astype(float)
+                     if converter.get_scale() == "log":
+                         comp = np.log10(comp)
+                     parts.append(pd.Series(comp, orig.index, name=orig.name))
+@@ -1472,6 +1666,7 @@ class VariableType(UserString):
+         return self.data == other
+ 
+ 
++@inspect_code
+ def variable_type(vector, boolean_type="numeric"):
+     """
+     Determine whether a vector contains numeric, categorical, or datetime data.
+@@ -1505,6 +1700,9 @@ def variable_type(vector, boolean_type="numeric"):
+     if pd.isna(vector).all():
+         return VariableType("numeric")
+ 
++    # At this point, drop nans to simplify further type inference
++    vector = vector.dropna()
++
+     # Special-case binary/boolean data, allow caller to determine
+     # This triggers a numpy warning when vector has strings/objects
+     # https://github.com/numpy/numpy/issues/6784
+@@ -1517,7 +1715,7 @@ def variable_type(vector, boolean_type="numeric"):
+         warnings.simplefilter(
+             action='ignore', category=(FutureWarning, DeprecationWarning)
+         )
+-        if np.isin(vector.dropna(), [0, 1]).all():
++        if np.isin(vector, [0, 1]).all():
+             return VariableType(boolean_type)
+ 
+     # Defer to positive pandas tests
+diff --git a/tests/_core/test_rules.py b/tests/_core/test_rules.py
+index c7617ec..714d5ea 100644
+--- a/tests/_core/test_rules.py
++++ b/tests/_core/test_rules.py
+@@ -38,6 +38,12 @@ def test_variable_type():
+     s = pd.Series([pd.NA, pd.NA])
+     assert variable_type(s) == "numeric"
+ 
++    s = pd.Series([1, 2, pd.NA], dtype="Int64")
++    assert variable_type(s) == "numeric"
++
++    s = pd.Series([1, 2, pd.NA], dtype=object)
++    assert variable_type(s) == "numeric"
++
+     s = pd.Series(["1", "2", "3"])
+     assert variable_type(s) == "categorical"
+ 
+diff --git a/tests/test_core.py b/tests/test_core.py
+index 1e52868..7b25688 100644
+--- a/tests/test_core.py
++++ b/tests/test_core.py
+@@ -23,16 +23,9 @@ from seaborn._oldcore import (
+     categorical_order,
+ )
+ from seaborn.utils import desaturate
+-
+ from seaborn.palettes import color_palette
+ 
+ 
+-try:
+-    from pandas import NA as PD_NA
+-except ImportError:
+-    PD_NA = None
+-
+-
+ @pytest.fixture(params=[
+     dict(x="x", y="y"),
+     dict(x="t", y="y"),
+@@ -1302,13 +1295,11 @@ class TestVectorPlotter:
+ 
+     @pytest.fixture(
+         params=itertools.product(
+-            [None, np.nan, PD_NA],
+-            ["numeric", "category", "datetime"]
++            [None, np.nan, pd.NA],
++            ["numeric", "category", "datetime"],
+         )
+     )
+-    @pytest.mark.parametrize(
+-        "NA,var_type",
+-    )
++    @pytest.mark.parametrize("NA,var_type")
+     def comp_data_missing_fixture(self, request):
+ 
+         # This fixture holds the logic for parameterizing
+@@ -1316,14 +1307,11 @@ class TestVectorPlotter:
+ 
+         NA, var_type = request.param
+ 
+-        if NA is None:
+-            pytest.skip("No pandas.NA available")
+-
+         comp_data = [0, 1, np.nan, 2, np.nan, 1]
+         if var_type == "numeric":
+             orig_data = [0, 1, NA, 2, np.inf, 1]
+         elif var_type == "category":
+-            orig_data = ["a", "b", NA, "c", NA, "b"]
++            orig_data = ["a", "b", NA, "c", pd.NA, "b"]
+         elif var_type == "datetime":
+             # Use 1-based numbers to avoid issue on matplotlib<3.2
+             # Could simplify the test a bit when we roll off that version
+@@ -1343,6 +1331,7 @@ class TestVectorPlotter:
+         ax = plt.figure().subplots()
+         p._attach(ax)
+         assert_array_equal(p.comp_data["x"], comp_data)
++        assert p.comp_data["x"].dtype == "float"
+ 
+     def test_comp_data_duplicate_index(self):
+ 
+@@ -1352,6 +1341,15 @@ class TestVectorPlotter:
+         p._attach(ax)
+         assert_array_equal(p.comp_data["x"], x)
+ 
++    def test_comp_data_nullable_dtype(self):
++
++        x = pd.Series([1, 2, 3, 4], dtype="Int64")
++        p = VectorPlotter(variables={"x": x})
++        ax = plt.figure().subplots()
++        p._attach(ax)
++        assert_array_equal(p.comp_data["x"], x)
++        assert p.comp_data["x"].dtype == "float"
++
+     def test_var_order(self, long_df):
+ 
+         order = ["c", "b", "a"]
+@@ -1456,7 +1454,12 @@ class TestCoreFunc:
+         assert variable_type(s) == "numeric"
+ 
+         s = pd.Series([np.nan, np.nan])
+-        # s = pd.Series([pd.NA, pd.NA])
++        assert variable_type(s) == "numeric"
++
++        s = pd.Series([pd.NA, pd.NA])
++        assert variable_type(s) == "numeric"
++
++        s = pd.Series([1, 2, pd.NA], dtype="Int64")
+         assert variable_type(s) == "numeric"
+ 
+         s = pd.Series(["1", "2", "3"])

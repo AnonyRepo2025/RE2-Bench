@@ -1,0 +1,389 @@
+diff --git a/sympy/sets/handlers/intersection.py b/sympy/sets/handlers/intersection.py
+index 8710b6d..3eb395a 100644
+--- a/sympy/sets/handlers/intersection.py
++++ b/sympy/sets/handlers/intersection.py
+@@ -235,26 +235,46 @@ def intersection_sets(self, other): # noqa:F811
+     # diophantine equations f(n)=g(m).
+     # If the solutions for n are {h(t) : t in Integers} then we return
+     # {f(h(t)) : t in integers}.
++    # If the solutions for n are {n_1, n_2, ..., n_k} then we return
++    # {f(n_i) : 1 <= i <= k}.
+     if base_set is S.Integers:
+         gm = None
+         if isinstance(other, ImageSet) and other.base_sets == (S.Integers,):
+             gm = other.lamda.expr
+-            m = other.lamda.variables[0]
++            var = other.lamda.variables[0]
++            # Symbol of second ImageSet lambda must be distinct from first
++            m = Dummy('m')
++            gm = gm.subs(var, m)
+         elif other is S.Integers:
+-            m = gm = Dummy('x')
++            m = gm = Dummy('m')
+         if gm is not None:
+             fn = self.lamda.expr
+             n = self.lamda.variables[0]
+-            solns = list(diophantine(fn - gm, syms=(n, m)))
++            try:
++                solns = list(diophantine(fn - gm, syms=(n, m), permute=True))
++            except (TypeError, NotImplementedError):
++                # TypeError if equation not polynomial with rational coeff.
++                # NotImplementedError if correct format but no solver.
++                return
++            # 3 cases are possible for solns:
++            # - empty set,
++            # - one or more parametric (infinite) solutions,
++            # - a finite number of (non-parametric) solution couples.
++            # Among those, there is one type of solution set that is
++            # not helpful here: multiple parametric solutions.
+             if len(solns) == 0:
+                 return EmptySet
+-            elif len(solns) != 1:
+-                return
++            elif any(not isinstance(s, int) and s.free_symbols
++                     for tupl in solns for s in tupl):
++                if len(solns) == 1:
++                    soln, solm = solns[0]
++                    (t,) = soln.free_symbols
++                    expr = fn.subs(n, soln.subs(t, n)).expand()
++                    return imageset(Lambda(n, expr), S.Integers)
++                else:
++                    return
+             else:
+-                soln, solm = solns[0]
+-                (t,) = soln.free_symbols
+-                expr = fn.subs(n, soln.subs(t, n))
+-                return imageset(Lambda(n, expr), S.Integers)
++                return FiniteSet(*(fn.subs(n, s[0]) for s in solns))
+ 
+     if other == S.Reals:
+         from sympy.solvers.solveset import solveset_real
+diff --git a/sympy/sets/tests/test_fancysets.py b/sympy/sets/tests/test_fancysets.py
+index 925ca14..921becb 100644
+--- a/sympy/sets/tests/test_fancysets.py
++++ b/sympy/sets/tests/test_fancysets.py
+@@ -618,6 +618,49 @@ def test_imageset_intersect_interval():
+     assert f9.intersect(Interval(1, 2)) == Intersection(f9, Interval(1, 2))
+ 
+ 
++def test_imageset_intersect_diophantine():
++    from sympy.abc import m, n
++    # Check that same lambda variable for both ImageSets is handled correctly
++    img1 = ImageSet(Lambda(n, 2*n + 1), S.Integers)
++    img2 = ImageSet(Lambda(n, 4*n + 1), S.Integers)
++    assert img1.intersect(img2) == img2
++    # Empty solution set returned by diophantine:
++    assert ImageSet(Lambda(n, 2*n), S.Integers).intersect(
++            ImageSet(Lambda(n, 2*n + 1), S.Integers)) == S.EmptySet
++    # Check intersection with S.Integers:
++    assert ImageSet(Lambda(n, 9/n + 20*n/3), S.Integers).intersect(
++            S.Integers) == FiniteSet(-61, -23, 23, 61)
++    # Single solution (2, 3) for diophantine solution:
++    assert ImageSet(Lambda(n, (n - 2)**2), S.Integers).intersect(
++            ImageSet(Lambda(n, -(n - 3)**2), S.Integers)) == FiniteSet(0)
++    # Single parametric solution for diophantine solution:
++    assert ImageSet(Lambda(n, n**2 + 5), S.Integers).intersect(
++            ImageSet(Lambda(m, 2*m), S.Integers)) == ImageSet(
++            Lambda(n, 4*n**2 + 4*n + 6), S.Integers)
++    # 4 non-parametric solution couples for dioph. equation:
++    assert ImageSet(Lambda(n, n**2 - 9), S.Integers).intersect(
++            ImageSet(Lambda(m, -m**2), S.Integers)) == FiniteSet(-9, 0)
++    # Double parametric solution for diophantine solution:
++    assert ImageSet(Lambda(m, m**2 + 40), S.Integers).intersect(
++            ImageSet(Lambda(n, 41*n), S.Integers)) == Intersection(
++            ImageSet(Lambda(m, m**2 + 40), S.Integers),
++            ImageSet(Lambda(n, 41*n), S.Integers))
++    # Check that diophantine returns *all* (8) solutions (permute=True)
++    assert ImageSet(Lambda(n, n**4 - 2**4), S.Integers).intersect(
++            ImageSet(Lambda(m, -m**4 + 3**4), S.Integers)) == FiniteSet(0, 65)
++    assert ImageSet(Lambda(n, pi/12 + n*5*pi/12), S.Integers).intersect(
++            ImageSet(Lambda(n, 7*pi/12 + n*11*pi/12), S.Integers)) == ImageSet(
++            Lambda(n, 55*pi*n/12 + 17*pi/4), S.Integers)
++    # TypeError raised by diophantine (#18081)
++    assert ImageSet(Lambda(n, n*log(2)), S.Integers).intersection(S.Integers) \
++            == Intersection(ImageSet(Lambda(n, n*log(2)), S.Integers), S.Integers)
++    # NotImplementedError raised by diophantine (no solver for cubic_thue)
++    assert ImageSet(Lambda(n, n**3 + 1), S.Integers).intersect(
++            ImageSet(Lambda(n, n**3), S.Integers)) == Intersection(
++            ImageSet(Lambda(n, n**3 + 1), S.Integers),
++            ImageSet(Lambda(n, n**3), S.Integers))
++
++
+ def test_infinitely_indexed_set_3():
+     from sympy.abc import n, m, t
+     assert imageset(Lambda(m, 2*pi*m), S.Integers).intersect(
+@@ -656,7 +699,6 @@ def test_ImageSet_contains():
+ 
+ 
+ def test_ComplexRegion_contains():
+-
+     # contains in ComplexRegion
+     a = Interval(2, 3)
+     b = Interval(4, 6)
+@@ -687,7 +729,6 @@ def test_ComplexRegion_contains():
+ 
+ 
+ def test_ComplexRegion_intersect():
+-
+     # Polar form
+     X_axis = ComplexRegion(Interval(0, oo)*FiniteSet(0, S.Pi), polar=True)
+ 
+@@ -735,7 +776,6 @@ def test_ComplexRegion_intersect():
+ 
+ 
+ def test_ComplexRegion_union():
+-
+     # Polar form
+     c1 = ComplexRegion(Interval(0, 1)*Interval(0, 2*S.Pi), polar=True)
+     c2 = ComplexRegion(Interval(0, 1)*Interval(0, S.Pi), polar=True)
+@@ -782,7 +822,6 @@ def test_ComplexRegion_measure():
+ 
+ 
+ def test_normalize_theta_set():
+-
+     # Interval
+     assert normalize_theta_set(Interval(pi, 2*pi)) == \
+         Union(FiniteSet(0), Interval.Ropen(pi, 2*pi))
+diff --git a/sympy/solvers/diophantine.py b/sympy/solvers/diophantine.py
+index b43f5c1..8cff3ec 100644
+--- a/sympy/solvers/diophantine.py
++++ b/sympy/solvers/diophantine.py
+@@ -1,4 +1,197 @@
+ from __future__ import print_function, division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-18200/sympy/solvers/diophantine.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ from sympy.core.add import Add
+ from sympy.core.compatibility import as_int, is_sequence, range
+@@ -98,6 +291,7 @@ def _even(i):
+     return i % 2 == 0
+ 
+ 
++@inspect_code
+ def diophantine(eq, param=symbols("t", integer=True), syms=None,
+                 permute=False):
+     """
+@@ -294,7 +488,10 @@ def diophantine(eq, param=symbols("t", integer=True), syms=None,
+         else:
+             raise TypeError
+     except (TypeError, NotImplementedError):
+-        terms = factor_list(eq)[1]
++        fl = factor_list(eq)
++        if fl[0].is_Rational and fl[0] != 1:
++            return diophantine(eq/fl[0], param=param, syms=syms, permute=permute)
++        terms = fl[1]
+ 
+     sols = set([])
+ 
+diff --git a/sympy/solvers/tests/test_diophantine.py b/sympy/solvers/tests/test_diophantine.py
+index 19b261e..b25c1cb 100644
+--- a/sympy/solvers/tests/test_diophantine.py
++++ b/sympy/solvers/tests/test_diophantine.py
+@@ -487,12 +487,15 @@ def test_diophantine():
+     assert check_solutions((x**2 - 3*y**2 - 1)*(y - 7*z))
+     assert check_solutions((x**2 + y**2 - z**2)*(x - 7*y - 3*z + 4*w))
+     # Following test case caused problems in parametric representation
+-    # But this can be solved by factroing out y.
++    # But this can be solved by factoring out y.
+     # No need to use methods for ternary quadratic equations.
+     assert check_solutions(y**2 - 7*x*y + 4*y*z)
+     assert check_solutions(x**2 - 2*x + 1)
+ 
+     assert diophantine(x - y) == diophantine(Eq(x, y))
++    # 18196
++    eq = x**4 + y**4 - 97
++    assert diophantine(eq, permute=True) == diophantine(-eq, permute=True)
+     assert diophantine(3*x*pi - 2*y*pi) == set([(2*t_0, 3*t_0)])
+     eq = x**2 + y**2 + z**2 - 14
+     base_sol = set([(1, 2, 3)])

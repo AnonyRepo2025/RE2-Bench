@@ -1,0 +1,474 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. You need to predict output variable values, and print output between [OUTPUT] and [\OUTPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT].
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[THOUGHT]
+1. Inside `mktemp`, since `numbered`=True (default), it calls: p = make_numbered_dir(root=self.getbasetemp(), prefix="world")
+2. Inside `getbasetemp`, since `_basetemp` is None, so basetemp = Path("/tmp/pytest-of-root/pytest-0/test_mktemp0"). Therefore, getbasetemp() returns "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+3. Inside `make_numbered_dir`:
+    root = /tmp/pytest-of-root/pytest-0/test_mktemp0
+    prefix = "world"
+    Since max_existing = -1, new_number = 0, so `new_path` = "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+[/THOUGHT]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[PYTHON]
+from __future__ import print_function, division
+from sympy.core.sympify import _sympify, sympify
+from sympy.core.basic import Basic, _aresame
+from sympy.core.cache import cacheit
+from sympy.core.compatibility import ordered, range
+from sympy.core.logic import fuzzy_and
+from sympy.core.evaluate import global_evaluate
+from sympy import Order
+from .expr import Add, Expr
+from sympy import Mul
+from .function import WildFunction
+from .symbol import Wild
+from .add import Add
+from .mul import Mul
+from .symbol import Symbol
+from .function import AppliedUndef
+from sympy.simplify.radsimp import collect
+
+class AssocOp(Basic):
+    __slots__ = ['is_commutative']
+
+    @cacheit
+    def __new__(cls, *args, **options):
+        from sympy import Order
+        args = list(map(_sympify, args))
+        args = [a for a in args if a is not cls.identity]
+        if not options.pop('evaluate', global_evaluate[0]):
+            return cls._from_args(args)
+        if len(args) == 0:
+            return cls.identity
+        if len(args) == 1:
+            return args[0]
+        c_part, nc_part, order_symbols = cls.flatten(args)
+        is_commutative = not nc_part
+        obj = cls._from_args(c_part + nc_part, is_commutative)
+        obj = cls._exec_constructor_postprocessors(obj)
+        if order_symbols is not None:
+            return Order(obj, *order_symbols)
+        return obj
+
+    @classmethod
+    def _from_args(cls, args, is_commutative=None):
+        if len(args) == 0:
+            return cls.identity
+        elif len(args) == 1:
+            return args[0]
+        obj = super(AssocOp, cls).__new__(cls, *args)
+        if is_commutative is None:
+            is_commutative = fuzzy_and((a.is_commutative for a in args))
+        obj.is_commutative = is_commutative
+        return obj
+
+    def _eval_evalf(self, prec):
+        from .add import Add
+        from .mul import Mul
+        from .symbol import Symbol
+        from .function import AppliedUndef
+        if isinstance(self, (Mul, Add)):
+            x, tail = self.as_independent(Symbol, AppliedUndef)
+            if not (tail is self.identity or (isinstance(x, AssocOp) and x.is_Function) or (x is self.identity and isinstance(tail, AssocOp))):
+                x = x._evalf(prec) if x is not self.identity else self.identity
+                args = []
+                tail_args = tuple(self.func.make_args(tail))
+                for a in tail_args:
+                    newa = a._eval_evalf(prec)
+                    if newa is None:
+                        args.append(a)
+                    else:
+                        args.append(newa)
+                return self.func(x, *args)
+        args = []
+        for a in self.args:
+            newa = a._eval_evalf(prec)
+            if newa is None:
+                args.append(a)
+            else:
+                args.append(newa)
+        return self.func(*args)
+
+    @classmethod
+    def make_args(cls, expr):
+        if isinstance(expr, cls):
+            return expr.args
+        else:
+            return (sympify(expr),)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.core.expr.Expr.as_independent
+
+def as_independent(self, *deps, **hint):
+    from .symbol import Symbol
+    from .add import _unevaluated_Add
+    from .mul import _unevaluated_Mul
+    from sympy.utilities.iterables import sift
+    if self.is_zero:
+        return (S.Zero, S.Zero)
+    func = self.func
+    if hint.get('as_Add', func is Add):
+        want = Add
+    else:
+        want = Mul
+    sym = set()
+    other = []
+    for d in deps:
+        if isinstance(d, Symbol):
+            sym.add(d)
+        else:
+            other.append(d)
+
+    def has(e):
+        has_other = e.has(*other)
+        if not sym:
+            return has_other
+        return has_other or e.has(*e.free_symbols & sym)
+    if want is not func or (func is not Add and func is not Mul):
+        if has(self):
+            return (want.identity, self)
+        else:
+            return (self, want.identity)
+    elif func is Add:
+        args = list(self.args)
+    else:
+        args, nc = self.args_cnc()
+    d = sift(args, lambda x: has(x))
+    depend = d[True]
+    indep = d[False]
+    if func is Add:
+        return (Add(*indep), _unevaluated_Add(*depend))
+    else:
+        for i, n in enumerate(nc):
+            if has(n):
+                depend.extend(nc[i:])
+                break
+            indep.append(n)
+        return (Mul(*indep), Mul(*depend, evaluate=False) if nc else _unevaluated_Mul(*depend))
+
+.sympy.core.assumptions.getit
+
+def getit(self):
+    try:
+        return self._assumptions[fact]
+    except KeyError:
+        if self._assumptions is self.default_assumptions:
+            self._assumptions = self.default_assumptions.copy()
+        return _ask(fact, self)
+
+.sympy.core.basic.Basic.func
+
+def func(self):
+    return self.__class__
+
+.sympy.core.basic.Basic.args
+
+def args(self):
+    return self._args
+
+.sympy.utilities.iterables.sift
+
+def sift(seq, keyfunc):
+    m = defaultdict(list)
+    for i in seq:
+        m[keyfunc(i)].append(i)
+    return m
+
+.sympy.core.expr.Expr.has
+
+def has(e):
+    has_other = e.has(*other)
+    if not sym:
+        return has_other
+    return has_other or e.has(*e.free_symbols & sym)
+
+.sympy.core.basic.Basic.has
+
+def has(self, *patterns):
+    return any((self._has(pattern) for pattern in patterns))
+
+.sympy.core.basic.Basic._has
+
+def _has(self, pattern):
+    from sympy.core.function import UndefinedFunction, Function
+    if isinstance(pattern, UndefinedFunction):
+        return any((f.func == pattern or f == pattern for f in self.atoms(Function, UndefinedFunction)))
+    pattern = sympify(pattern)
+    if isinstance(pattern, BasicMeta):
+        return any((isinstance(arg, pattern) for arg in preorder_traversal(self)))
+    try:
+        match = pattern._has_matcher()
+        return any((match(arg) for arg in preorder_traversal(self)))
+    except AttributeError:
+        return any((arg == pattern for arg in preorder_traversal(self)))
+
+.sympy.core.sympify.sympify
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            if not isinstance(a, np.floating):
+                func = converter[complex] if np.iscomplex(a) else sympify
+                return func(np.asscalar(a))
+            else:
+                try:
+                    from sympy.core.numbers import Float
+                    prec = np.finfo(a).nmant
+                    a = str(list(np.reshape(np.asarray(a), (1, np.size(a)))[0]))[1:-1]
+                    return Float(a, precision=prec)
+                except NotImplementedError:
+                    raise SympifyError('Translation for numpy float : %s is not implemented' % a)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    try:
+        from ..tensor.array import Array
+        return Array(a.flat, a.shape)
+    except AttributeError:
+        pass
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+.sympy.core.basic.preorder_traversal.__init__
+
+def __init__(self, node, keys=None):
+    self._skip_flag = False
+    self._pt = self._preorder_traversal(node, keys)
+
+.sympy.core.basic.preorder_traversal.__iter__
+
+def __iter__(self):
+    return self
+
+.sympy.core.basic.preorder_traversal.__next__
+
+def __next__(self):
+    return next(self._pt)
+
+.sympy.core.basic.preorder_traversal._preorder_traversal
+
+def _preorder_traversal(self, node, keys):
+    yield node
+    if self._skip_flag:
+        self._skip_flag = False
+        return
+    if isinstance(node, Basic):
+        if not keys and hasattr(node, '_argset'):
+            args = node._argset
+        else:
+            args = node.args
+        if keys:
+            if keys != True:
+                args = ordered(args, keys, default=False)
+            else:
+                args = ordered(args)
+        for arg in args:
+            for subtree in self._preorder_traversal(arg, keys):
+                yield subtree
+    elif iterable(node):
+        for item in node:
+            for subtree in self._preorder_traversal(item, keys):
+                yield subtree
+
+.sympy.core.sympify._sympify
+
+def _sympify(a):
+    return sympify(a, strict=True)
+
+.sympy.core.numbers.Integer.__hash__
+
+def __hash__(self):
+    return hash(self.p)
+
+
+[/PYTHON]
+What will be the output of `_eval_evalf`, given the following input:
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "prec": 2
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[THOUGHT]

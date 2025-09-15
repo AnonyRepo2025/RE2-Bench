@@ -1,0 +1,401 @@
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index eac6110..aebf777 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-11062/django/db/models/sql/query.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Create SQL statements for QuerySets.
+ 
+@@ -21,7 +214,9 @@ from django.core.exceptions import (
+ from django.db import DEFAULT_DB_ALIAS, NotSupportedError, connections
+ from django.db.models.aggregates import Count
+ from django.db.models.constants import LOOKUP_SEP
+-from django.db.models.expressions import BaseExpression, Col, F, Ref, SimpleCol
++from django.db.models.expressions import (
++    BaseExpression, Col, F, OuterRef, Ref, SimpleCol,
++)
+ from django.db.models.fields import Field
+ from django.db.models.fields.related_lookups import MultiColSource
+ from django.db.models.lookups import Lookup
+@@ -352,6 +547,7 @@ class Query(BaseExpression):
+         clone.change_aliases(change_map)
+         return clone
+ 
++    @inspect_code
+     def rewrite_cols(self, annotation, col_cnt):
+         # We must make sure the inner query has the referred columns in it.
+         # If we are aggregating over an annotation, then Django uses Ref()
+@@ -380,22 +576,31 @@ class Query(BaseExpression):
+                 # before the contains_aggregate/is_summary condition below.
+                 new_expr, col_cnt = self.rewrite_cols(expr, col_cnt)
+                 new_exprs.append(new_expr)
+-            elif isinstance(expr, Col) or (expr.contains_aggregate and not expr.is_summary):
+-                # Reference to column. Make sure the referenced column
+-                # is selected.
+-                col_cnt += 1
+-                col_alias = '__col%d' % col_cnt
+-                self.annotations[col_alias] = expr
+-                self.append_annotation_mask([col_alias])
+-                new_exprs.append(Ref(col_alias, expr))
+             else:
+-                # Some other expression not referencing database values
+-                # directly. Its subexpression might contain Cols.
+-                new_expr, col_cnt = self.rewrite_cols(expr, col_cnt)
++                # Reuse aliases of expressions already selected in subquery.
++                for col_alias, selected_annotation in self.annotation_select.items():
++                    if selected_annotation == expr:
++                        new_expr = Ref(col_alias, expr)
++                        break
++                else:
++                    # An expression that is not selected the subquery.
++                    if isinstance(expr, Col) or (expr.contains_aggregate and not expr.is_summary):
++                        # Reference column or another aggregate. Select it
++                        # under a non-conflicting alias.
++                        col_cnt += 1
++                        col_alias = '__col%d' % col_cnt
++                        self.annotations[col_alias] = expr
++                        self.append_annotation_mask([col_alias])
++                        new_expr = Ref(col_alias, expr)
++                    else:
++                        # Some other expression not referencing database values
++                        # directly. Its subexpression might contain Cols.
++                        new_expr, col_cnt = self.rewrite_cols(expr, col_cnt)
+                 new_exprs.append(new_expr)
+         annotation.set_source_expressions(new_exprs)
+         return annotation, col_cnt
+ 
++    @inspect_code
+     def get_aggregation(self, using, added_aggregate_names):
+         """
+         Return the dictionary with the values of the existing aggregations.
+@@ -403,11 +608,11 @@ class Query(BaseExpression):
+         if not self.annotation_select:
+             return {}
+         has_limit = self.low_mark != 0 or self.high_mark is not None
+-        has_existing_annotations = any(
++        existing_annotations = [
+             annotation for alias, annotation
+             in self.annotations.items()
+             if alias not in added_aggregate_names
+-        )
++        ]
+         # Decide if we need to use a subquery.
+         #
+         # Existing annotations would cause incorrect results as get_aggregation()
+@@ -419,13 +624,14 @@ class Query(BaseExpression):
+         # those operations must be done in a subquery so that the query
+         # aggregates on the limit and/or distinct results instead of applying
+         # the distinct and limit after the aggregation.
+-        if (isinstance(self.group_by, tuple) or has_limit or has_existing_annotations or
++        if (isinstance(self.group_by, tuple) or has_limit or existing_annotations or
+                 self.distinct or self.combinator):
+             from django.db.models.sql.subqueries import AggregateQuery
+             outer_query = AggregateQuery(self.model)
+             inner_query = self.clone()
+             inner_query.select_for_update = False
+             inner_query.select_related = False
++            inner_query.set_annotation_mask(self.annotation_select)
+             if not has_limit and not self.distinct_fields:
+                 # Queries with distinct_fields need ordering and when a limit
+                 # is applied we must take the slice from the ordered query.
+@@ -437,7 +643,11 @@ class Query(BaseExpression):
+                 # query is grouped by the main model's primary key. However,
+                 # clearing the select clause can alter results if distinct is
+                 # used.
+-                if inner_query.default_cols and has_existing_annotations:
++                has_existing_aggregate_annotations = any(
++                    annotation for annotation in existing_annotations
++                    if getattr(annotation, 'contains_aggregate', True)
++                )
++                if inner_query.default_cols and has_existing_aggregate_annotations:
+                     inner_query.group_by = (self.model._meta.pk.get_col(inner_query.get_initial_alias()),)
+                 inner_query.default_cols = False
+ 
+@@ -447,10 +657,12 @@ class Query(BaseExpression):
+             # and move them to the outer AggregateQuery.
+             col_cnt = 0
+             for alias, expression in list(inner_query.annotation_select.items()):
++                annotation_select_mask = inner_query.annotation_select_mask
+                 if expression.is_summary:
+                     expression, col_cnt = inner_query.rewrite_cols(expression, col_cnt)
+                     outer_query.annotations[alias] = expression.relabeled_clone(relabels)
+                     del inner_query.annotations[alias]
++                    annotation_select_mask.remove(alias)
+                 # Make sure the annotation_select wont use cached results.
+                 inner_query.set_annotation_mask(inner_query.annotation_select_mask)
+             if inner_query.select == () and not inner_query.default_cols and not inner_query.annotation_select_mask:
+@@ -1620,6 +1832,7 @@ class Query(BaseExpression):
+             col = _get_col(targets[0], join_info.targets[0], join_list[-1], simple_col)
+             return col
+ 
++    @inspect_code
+     def split_exclude(self, filter_expr, can_reuse, names_with_path):
+         """
+         When doing an exclude against any kind of N-to-many relation, we need
+@@ -1639,6 +1852,9 @@ class Query(BaseExpression):
+         saner null handling, and is easier for the backend's optimizer to
+         handle.
+         """
++        filter_lhs, filter_rhs = filter_expr
++        if isinstance(filter_rhs, F):
++            filter_expr = (filter_lhs, OuterRef(filter_rhs.name))
+         # Generate the inner query.
+         query = Query(self.model)
+         query.add_filter(filter_expr)
+diff --git a/tests/aggregation/test_filter_argument.py b/tests/aggregation/test_filter_argument.py
+index 63dee59..5848fc9 100644
+--- a/tests/aggregation/test_filter_argument.py
++++ b/tests/aggregation/test_filter_argument.py
+@@ -87,3 +87,11 @@ class FilteredAggregateTests(TestCase):
+             older_friends_count__gte=2,
+         )
+         self.assertEqual(qs.get(pk__in=qs.values('pk')), self.a1)
++
++    def test_filtered_aggregate_ref_annotation(self):
++        aggs = Author.objects.annotate(
++            double_age=F('age') * 2,
++        ).aggregate(
++            cnt=Count('pk', filter=Q(double_age__gt=100)),
++        )
++        self.assertEqual(aggs['cnt'], 2)
+diff --git a/tests/expressions/tests.py b/tests/expressions/tests.py
+index cc03e83..c19178b 100644
+--- a/tests/expressions/tests.py
++++ b/tests/expressions/tests.py
+@@ -551,6 +551,26 @@ class BasicExpressionsTests(TestCase):
+         )
+         self.assertEqual(qs.get().float, 1.2)
+ 
++    def test_aggregate_subquery_annotation(self):
++        with self.assertNumQueries(1) as ctx:
++            aggregate = Company.objects.annotate(
++                ceo_salary=Subquery(
++                    Employee.objects.filter(
++                        id=OuterRef('ceo_id'),
++                    ).values('salary')
++                ),
++            ).aggregate(
++                ceo_salary_gt_20=Count('pk', filter=Q(ceo_salary__gt=20)),
++            )
++        self.assertEqual(aggregate, {'ceo_salary_gt_20': 1})
++        # Aggregation over a subquery annotation doesn't annotate the subquery
++        # twice in the inner query.
++        sql = ctx.captured_queries[0]['sql']
++        self.assertLessEqual(sql.count('SELECT'), 3)
++        # GROUP BY isn't required to aggregate over a query that doesn't
++        # contain nested aggregates.
++        self.assertNotIn('GROUP BY', sql)
++
+     def test_explicit_output_field(self):
+         class FuncA(Func):
+             output_field = models.CharField()
+diff --git a/tests/queries/tests.py b/tests/queries/tests.py
+index 76f42fe..373a0e2 100644
+--- a/tests/queries/tests.py
++++ b/tests/queries/tests.py
+@@ -2776,6 +2776,12 @@ class ExcludeTests(TestCase):
+             employment__title__in=('Engineer', 'Developer')).distinct().order_by('name')
+         self.assertSequenceEqual(alex_nontech_employers, [google, intel, microsoft])
+ 
++    def test_exclude_reverse_fk_field_ref(self):
++        tag = Tag.objects.create()
++        Note.objects.create(tag=tag, note='note')
++        annotation = Annotation.objects.create(name='annotation', tag=tag)
++        self.assertEqual(Annotation.objects.exclude(tag__note__note=F('name')).get(), annotation)
++
+ 
+ class ExcludeTest17600(TestCase):
+     """

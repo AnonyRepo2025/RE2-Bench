@@ -1,0 +1,269 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. You need to predict output variable values, and print output between [OUTPUT] and [\OUTPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT].
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[THOUGHT]
+1. Inside `mktemp`, since `numbered`=True (default), it calls: p = make_numbered_dir(root=self.getbasetemp(), prefix="world")
+2. Inside `getbasetemp`, since `_basetemp` is None, so basetemp = Path("/tmp/pytest-of-root/pytest-0/test_mktemp0"). Therefore, getbasetemp() returns "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+3. Inside `make_numbered_dir`:
+    root = /tmp/pytest-of-root/pytest-0/test_mktemp0
+    prefix = "world"
+    Since max_existing = -1, new_number = 0, so `new_path` = "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+[/THOUGHT]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[PYTHON]
+import os
+import re
+import time
+import hashlib
+import logging
+from base64 import b64encode
+from .compat import urlparse, str
+from .utils import parse_dict_header
+log = logging.getLogger(__name__)
+CONTENT_TYPE_FORM_URLENCODED = 'application/x-www-form-urlencoded'
+CONTENT_TYPE_MULTI_PART = 'multipart/form-data'
+
+class HTTPDigestAuth(AuthBase):
+
+    def __init__(self, username, password):
+        self.username = username
+        self.password = password
+        self.last_nonce = ''
+        self.nonce_count = 0
+        self.chal = {}
+        self.pos = None
+
+    def build_digest_header(self, method, url):
+        realm = self.chal['realm']
+        nonce = self.chal['nonce']
+        qop = self.chal.get('qop')
+        algorithm = self.chal.get('algorithm')
+        opaque = self.chal.get('opaque')
+        if algorithm is None:
+            _algorithm = 'MD5'
+        else:
+            _algorithm = algorithm.upper()
+        if _algorithm == 'MD5' or _algorithm == 'MD5-SESS':
+
+            def md5_utf8(x):
+                if isinstance(x, str):
+                    x = x.encode('utf-8')
+                return hashlib.md5(x).hexdigest()
+            hash_utf8 = md5_utf8
+        elif _algorithm == 'SHA':
+
+            def sha_utf8(x):
+                if isinstance(x, str):
+                    x = x.encode('utf-8')
+                return hashlib.sha1(x).hexdigest()
+            hash_utf8 = sha_utf8
+        KD = lambda s, d: hash_utf8('%s:%s' % (s, d))
+        if hash_utf8 is None:
+            return None
+        entdig = None
+        p_parsed = urlparse(url)
+        path = p_parsed.path
+        if p_parsed.query:
+            path += '?' + p_parsed.query
+        A1 = '%s:%s:%s' % (self.username, realm, self.password)
+        A2 = '%s:%s' % (method, path)
+        HA1 = hash_utf8(A1)
+        HA2 = hash_utf8(A2)
+        if nonce == self.last_nonce:
+            self.nonce_count += 1
+        else:
+            self.nonce_count = 1
+        ncvalue = '%08x' % self.nonce_count
+        s = str(self.nonce_count).encode('utf-8')
+        s += nonce.encode('utf-8')
+        s += time.ctime().encode('utf-8')
+        s += os.urandom(8)
+        cnonce = hashlib.sha1(s).hexdigest()[:16]
+        noncebit = '%s:%s:%s:%s:%s' % (nonce, ncvalue, cnonce, qop, HA2)
+        if _algorithm == 'MD5-SESS':
+            HA1 = hash_utf8('%s:%s:%s' % (HA1, nonce, cnonce))
+        if qop is None:
+            respdig = KD(HA1, '%s:%s' % (nonce, HA2))
+        elif qop == 'auth' or 'auth' in qop.split(','):
+            respdig = KD(HA1, noncebit)
+        else:
+            return None
+        self.last_nonce = nonce
+        base = 'username="%s", realm="%s", nonce="%s", uri="%s", response="%s"' % (self.username, realm, nonce, path, respdig)
+        if opaque:
+            base += ', opaque="%s"' % opaque
+        if algorithm:
+            base += ', algorithm="%s"' % algorithm
+        if entdig:
+            base += ', digest="%s"' % entdig
+        if qop:
+            base += ', qop="auth", nc=%s, cnonce="%s"' % (ncvalue, cnonce)
+        return 'Digest %s' % base
+
+    def handle_401(self, r, **kwargs):
+        if self.pos is not None:
+            r.request.body.seek(self.pos)
+        num_401_calls = getattr(self, 'num_401_calls', 1)
+        s_auth = r.headers.get('www-authenticate', '')
+        if 'digest' in s_auth.lower() and num_401_calls < 2:
+            setattr(self, 'num_401_calls', num_401_calls + 1)
+            pat = re.compile('digest ', flags=re.IGNORECASE)
+            self.chal = parse_dict_header(pat.sub('', s_auth, count=1))
+            r.content
+            r.raw.release_conn()
+            prep = r.request.copy()
+            prep.prepare_cookies(r.cookies)
+            prep.headers['Authorization'] = self.build_digest_header(prep.method, prep.url)
+            _r = r.connection.send(prep, **kwargs)
+            _r.history.append(r)
+            _r.request = prep
+            return _r
+        setattr(self, 'num_401_calls', 1)
+        return r
+
+    def __call__(self, r):
+        if self.last_nonce:
+            r.headers['Authorization'] = self.build_digest_header(r.method, r.url)
+        try:
+            self.pos = r.body.tell()
+        except AttributeError:
+            pass
+        r.register_hook('response', self.handle_401)
+        return r
+[/PYTHON]
+
+What will be the output of `build_digest_header`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "username": "user",
+        "password": "pass",
+        "last_nonce": "b65c75a3f423e5780128d1a798ec40b4",
+        "nonce_count": 1,
+        "chal": {
+            "realm": "me@kennethreitz.com",
+            "nonce": "b65c75a3f423e5780128d1a798ec40b4",
+            "qop": "auth",
+            "opaque": "21d73260ff0b61c1f304ee40444f24bf",
+            "algorithm": "MD5",
+            "stale": "FALSE"
+        },
+        "pos": null,
+        "num_401_calls": 2
+    },
+    "args": {
+        "method": "GET",
+        "url": "http://httpbin.org/digest-auth/auth/user/pass"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[THOUGHT]

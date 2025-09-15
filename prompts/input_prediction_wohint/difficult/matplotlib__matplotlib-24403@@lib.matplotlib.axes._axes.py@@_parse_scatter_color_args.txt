@@ -1,0 +1,297 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. You only need to predict input variable values, and print input between [INPUT] and [\INPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT]. 
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import functools
+import itertools
+import logging
+import math
+from numbers import Integral, Number
+import numpy as np
+from numpy import ma
+import matplotlib as mpl
+import matplotlib.category
+import matplotlib.cbook as cbook
+import matplotlib.collections as mcoll
+import matplotlib.colors as mcolors
+import matplotlib.contour as mcontour
+import matplotlib.dates
+import matplotlib.image as mimage
+import matplotlib.legend as mlegend
+import matplotlib.lines as mlines
+import matplotlib.markers as mmarkers
+import matplotlib.mlab as mlab
+import matplotlib.patches as mpatches
+import matplotlib.path as mpath
+import matplotlib.quiver as mquiver
+import matplotlib.stackplot as mstack
+import matplotlib.streamplot as mstream
+import matplotlib.table as mtable
+import matplotlib.text as mtext
+import matplotlib.ticker as mticker
+import matplotlib.transforms as mtransforms
+import matplotlib.tri as mtri
+import matplotlib.units as munits
+from matplotlib import _api, _docstring, _preprocess_data
+from matplotlib.axes._base import _AxesBase, _TransformedBoundsLocator, _process_plot_format
+from matplotlib.axes._secondary_axes import SecondaryAxis
+from matplotlib.container import BarContainer, ErrorbarContainer, StemContainer
+from builtins import range
+_log = logging.getLogger(__name__)
+
+class Axes(_AxesBase):
+    annotate.__doc__ = mtext.Annotation.__init__.__doc__
+    fill_between = _preprocess_data(_docstring.dedent_interpd(fill_between), replace_names=['x', 'y1', 'y2', 'where'])
+    fill_betweenx = _preprocess_data(_docstring.dedent_interpd(fill_betweenx), replace_names=['y', 'x1', 'x2', 'where'])
+    table = mtable.table
+    stackplot = _preprocess_data()(mstack.stackplot)
+    streamplot = _preprocess_data(replace_names=['x', 'y', 'u', 'v', 'start_points'])(mstream.streamplot)
+    tricontour = mtri.tricontour
+    tricontourf = mtri.tricontourf
+    tripcolor = mtri.tripcolor
+    triplot = mtri.triplot
+
+    @staticmethod
+    def _parse_scatter_color_args(c, edgecolors, kwargs, xsize, get_next_color_func):
+        facecolors = kwargs.pop('facecolors', None)
+        facecolors = kwargs.pop('facecolor', facecolors)
+        edgecolors = kwargs.pop('edgecolor', edgecolors)
+        kwcolor = kwargs.pop('color', None)
+        if kwcolor is not None and c is not None:
+            raise ValueError("Supply a 'c' argument or a 'color' kwarg but not both; they differ but their functionalities overlap.")
+        if kwcolor is not None:
+            try:
+                mcolors.to_rgba_array(kwcolor)
+            except ValueError as err:
+                raise ValueError("'color' kwarg must be a color or sequence of color specs.  For a sequence of values to be color-mapped, use the 'c' argument instead.") from err
+            if edgecolors is None:
+                edgecolors = kwcolor
+            if facecolors is None:
+                facecolors = kwcolor
+        if edgecolors is None and (not mpl.rcParams['_internal.classic_mode']):
+            edgecolors = mpl.rcParams['scatter.edgecolors']
+        c_was_none = c is None
+        if c is None:
+            c = facecolors if facecolors is not None else 'b' if mpl.rcParams['_internal.classic_mode'] else get_next_color_func()
+        c_is_string_or_strings = isinstance(c, str) or (np.iterable(c) and len(c) > 0 and isinstance(cbook._safe_first_finite(c), str))
+
+        def invalid_shape_exception(csize, xsize):
+            return ValueError(f"'c' argument has {csize} elements, which is inconsistent with 'x' and 'y' with size {xsize}.")
+        c_is_mapped = False
+        valid_shape = True
+        if not c_was_none and kwcolor is None and (not c_is_string_or_strings):
+            try:
+                c = np.asanyarray(c, dtype=float)
+            except ValueError:
+                pass
+            else:
+                if c.shape == (1, 4) or c.shape == (1, 3):
+                    c_is_mapped = False
+                    if c.size != xsize:
+                        valid_shape = False
+                elif c.size == xsize:
+                    c = c.ravel()
+                    c_is_mapped = True
+                else:
+                    if c.shape in ((3,), (4,)):
+                        _log.warning('*c* argument looks like a single numeric RGB or RGBA sequence, which should be avoided as value-mapping will have precedence in case its length matches with *x* & *y*.  Please use the *color* keyword-argument or provide a 2D array with a single row if you intend to specify the same RGB or RGBA value for all points.')
+                    valid_shape = False
+        if not c_is_mapped:
+            try:
+                colors = mcolors.to_rgba_array(c)
+            except (TypeError, ValueError) as err:
+                if 'RGBA values should be within 0-1 range' in str(err):
+                    raise
+                else:
+                    if not valid_shape:
+                        raise invalid_shape_exception(c.size, xsize) from err
+                    raise ValueError(f"'c' argument must be a color, a sequence of colors, or a sequence of numbers, not {c!r}") from err
+            else:
+                if len(colors) not in (0, 1, xsize):
+                    raise invalid_shape_exception(len(colors), xsize)
+        else:
+            colors = None
+        return (c, colors, edgecolors)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.lib.matplotlib.__init__.RcParams.__getitem__
+
+def __getitem__(self, key):
+    if key in _deprecated_map:
+        version, alt_key, alt_val, inverse_alt = _deprecated_map[key]
+        _api.warn_deprecated(version, name=key, obj_type='rcparam', alternative=alt_key)
+        return inverse_alt(dict.__getitem__(self, alt_key))
+    elif key in _deprecated_ignore_map:
+        version, alt_key = _deprecated_ignore_map[key]
+        _api.warn_deprecated(version, name=key, obj_type='rcparam', alternative=alt_key)
+        return dict.__getitem__(self, alt_key) if alt_key else None
+    elif key == 'backend' and self is globals().get('rcParams'):
+        val = dict.__getitem__(self, key)
+        if val is rcsetup._auto_backend_sentinel:
+            from matplotlib import pyplot as plt
+            plt.switch_backend(rcsetup._auto_backend_sentinel)
+    return dict.__getitem__(self, key)
+
+.lib.matplotlib.cbook.__init__._safe_first_finite
+
+def _safe_first_finite(obj, *, skip_nonfinite=True):
+
+    def safe_isfinite(val):
+        if val is None:
+            return False
+        try:
+            return np.isfinite(val) if np.isscalar(val) else True
+        except TypeError:
+            return True
+    if skip_nonfinite is False:
+        if isinstance(obj, collections.abc.Iterator):
+            try:
+                return obj[0]
+            except TypeError:
+                pass
+            raise RuntimeError('matplotlib does not support generators as input')
+        return next(iter(obj))
+    elif isinstance(obj, np.flatiter):
+        return obj[0]
+    elif isinstance(obj, collections.abc.Iterator):
+        raise RuntimeError('matplotlib does not support generators as input')
+    else:
+        return next((val for val in obj if safe_isfinite(val)))
+
+.lib.matplotlib.cbook.__init__.safe_isfinite
+
+def safe_isfinite(val):
+    if val is None:
+        return False
+    try:
+        return np.isfinite(val) if np.isscalar(val) else True
+    except TypeError:
+        return True
+
+
+[/PYTHON]
+What will be the input of `_parse_scatter_color_args`, given the following input:
+[OUTPUT]
+```
+{
+    "output": [
+        "b",
+        "[[0. 0. 1. 1.]]",
+        "r"
+    ]
+}
+```
+[/OUTPUT]
+
+[THOUGHT]

@@ -1,0 +1,917 @@
+diff --git a/examples/advanced/grover_example.py b/examples/advanced/grover_example.py
+index 15b7f44..5d52c28 100755
+--- a/examples/advanced/grover_example.py
++++ b/examples/advanced/grover_example.py
+@@ -12,12 +12,12 @@
+ def demo_vgate_app(v):
+     for i in range(2**v.nqubits):
+         print('qapply(v*IntQubit(%i, %r))' % (i, v.nqubits))
+-        pprint(qapply(v*IntQubit(i, v.nqubits)))
+-        qapply(v*IntQubit(i, v.nqubits))
++        pprint(qapply(v*IntQubit(i, nqubits=v.nqubits)))
++        qapply(v*IntQubit(i, nqubits=v.nqubits))
+ 
+ 
+ def black_box(qubits):
+-    return True if qubits == IntQubit(1, qubits.nqubits) else False
++    return True if qubits == IntQubit(1, nqubits=qubits.nqubits) else False
+ 
+ 
+ def main():
+diff --git a/sympy/physics/quantum/grover.py b/sympy/physics/quantum/grover.py
+index ce060a5..285fcdb 100644
+--- a/sympy/physics/quantum/grover.py
++++ b/sympy/physics/quantum/grover.py
+@@ -9,6 +9,199 @@
+ """
+ 
+ from __future__ import print_function, division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-15933/sympy/physics/quantum/grover.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ from sympy import floor, pi, sqrt, sympify, eye
+ from sympy.core.compatibility import range
+@@ -29,6 +222,7 @@
+ ]
+ 
+ 
++@inspect_code
+ def superposition_basis(nqubits):
+     """Creates an equal superposition of the computational basis.
+ 
+@@ -55,7 +249,7 @@ def superposition_basis(nqubits):
+     """
+ 
+     amp = 1/sqrt(2**nqubits)
+-    return sum([amp*IntQubit(n, nqubits) for n in range(2**nqubits)])
++    return sum([amp*IntQubit(n, nqubits=nqubits) for n in range(2**nqubits)])
+ 
+ 
+ class OracleGate(Gate):
+@@ -168,6 +362,7 @@ def _apply_operator_Qubit(self, qubits, **options):
+     # Represent
+     #-------------------------------------------------------------------------
+ 
++    @inspect_code
+     def _represent_ZGate(self, basis, **options):
+         """
+         Represent the OracleGate in the computational basis.
+@@ -176,7 +371,7 @@ def _represent_ZGate(self, basis, **options):
+         matrixOracle = eye(nbasis)
+         # Flip the sign given the output of the oracle function
+         for i in range(nbasis):
+-            if self.search_function(IntQubit(i, self.nqubits)):
++            if self.search_function(IntQubit(i, nqubits=self.nqubits)):
+                 matrixOracle[i, i] = NegativeOne()
+         return matrixOracle
+ 
+diff --git a/sympy/physics/quantum/qexpr.py b/sympy/physics/quantum/qexpr.py
+index 6aa389f..fee5e58 100644
+--- a/sympy/physics/quantum/qexpr.py
++++ b/sympy/physics/quantum/qexpr.py
+@@ -1,4 +1,197 @@
+ from __future__ import print_function, division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-15933/sympy/physics/quantum/qexpr.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ from sympy import Expr, sympify, Symbol, Matrix
+ from sympy.printing.pretty.stringpict import prettyForm
+@@ -100,7 +293,8 @@ class QExpr(Expr):
+     def free_symbols(self):
+         return {self}
+ 
+-    def __new__(cls, *args, **old_assumptions):
++    @inspect_code
++    def __new__(cls, *args, **kwargs):
+         """Construct a new quantum object.
+ 
+         Parameters
+@@ -129,10 +323,10 @@ def __new__(cls, *args, **old_assumptions):
+         """
+ 
+         # First compute args and call Expr.__new__ to create the instance
+-        args = cls._eval_args(args)
++        args = cls._eval_args(args, **kwargs)
+         if len(args) == 0:
+-            args = cls._eval_args(tuple(cls.default_args()))
+-        inst = Expr.__new__(cls, *args, **old_assumptions)
++            args = cls._eval_args(tuple(cls.default_args()), **kwargs)
++        inst = Expr.__new__(cls, *args)
+         # Now set the slots on the instance
+         inst.hilbert_space = cls._eval_hilbert_space(args)
+         return inst
+diff --git a/sympy/physics/quantum/qubit.py b/sympy/physics/quantum/qubit.py
+index 555493c..3718596 100644
+--- a/sympy/physics/quantum/qubit.py
++++ b/sympy/physics/quantum/qubit.py
+@@ -7,6 +7,199 @@
+ """
+ 
+ from __future__ import print_function, division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-15933/sympy/physics/quantum/qubit.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ import math
+ 
+@@ -282,10 +475,21 @@ class IntQubitState(QubitState):
+     """A base class for qubits that work with binary representations."""
+ 
+     @classmethod
+-    def _eval_args(cls, args):
++    def _eval_args(cls, args, nqubits=None):
+         # The case of a QubitState instance
+         if len(args) == 1 and isinstance(args[0], QubitState):
+             return QubitState._eval_args(args)
++        # otherwise, args should be integer
++        elif not all((isinstance(a, (int, Integer)) for a in args)):
++            raise ValueError('values must be integers, got (%s)' % (tuple(type(a) for a in args),))
++        # use nqubits if specified
++        if nqubits is not None:
++            if not isinstance(nqubits, (int, Integer)):
++                raise ValueError('nqubits must be an integer, got (%s)' % type(nqubits))
++            if len(args) != 1:
++                raise ValueError(
++                    'too many positional arguments (%s). should be (number, nqubits=n)' % (args,))
++            return cls._eval_args_with_nqubits(args[0], nqubits)
+         # For a single argument, we construct the binary representation of
+         # that integer with the minimal number of bits.
+         if len(args) == 1 and args[0] > 1:
+@@ -296,15 +500,19 @@ def _eval_args(cls, args):
+         # For two numbers, the second number is the number of bits
+         # on which it is expressed, so IntQubit(0,5) == |00000>.
+         elif len(args) == 2 and args[1] > 1:
+-            need = bitcount(abs(args[0]))
+-            if args[1] < need:
+-                raise ValueError(
+-                    'cannot represent %s with %s bits' % (args[0], args[1]))
+-            qubit_values = [(args[0] >> i) & 1 for i in reversed(range(args[1]))]
+-            return QubitState._eval_args(qubit_values)
++            return cls._eval_args_with_nqubits(args[0], args[1])
+         else:
+             return QubitState._eval_args(args)
+ 
++    @classmethod
++    def _eval_args_with_nqubits(cls, number, nqubits):
++        need = bitcount(abs(number))
++        if nqubits < need:
++            raise ValueError(
++                'cannot represent %s with %s bits' % (number, nqubits))
++        qubit_values = [(number >> i) & 1 for i in reversed(range(nqubits))]
++        return QubitState._eval_args(qubit_values)
++
+     def as_int(self):
+         """Return the numerical value of the qubit."""
+         number = 0
+@@ -341,9 +549,17 @@ class IntQubit(IntQubitState, Qubit):
+     values : int, tuple
+         If a single argument, the integer we want to represent in the qubit
+         values. This integer will be represented using the fewest possible
+-        number of qubits. If a pair of integers, the first integer gives the
+-        integer to represent in binary form and the second integer gives
+-        the number of qubits to use.
++        number of qubits.
++        If a pair of integers and the second value is more than one, the first
++        integer gives the integer to represent in binary form and the second
++        integer gives the number of qubits to use.
++        List of zeros and ones is also accepted to generate qubit by bit pattern.
++
++    nqubits : int
++        The integer that represents the number of qubits.
++        This number should be passed with keyword ``nqubits=N``.
++        You can use this in order to avoid ambiguity of Qubit-style tuple of bits.
++        Please see the example below for more details.
+ 
+     Examples
+     ========
+@@ -372,6 +588,21 @@ class IntQubit(IntQubitState, Qubit):
+ 
+         >>> Qubit(q)
+         |101>
++
++    Please note that ``IntQubit`` also accepts a ``Qubit``-style list of bits.
++    So, the code below yields qubits 3, not a single bit ``1``.
++
++        >>> IntQubit(1, 1)
++        |3>
++
++    To avoid ambiguity, use ``nqubits`` parameter.
++    Use of this keyword is recommended especially when you provide the values by variables.
++
++        >>> IntQubit(1, nqubits=1)
++        |1>
++        >>> a = 1
++        >>> IntQubit(a, nqubits=1)
++        |1>
+     """
+     @classmethod
+     def dual_class(self):
+@@ -494,6 +725,7 @@ def qubit_to_matrix(qubit, format='sympy'):
+ #-----------------------------------------------------------------------------
+ 
+ 
++@inspect_code
+ def measure_all(qubit, format='sympy', normalize=True):
+     """Perform an ensemble measurement of all qubits.
+ 
+@@ -541,7 +773,7 @@ def measure_all(qubit, format='sympy', normalize=True):
+         for i in range(size):
+             if m[i] != 0.0:
+                 results.append(
+-                    (Qubit(IntQubit(i, nqubits)), m[i]*conjugate(m[i]))
++                    (Qubit(IntQubit(i, nqubits=nqubits)), m[i]*conjugate(m[i]))
+                 )
+         return results
+     else:
+diff --git a/sympy/physics/quantum/tests/test_grover.py b/sympy/physics/quantum/tests/test_grover.py
+index c14d492..2f4f2e6 100644
+--- a/sympy/physics/quantum/tests/test_grover.py
++++ b/sympy/physics/quantum/tests/test_grover.py
+@@ -11,17 +11,17 @@ def return_one_on_two(qubits):
+ 
+ 
+ def return_one_on_one(qubits):
+-    return qubits == IntQubit(1, qubits.nqubits)
++    return qubits == IntQubit(1, nqubits=qubits.nqubits)
+ 
+ 
+ def test_superposition_basis():
+     nbits = 2
+-    first_half_state = IntQubit(0, nbits)/2 + IntQubit(1, nbits)/2
++    first_half_state = IntQubit(0, nqubits=nbits)/2 + IntQubit(1, nqubits=nbits)/2
+     second_half_state = IntQubit(2, nbits)/2 + IntQubit(3, nbits)/2
+     assert first_half_state + second_half_state == superposition_basis(nbits)
+ 
+     nbits = 3
+-    firstq = (1/sqrt(8))*IntQubit(0, nbits) + (1/sqrt(8))*IntQubit(1, nbits)
++    firstq = (1/sqrt(8))*IntQubit(0, nqubits=nbits) + (1/sqrt(8))*IntQubit(1, nqubits=nbits)
+     secondq = (1/sqrt(8))*IntQubit(2, nbits) + (1/sqrt(8))*IntQubit(3, nbits)
+     thirdq = (1/sqrt(8))*IntQubit(4, nbits) + (1/sqrt(8))*IntQubit(5, nbits)
+     fourthq = (1/sqrt(8))*IntQubit(6, nbits) + (1/sqrt(8))*IntQubit(7, nbits)
+@@ -35,30 +35,30 @@ def test_OracleGate():
+ 
+     nbits = 2
+     v = OracleGate(2, return_one_on_two)
+-    assert qapply(v*IntQubit(0, nbits)) == IntQubit(0, nbits)
+-    assert qapply(v*IntQubit(1, nbits)) == IntQubit(1, nbits)
++    assert qapply(v*IntQubit(0, nbits)) == IntQubit(0, nqubits=nbits)
++    assert qapply(v*IntQubit(1, nbits)) == IntQubit(1, nqubits=nbits)
+     assert qapply(v*IntQubit(2, nbits)) == -IntQubit(2, nbits)
+     assert qapply(v*IntQubit(3, nbits)) == IntQubit(3, nbits)
+ 
+-    # Due to a bug of IntQubit, this first assertion is buggy
+-    # assert represent(OracleGate(1, lambda qubits: qubits == IntQubit(0)), nqubits=1) == \
+-    #     Matrix([[-1/sqrt(2), 0], [0, 1/sqrt(2)]])
++    assert represent(OracleGate(1, lambda qubits: qubits == IntQubit(0)), nqubits=1) == \
++           Matrix([[-1, 0], [0, 1]])
+     assert represent(v, nqubits=2) == Matrix([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+ 
++
+ def test_WGate():
+     nqubits = 2
+     basis_states = superposition_basis(nqubits)
+     assert qapply(WGate(nqubits)*basis_states) == basis_states
+ 
+-    expected = ((2/sqrt(pow(2, nqubits)))*basis_states) - IntQubit(1, nqubits)
+-    assert qapply(WGate(nqubits)*IntQubit(1, nqubits)) == expected
++    expected = ((2/sqrt(pow(2, nqubits)))*basis_states) - IntQubit(1, nqubits=nqubits)
++    assert qapply(WGate(nqubits)*IntQubit(1, nqubits=nqubits)) == expected
+ 
+ 
+ def test_grover_iteration_1():
+     numqubits = 2
+     basis_states = superposition_basis(numqubits)
+     v = OracleGate(numqubits, return_one_on_one)
+-    expected = IntQubit(1, numqubits)
++    expected = IntQubit(1, nqubits=numqubits)
+     assert qapply(grover_iteration(basis_states, v)) == expected
+ 
+ 
+@@ -83,7 +83,7 @@ def test_grover_iteration_2():
+ 
+ def test_grover():
+     nqubits = 2
+-    assert apply_grover(return_one_on_one, nqubits) == IntQubit(1, nqubits)
++    assert apply_grover(return_one_on_one, nqubits) == IntQubit(1, nqubits=nqubits)
+ 
+     nqubits = 4
+     basis_states = superposition_basis(nqubits)
+diff --git a/sympy/physics/quantum/tests/test_qubit.py b/sympy/physics/quantum/tests/test_qubit.py
+index cca880a..f745e75 100644
+--- a/sympy/physics/quantum/tests/test_qubit.py
++++ b/sympy/physics/quantum/tests/test_qubit.py
+@@ -53,6 +53,21 @@ def test_QubitBra():
+ 
+ 
+ def test_IntQubit():
++    # issue 9136
++    iqb = IntQubit(0, nqubits=1)
++    assert qubit_to_matrix(Qubit('0')) == qubit_to_matrix(iqb)
++
++    qb = Qubit('1010')
++    assert qubit_to_matrix(IntQubit(qb)) == qubit_to_matrix(qb)
++
++    iqb = IntQubit(1, nqubits=1)
++    assert qubit_to_matrix(Qubit('1')) == qubit_to_matrix(iqb)
++    assert qubit_to_matrix(IntQubit(1)) == qubit_to_matrix(iqb)
++
++    iqb = IntQubit(7, nqubits=4)
++    assert qubit_to_matrix(Qubit('0111')) == qubit_to_matrix(iqb)
++    assert qubit_to_matrix(IntQubit(7, 4)) == qubit_to_matrix(iqb)
++
+     iqb = IntQubit(8)
+     assert iqb.as_int() == 8
+     assert iqb.qubit_values == (1, 0, 0, 0)
+@@ -76,6 +91,10 @@ def test_IntQubit():
+     assert iqb._eval_innerproduct_IntQubitBra(iqb_bra) == Integer(0)
+     raises(ValueError, lambda: IntQubit(4, 1))
+ 
++    raises(ValueError, lambda: IntQubit('5'))
++    raises(ValueError, lambda: IntQubit(5, '5'))
++    raises(ValueError, lambda: IntQubit(5, nqubits='5'))
++    raises(TypeError, lambda: IntQubit(5, bad_arg=True))
+ 
+ def test_superposition_of_states():
+     state = 1/sqrt(2)*Qubit('01') + 1/sqrt(2)*Qubit('10')
+@@ -167,6 +186,9 @@ def test_measure_all():
+     assert measure_all(state2) == \
+         [(Qubit('00'), Rational(4, 5)), (Qubit('11'), Rational(1, 5))]
+ 
++    # from issue #12585
++    assert measure_all(qapply(Qubit('0'))) == [(Qubit('0'), 1)]
++
+ 
+ def test_eval_trace():
+     q1 = Qubit('10110')

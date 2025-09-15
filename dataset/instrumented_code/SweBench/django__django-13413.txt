@@ -1,0 +1,365 @@
+diff --git a/django/contrib/admin/filters.py b/django/contrib/admin/filters.py
+index 3e02cd8..9258fd6 100644
+--- a/django/contrib/admin/filters.py
++++ b/django/contrib/admin/filters.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-13413/django/contrib/admin/filters.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ This encapsulates the logic for displaying filters in the Django admin.
+ Filters are specified in models with the "list_filter" option.
+@@ -243,11 +436,14 @@ class BooleanFieldListFilter(FieldListFilter):
+     def expected_parameters(self):
+         return [self.lookup_kwarg, self.lookup_kwarg2]
+ 
++    @inspect_code
+     def choices(self, changelist):
++        field_choices = dict(self.field.flatchoices)
+         for lookup, title in (
+-                (None, _('All')),
+-                ('1', _('Yes')),
+-                ('0', _('No'))):
++            (None, _('All')),
++            ('1', field_choices.get(True, _('Yes'))),
++            ('0', field_choices.get(False, _('No'))),
++        ):
+             yield {
+                 'selected': self.lookup_val == lookup and not self.lookup_val2,
+                 'query_string': changelist.get_query_string({self.lookup_kwarg: lookup}, [self.lookup_kwarg2]),
+@@ -257,7 +453,7 @@ class BooleanFieldListFilter(FieldListFilter):
+             yield {
+                 'selected': self.lookup_val2 == 'True',
+                 'query_string': changelist.get_query_string({self.lookup_kwarg2: 'True'}, [self.lookup_kwarg]),
+-                'display': _('Unknown'),
++                'display': field_choices.get(None, _('Unknown')),
+             }
+ 
+ 
+diff --git a/tests/admin_filters/models.py b/tests/admin_filters/models.py
+index cee3af5..f286e64 100644
+--- a/tests/admin_filters/models.py
++++ b/tests/admin_filters/models.py
+@@ -31,6 +31,11 @@ class Book(models.Model):
+     is_best_seller = models.BooleanField(default=0, null=True)
+     is_best_seller2 = models.NullBooleanField(default=0)
+     date_registered = models.DateField(null=True)
++    availability = models.BooleanField(choices=(
++        (False, 'Paid'),
++        (True, 'Free'),
++        (None, 'Obscure'),
++    ), null=True)
+     # This field name is intentionally 2 characters long (#16080).
+     no = models.IntegerField(verbose_name='number', blank=True, null=True)
+ 
+diff --git a/tests/admin_filters/tests.py b/tests/admin_filters/tests.py
+index 16a7ce4..6986afb 100644
+--- a/tests/admin_filters/tests.py
++++ b/tests/admin_filters/tests.py
+@@ -140,7 +140,7 @@ class CustomUserAdmin(UserAdmin):
+ 
+ 
+ class BookAdmin(ModelAdmin):
+-    list_filter = ('year', 'author', 'contributors', 'is_best_seller', 'date_registered', 'no')
++    list_filter = ('year', 'author', 'contributors', 'is_best_seller', 'date_registered', 'no', 'availability')
+     ordering = ('-id',)
+ 
+ 
+@@ -156,6 +156,7 @@ class BookAdminWithTupleBooleanFilter(BookAdmin):
+         ('is_best_seller', BooleanFieldListFilter),
+         'date_registered',
+         'no',
++        ('availability', BooleanFieldListFilter),
+     )
+ 
+ 
+@@ -288,22 +289,22 @@ class ListFiltersTests(TestCase):
+         cls.djangonaut_book = Book.objects.create(
+             title='Djangonaut: an art of living', year=2009,
+             author=cls.alfred, is_best_seller=True, date_registered=cls.today,
+-            is_best_seller2=True,
++            is_best_seller2=True, availability=True,
+         )
+         cls.bio_book = Book.objects.create(
+             title='Django: a biography', year=1999, author=cls.alfred,
+             is_best_seller=False, no=207,
+-            is_best_seller2=False,
++            is_best_seller2=False, availability=False,
+         )
+         cls.django_book = Book.objects.create(
+             title='The Django Book', year=None, author=cls.bob,
+             is_best_seller=None, date_registered=cls.today, no=103,
+-            is_best_seller2=None,
++            is_best_seller2=None, availability=True,
+         )
+         cls.guitar_book = Book.objects.create(
+             title='Guitar for dummies', year=2002, is_best_seller=True,
+             date_registered=cls.one_week_ago,
+-            is_best_seller2=True,
++            is_best_seller2=True, availability=None,
+         )
+         cls.guitar_book.contributors.set([cls.bob, cls.lisa])
+ 
+@@ -956,6 +957,63 @@ class ListFiltersTests(TestCase):
+         self.assertIs(choice['selected'], True)
+         self.assertEqual(choice['query_string'], '?is_best_seller__isnull=True')
+ 
++    def test_booleanfieldlistfilter_choices(self):
++        modeladmin = BookAdmin(Book, site)
++        self.verify_booleanfieldlistfilter_choices(modeladmin)
++
++    def test_booleanfieldlistfilter_tuple_choices(self):
++        modeladmin = BookAdminWithTupleBooleanFilter(Book, site)
++        self.verify_booleanfieldlistfilter_choices(modeladmin)
++
++    def verify_booleanfieldlistfilter_choices(self, modeladmin):
++        # False.
++        request = self.request_factory.get('/', {'availability__exact': 0})
++        request.user = self.alfred
++        changelist = modeladmin.get_changelist_instance(request)
++        queryset = changelist.get_queryset(request)
++        self.assertEqual(list(queryset), [self.bio_book])
++        filterspec = changelist.get_filters(request)[0][6]
++        self.assertEqual(filterspec.title, 'availability')
++        choice = select_by(filterspec.choices(changelist), 'display', 'Paid')
++        self.assertIs(choice['selected'], True)
++        self.assertEqual(choice['query_string'], '?availability__exact=0')
++        # True.
++        request = self.request_factory.get('/', {'availability__exact': 1})
++        request.user = self.alfred
++        changelist = modeladmin.get_changelist_instance(request)
++        queryset = changelist.get_queryset(request)
++        self.assertEqual(list(queryset), [self.django_book, self.djangonaut_book])
++        filterspec = changelist.get_filters(request)[0][6]
++        self.assertEqual(filterspec.title, 'availability')
++        choice = select_by(filterspec.choices(changelist), 'display', 'Free')
++        self.assertIs(choice['selected'], True)
++        self.assertEqual(choice['query_string'], '?availability__exact=1')
++        # None.
++        request = self.request_factory.get('/', {'availability__isnull': 'True'})
++        request.user = self.alfred
++        changelist = modeladmin.get_changelist_instance(request)
++        queryset = changelist.get_queryset(request)
++        self.assertEqual(list(queryset), [self.guitar_book])
++        filterspec = changelist.get_filters(request)[0][6]
++        self.assertEqual(filterspec.title, 'availability')
++        choice = select_by(filterspec.choices(changelist), 'display', 'Obscure')
++        self.assertIs(choice['selected'], True)
++        self.assertEqual(choice['query_string'], '?availability__isnull=True')
++        # All.
++        request = self.request_factory.get('/')
++        request.user = self.alfred
++        changelist = modeladmin.get_changelist_instance(request)
++        queryset = changelist.get_queryset(request)
++        self.assertEqual(
++            list(queryset),
++            [self.guitar_book, self.django_book, self.bio_book, self.djangonaut_book],
++        )
++        filterspec = changelist.get_filters(request)[0][6]
++        self.assertEqual(filterspec.title, 'availability')
++        choice = select_by(filterspec.choices(changelist), 'display', 'All')
++        self.assertIs(choice['selected'], True)
++        self.assertEqual(choice['query_string'], '?')
++
+     def test_booleanfieldlistfilter_nullbooleanfield(self):
+         modeladmin = BookAdmin2(Book, site)
+ 
+@@ -1212,7 +1270,7 @@ class ListFiltersTests(TestCase):
+         queryset = changelist.get_queryset(request)
+         self.assertEqual(list(queryset), [self.bio_book])
+ 
+-        filterspec = changelist.get_filters(request)[0][-1]
++        filterspec = changelist.get_filters(request)[0][5]
+         self.assertEqual(filterspec.title, 'number')
+         choices = list(filterspec.choices(changelist))
+         self.assertIs(choices[2]['selected'], True)

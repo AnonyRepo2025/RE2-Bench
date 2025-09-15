@@ -1,0 +1,249 @@
+1. The `simple_tag` decorator is used to register a function as a simple tag.
+2. The function is expected to take a context and return a string.
+3. The function name is used as the tag name.
+4. The function is wrapped in a `SimpleNode` object, which is a subclass of `Node`.
+5. The `SimpleNode` object is registered with the library using the function name as the tag name.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "library": {
+            "tags": {},
+            "filters": {}
+        }
+    },
+    "args": {
+        "func": "<function>"
+    },
+    "kwargs": {
+        "takes_context": true,
+        "name": "my_tag"
+    }
+}
+[/INPUT]
+[/PYTHON]
+[PYTHON]
+import re
+from django.utils.functional import SimpleLazyObject
+from django.utils.text import re_camel_case
+from django.utils.translation import get_language
+from .base import FilterExpression, token_kwargs
+from .exceptions import TemplateSyntaxError
+
+_camel_re1 = re.compile('(.)([A-Z][a-z]+)')
+_camel_re2 = re.compile('([a-z0-9])([A-Z])')
+
+def camel_case_to_spaces(value):
+    """
+    Split words at uppercase letters and convert to lower case.
+    """
+    return ' '.join(re_camel_case.sub(r'\1 \2', value).split()).lower()
+
+def stringformat(value, arg):
+    try:
+        return value % arg
+    except (ValueError, TypeError):
+        return ''
+
+def truncatewords(value, arg):
+    """
+    Truncate the value to a certain number of words.
+    """
+    try:
+        length = int(arg)
+    except ValueError:  # Invalid literal for int().
+        return value  # Fail silently.
+    words = value.split()
+    if len(words) > length:
+        words = words[:length]
+    return ' '.join(words)
+
+def truncatewords_html(value, arg):
+    """
+    Truncate the value to a certain number of words, keeping any existing HTML tags together.
+    """
+    try:
+        length = int(arg)
+    except ValueError:  # Invalid literal for int().
+        return value  # Fail silently.
+    words = value.split()
+    if len(words) > length:
+        words = words[:length]
+    return ' '.join(words)
+
+def truncatechars(value, arg):
+    """
+    Truncate the value to a certain number of characters.
+    """
+    try:
+        length = int(arg)
+    except ValueError:  # Invalid literal for int().
+        return value  # Fail silently.
+    if len(value) > length:
+        value = value[:length]
+        if not value.endswith('...'):
+            value += '...'
+    return value
+
+def truncatechars_html(value, arg):
+    """
+    Truncate the value to a certain number of characters, keeping any existing HTML tags together.
+    """
+    try:
+        length = int(arg)
+    except ValueError:  # Invalid literal for int().
+        return value  # Fail silently.
+    if len(value) > length:
+        value = value[:length]
+        if not value.endswith('...'):
+            value += '...'
+    return value
+
+def ljust(value, arg):
+    """
+    Left-align the value in a field of a given width.
+    """
+    try:
+        return str(value).ljust(int(arg))
+    except ValueError:  # Invalid literal for int().
+        return value  # Fail silently.
+
+def rjust(value, arg):
+    """
+    Right-align the value in a field of a given width.
+    """
+    try:
+        return str(value).rjust(int(arg))
+    except ValueError:  # Invalid literal for int().
+        return value  # Fail silently.
+
+def center(value, arg):
+    """
+    Center the value in a field of a given width.
+    """
+    try:
+        return str(value).center(int(arg))
+    except ValueError:  # Invalid literal for int().
+        return value  # Fail silently.
+
+def cut(value, arg):
+    """
+    Remove the arg from the value.
+    """
+    try:
+        return value.replace(arg, '')
+    except (AttributeError, ValueError):
+        return value
+
+def lower(value):
+    """
+    Convert a string into all lowercase.
+    """
+    try:
+        return value.lower()
+    except (AttributeError, ValueError):
+        return value
+
+def upper(value):
+    """
+    Convert a string into all uppercase.
+    """
+    try:
+        return value.upper()
+    except (AttributeError, ValueError):
+        return value
+
+def title(value):
+    """
+    Convert a string into titlecase.
+    """
+    try:
+        return value.title()
+    except (AttributeError, ValueError):
+        return value
+
+def capfirst(value):
+    """
+    Capitalize the first character of the value.
+    """
+    try:
+        return value and value[0].upper() + value[1:]
+    except (AttributeError, ValueError):
+        return value
+
+def get_language_bidi():
+    return get_language() in settings.LANGUAGES_BIDI
+
+def lstrip(value, arg):
+    """
+    Strip whitespace from the beginning of the value.
+    """
+    try:
+        return value.lstrip(arg)
+    except (AttributeError, ValueError):
+        return value
+
+def rstrip(value, arg):
+    """
+    Strip whitespace from the end of the value.
+    """
+    try:
+        return value.rstrip(arg)
+    except (AttributeError, ValueError):
+        return value
+
+def pluralize(value, arg='s'):
+    """
+    Return a plural suffix if the value is not 1.
+    By default, use 's' as the suffix:
+
+    * If value is 0, vote{{ value|pluralize }} displays "0 votes".
+    * If value is 1, vote{{ value|pluralize }} displays "1 vote".
+    * If value is 2, vote{{ value|pluralize }} displays "2 votes".
+
+    If an argument is provided, use that string instead:
+
+    * If value is 0, class{{ value|pluralize:"es" }} displays "0 classes".
+    * If value is 1, class{{ value|pluralize:"es" }} displays "1 class".
+    * If value is 2, class{{ value|pluralize:"es" }} displays "2 classes".
+    """
+    try:
+        return arg if int(value) != 1 else ''
+    except ValueError:  # Invalid literal for int().
+        return value  # Fail silently.
+
+def filesizeformat(bytes, decimal_places=1):
+    try:
+        bytes = float(bytes)
+    except (TypeError, ValueError):
+        return bytes
+    for format in ['bytes', 'KB', 'MB', 'GB', 'TB']:
+        if bytes < 1024.0 or format == 'TB':
+            break
+        bytes /= 1024.0
+    return ("%3.%df %s" % (bytes, decimal_places, format)).strip()
+
+def apnumber(value):
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return value
+    if value < 0 or value > 99:
+        return str(value)
+    return AP_NUMBERS[value]
+
+def intcomma(value, use_l10n=True):
+    """
+    Converts an integer to a string containing commas every three digits.
+    For example, 3000 becomes '3,000' and 45000 becomes '45,000'.
+    """
+    orig = str(value)
+    if use_l10n:
+        try:
+            if locale.localeconv()['thousands_sep'] == ',':
+                return orig
+        except AttributeError:
+            pass
+    converted = re.sub

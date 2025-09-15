@@ -1,0 +1,132 @@
+[THOUGHT]
+Let's step through the function `factor_terms(expr, ...)` and its inner function `do(expr)` for the given input.
+
+Input:
+```
+expr = -("sqrt(21)" + 5)**(1/3) + "sqrt(3)"*I*("sqrt(21)" + 5)**(1/3)
+```
+But the input is a string, so first, `expr = sympify(expr)` is called. Let's parse the string as a SymPy expression:
+
+- "sqrt(21)" is sqrt(21)
+- "sqrt(3)" is sqrt(3)
+- I is the imaginary unit
+- ("sqrt(21)" + 5)**(1/3) is (sqrt(21) + 5)**(Rational(1,3))
+
+So the expression is:
+```
+-(sqrt(21) + 5)**(1/3) + sqrt(3)*I*(sqrt(21) + 5)**(1/3)
+```
+Or, factoring out (sqrt(21) + 5)**(1/3):
+```
+(sqrt(21) + 5)**(1/3) * (sqrt(3)*I - 1)
+```
+
+Now, let's see what `do(expr)` does.
+
+1. `do(expr)` is called with the above expression.
+2. `is_iterable = iterable(expr)` → False, since it's an Expr.
+3. `if not isinstance(expr, Basic) or expr.is_Atom:` → expr is a Basic, not an atom.
+4. `if expr.is_Pow or expr.is_Function or is_iterable or (not hasattr(expr, 'args_cnc')):` → expr is an Add, not a Pow or Function, not iterable, and has 'args_cnc'.
+5. Next, `if isinstance(expr, (Sum, Integral)):` → False.
+6. `cont, p = expr.as_content_primitive(radical=radical, clear=clear)`.
+
+Let's see what happens for an Add:
+- For Add, as_content_primitive returns the GCD of the coefficients and the primitive part.
+
+But let's check the structure:
+- expr = Add( - (sqrt(21) + 5)**(1/3), sqrt(3)*I*(sqrt(21) + 5)**(1/3) )
+
+So, as_content_primitive will factor out any common content. But the two terms are:
+- a1 = - (sqrt(21) + 5)**(1/3)
+- a2 = sqrt(3)*I*(sqrt(21) + 5)**(1/3)
+
+So, both terms have (sqrt(21) + 5)**(1/3) as a factor.
+
+So, as_content_primitive will factor out (sqrt(21) + 5)**(1/3), and the primitive part will be:
+- -1 + sqrt(3)*I
+
+So, cont = (sqrt(21) + 5)**(1/3)
+    p = -1 + sqrt(3)*I
+
+Now, in the code:
+```
+if p.is_Add:
+    list_args = [do(a) for a in Add.make_args(p)]
+    if all((a.as_coeff_Mul()[0].extract_multiplicatively(-1) is not None for a in list_args)):
+        cont = -cont
+        list_args = [-a for a in list_args]
+    special = {}
+    for i, a in enumerate(list_args):
+        b, e = a.as_base_exp()
+        if e.is_Mul and e != Mul(*e.args):
+            list_args[i] = Dummy()
+            special[list_args[i]] = a
+    p = Add._from_args(list_args)
+    p = gcd_terms(p, isprimitive=True, clear=clear, fraction=fraction).xreplace(special)
+elif p.args:
+    p = p.func(*[do(a) for a in p.args])
+rv = _keep_coeff(cont, p, clear=clear, sign=sign)
+return rv
+```
+
+So, p = -1 + sqrt(3)*I, which is an Add.
+
+- list_args = [do(-1), do(sqrt(3)*I)]
+    - do(-1): it's an atom, returns -1
+    - do(sqrt(3)*I): it's a Mul, not an atom, so as_content_primitive for Mul:
+        - sqrt(3) is a Pow, as_content_primitive returns (sqrt(3), 1)
+        - I is an atom, as_content_primitive returns (I, 1)
+        - So, for Mul, coef = sqrt(3)*I, args = []
+        - Returns (sqrt(3)*I, 1)
+        - So, do(sqrt(3)*I) returns sqrt(3)*I
+
+So, list_args = [-1, sqrt(3)*I]
+
+Now, check if all a.as_coeff_Mul()[0].extract_multiplicatively(-1) is not None for a in list_args:
+- For -1: as_coeff_Mul()[0] = -1, extract_multiplicatively(-1) = 1 (not None)
+- For sqrt(3)*I: as_coeff_Mul()[0] = 1, extract_multiplicatively(-1) = None
+
+So, not all are negative, so we don't flip the sign.
+
+special = {}
+for i, a in enumerate(list_args):
+    b, e = a.as_base_exp()
+    if e.is_Mul and e != Mul(*e.args):
+        list_args[i] = Dummy()
+        special[list_args[i]] = a
+But for -1: as_base_exp() = (-1, 1)
+    e = 1, not Mul
+For sqrt(3)*I: as_base_exp() = (sqrt(3)*I, 1)
+    e = 1, not Mul
+
+So, nothing is replaced.
+
+p = Add._from_args(list_args) = -1 + sqrt(3)*I
+
+p = gcd_terms(p, isprimitive=True, clear=clear, fraction=fraction).xreplace(special)
+- gcd_terms(-1 + sqrt(3)*I, ...) will not factor anything further, as the terms are coprime.
+
+So, p remains -1 + sqrt(3)*I
+
+Now, rv = _keep_coeff(cont, p, clear=clear, sign=sign)
+- cont = (sqrt(21) + 5)**(1/3)
+- p = -1 + sqrt(3)*I
+
+So, _keep_coeff returns cont*p = (sqrt(21) + 5)**(1/3) * (-1 + sqrt(3)*I)
+
+So, the output is:
+(sqrt(21) + 5)**(1/3) * (-1 + sqrt(3)*I)
+
+Or, more canonically:
+(-1 + sqrt(3)*I)*(sqrt(21) + 5)**(1/3)
+
+This is the fully factored form.
+
+[/THOUGHT]
+[OUTPUT]
+```
+{
+    "output": "(-1 + sqrt(3)*I)*(sqrt(21) + 5)**(1/3)"
+}
+```
+[/OUTPUT]

@@ -1,0 +1,398 @@
+diff --git a/astropy/coordinates/angle_formats.py b/astropy/coordinates/angle_formats.py
+index 93428c9..704283d 100644
+--- a/astropy/coordinates/angle_formats.py
++++ b/astropy/coordinates/angle_formats.py
+@@ -27,6 +27,7 @@ from .errors import (IllegalHourWarning, IllegalHourError,
+                      IllegalMinuteWarning, IllegalMinuteError,
+                      IllegalSecondWarning, IllegalSecondError)
+ from astropy.utils import format_exception, parsing
++from astropy.utils.decorators import deprecated
+ from astropy import units as u
+ 
+ 
+@@ -409,11 +410,14 @@ def degrees_to_dms(d):
+     return np.floor(sign * d), sign * np.floor(m), sign * s
+ 
+ 
++@deprecated("dms_to_degrees (or creating an Angle with a tuple) has ambiguous "
++            "behavior when the degree value is 0",
++            alternative="another way of creating angles instead (e.g. a less "
++                         "ambiguous string like '-0d1m2.3s'")
+ def dms_to_degrees(d, m, s=None):
+     """
+     Convert degrees, arcminute, arcsecond to a float degrees value.
+     """
+-
+     _check_minute_range(m)
+     _check_second_range(s)
+ 
+@@ -436,6 +440,10 @@ def dms_to_degrees(d, m, s=None):
+     return sign * (d + m / 60. + s / 3600.)
+ 
+ 
++@deprecated("hms_to_hours (or creating an Angle with a tuple) has ambiguous "
++            "behavior when the hour value is 0",
++            alternative="another way of creating angles instead (e.g. a less "
++                         "ambiguous string like '-0h1m2.3s'")
+ def hms_to_hours(h, m, s=None):
+     """
+     Convert hour, minute, second to a float hour value.
+diff --git a/astropy/coordinates/angles.py b/astropy/coordinates/angles.py
+index ad71516..a5acb01 100644
+--- a/astropy/coordinates/angles.py
++++ b/astropy/coordinates/angles.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/astropy__astropy-13162/astropy/coordinates/angles.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # -*- coding: utf-8 -*-
+ # Licensed under a 3-clause BSD style license - see LICENSE.rst
+ 
+@@ -69,10 +262,6 @@ class Angle(u.SpecificTypeQuantity):
+       <Angle 1.04166667 hourangle>
+       >>> Angle('-1:2.5', unit=u.deg)
+       <Angle -1.04166667 deg>
+-      >>> Angle((10, 11, 12), unit='hourangle')  # (h, m, s)
+-      <Angle 10.18666667 hourangle>
+-      >>> Angle((-1, 2, 3), unit=u.deg)  # (d, m, s)
+-      <Angle -1.03416667 deg>
+       >>> Angle(10.2345 * u.deg)
+       <Angle 10.2345 deg>
+       >>> Angle(Angle(10.2345 * u.deg))
+@@ -109,6 +298,7 @@ class Angle(u.SpecificTypeQuantity):
+     _equivalent_unit = u.radian
+     _include_easy_conversion_members = True
+ 
++    @inspect_code
+     def __new__(cls, angle, unit=None, dtype=None, copy=True, **kwargs):
+ 
+         if not isinstance(angle, u.Quantity):
+@@ -124,7 +314,15 @@ class Angle(u.SpecificTypeQuantity):
+                     angle_unit = unit
+ 
+                 if isinstance(angle, tuple):
+-                    angle = cls._tuple_to_float(angle, angle_unit)
++                    if angle_unit == u.hourangle:
++                        form._check_hour_range(angle[0])
++                    form._check_minute_range(angle[1])
++                    a = np.abs(angle[0]) + angle[1] / 60.
++                    if len(angle) == 3:
++                        form._check_second_range(angle[2])
++                        a += angle[2] / 3600.
++
++                    angle = np.copysign(a, angle[0])
+ 
+                 if angle_unit is not unit:
+                     # Possible conversion to `unit` will be done below.
+diff --git a/astropy/coordinates/tests/test_angles.py b/astropy/coordinates/tests/test_angles.py
+index 8c2f8c5..2112043 100644
+--- a/astropy/coordinates/tests/test_angles.py
++++ b/astropy/coordinates/tests/test_angles.py
+@@ -36,19 +36,18 @@ def test_create_angles():
+     a4 = Angle("54.12412 deg")
+     a5 = Angle("54.12412 degrees")
+     a6 = Angle("54.12412°")  # because we like Unicode
+-    a7 = Angle((54, 7, 26.832), unit=u.degree)
+     a8 = Angle("54°07'26.832\"")
+-    # (deg,min,sec) *tuples* are acceptable, but lists/arrays are *not*
+-    # because of the need to eventually support arrays of coordinates
+     a9 = Angle([54, 7, 26.832], unit=u.degree)
+     assert_allclose(a9.value, [54, 7, 26.832])
+     assert a9.unit is u.degree
+ 
+     a10 = Angle(3.60827466667, unit=u.hour)
+     a11 = Angle("3:36:29.7888000120", unit=u.hour)
+-    a12 = Angle((3, 36, 29.7888000120), unit=u.hour)  # *must* be a tuple
+-    # Regression test for #5001
+-    a13 = Angle((3, 36, 29.7888000120), unit='hour')
++    with pytest.warns(AstropyDeprecationWarning, match='hms_to_hour'):
++        a12 = Angle((3, 36, 29.7888000120), unit=u.hour)  # *must* be a tuple
++    with pytest.warns(AstropyDeprecationWarning, match='hms_to_hour'):
++        # Regression test for #5001
++        a13 = Angle((3, 36, 29.7888000120), unit='hour')
+ 
+     Angle(0.944644098745, unit=u.radian)
+ 
+@@ -82,13 +81,12 @@ def test_create_angles():
+     a24 = Angle("+ 3h", unit=u.hour)
+ 
+     # ensure the above angles that should match do
+-    assert a1 == a2 == a3 == a4 == a5 == a6 == a7 == a8 == a18 == a19 == a20
++    assert a1 == a2 == a3 == a4 == a5 == a6 == a8 == a18 == a19 == a20
+     assert_allclose(a1.radian, a2.radian)
+     assert_allclose(a2.degree, a3.degree)
+     assert_allclose(a3.radian, a4.radian)
+     assert_allclose(a4.radian, a5.radian)
+     assert_allclose(a5.radian, a6.radian)
+-    assert_allclose(a6.radian, a7.radian)
+ 
+     assert_allclose(a10.degree, a11.degree)
+     assert a11 == a12 == a13 == a14
+@@ -432,16 +430,14 @@ def test_radec():
+     ra = Longitude("12h43m23s")
+     assert_allclose(ra.hour, 12.7230555556)
+ 
+-    ra = Longitude((56, 14, 52.52), unit=u.degree)      # can accept tuples
+     # TODO: again, fix based on >24 behavior
+     # ra = Longitude((56,14,52.52))
+     with pytest.raises(u.UnitsError):
+         ra = Longitude((56, 14, 52.52))
+     with pytest.raises(u.UnitsError):
+         ra = Longitude((12, 14, 52))  # ambiguous w/o units
+-    ra = Longitude((12, 14, 52), unit=u.hour)
+-
+-    ra = Longitude([56, 64, 52.2], unit=u.degree)  # ...but not arrays (yet)
++    with pytest.warns(AstropyDeprecationWarning, match='hms_to_hours'):
++        ra = Longitude((12, 14, 52), unit=u.hour)
+ 
+     # Units can be specified
+     ra = Longitude("4:08:15.162342", unit=u.hour)
+@@ -901,12 +897,12 @@ def test_empty_sep():
+ 
+ def test_create_tuple():
+     """
+-    Tests creation of an angle with a (d,m,s) or (h,m,s) tuple
+-    """
+-    a1 = Angle((1, 30, 0), unit=u.degree)
+-    assert a1.value == 1.5
++    Tests creation of an angle with an (h,m,s) tuple
+ 
+-    a1 = Angle((1, 30, 0), unit=u.hourangle)
++    (d, m, s) tuples are not tested because of sign ambiguity issues (#13162)
++    """
++    with pytest.warns(AstropyDeprecationWarning, match='hms_to_hours'):
++        a1 = Angle((1, 30, 0), unit=u.hourangle)
+     assert a1.value == 1.5
+ 
+ 
+diff --git a/astropy/coordinates/tests/test_arrays.py b/astropy/coordinates/tests/test_arrays.py
+index 6a3e637..e74cc2f 100644
+--- a/astropy/coordinates/tests/test_arrays.py
++++ b/astropy/coordinates/tests/test_arrays.py
+@@ -10,6 +10,7 @@ from astropy import units as u
+ from astropy.time import Time
+ from astropy.tests.helper import assert_quantity_allclose as assert_allclose
+ from astropy.utils.compat import NUMPY_LT_1_19
++from astropy.utils.exceptions import AstropyDeprecationWarning
+ 
+ from astropy.coordinates import (Angle, ICRS, FK4, FK5, Galactic, SkyCoord,
+                                  CartesianRepresentation)
+@@ -71,14 +72,6 @@ def test_dms():
+     npt.assert_almost_equal(m, [0, 30, -30])
+     npt.assert_almost_equal(s, [0, 0, -0])
+ 
+-    dms = a1.dms
+-    degrees = dms_to_degrees(*dms)
+-    npt.assert_almost_equal(a1.degree, degrees)
+-
+-    a2 = Angle(dms, unit=u.degree)
+-
+-    npt.assert_almost_equal(a2.radian, a1.radian)
+-
+ 
+ def test_hms():
+     a1 = Angle([0, 11.5, -11.5], unit=u.hour)
+@@ -88,10 +81,11 @@ def test_hms():
+     npt.assert_almost_equal(s, [0, 0, -0])
+ 
+     hms = a1.hms
+-    hours = hms_to_hours(*hms)
++    hours = hms[0] + hms[1] / 60. + hms[2] / 3600.
+     npt.assert_almost_equal(a1.hour, hours)
+ 
+-    a2 = Angle(hms, unit=u.hour)
++    with pytest.warns(AstropyDeprecationWarning, match='hms_to_hours'):
++        a2 = Angle(hms, unit=u.hour)
+ 
+     npt.assert_almost_equal(a2.radian, a1.radian)
+ 

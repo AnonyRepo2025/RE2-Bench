@@ -1,0 +1,330 @@
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index 064c6b6..92a3e64 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -1,6 +1,199 @@
+ """The CheckExternalLinksBuilder class."""
+ 
+ from __future__ import annotations
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sphinx-doc__sphinx-11489/sphinx/builders/linkcheck.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ import json
+ import re
+@@ -252,6 +445,7 @@ class CheckResult(NamedTuple):
+ class HyperlinkAvailabilityCheckWorker(Thread):
+     """A worker class for checking the availability of hyperlinks."""
+ 
++    @inspect_code
+     def __init__(self, config: Config,
+                  rqueue: Queue[CheckResult],
+                  wqueue: Queue[CheckRequest],
+@@ -262,6 +456,8 @@ class HyperlinkAvailabilityCheckWorker(Thread):
+ 
+         self.anchors_ignore: list[re.Pattern[str]] = list(
+             map(re.compile, config.linkcheck_anchors_ignore))
++        self.anchors_ignore_for_url: list[re.Pattern[str]] = list(
++            map(re.compile, config.linkcheck_anchors_ignore_for_url))
+         self.documents_exclude: list[re.Pattern[str]] = list(
+             map(re.compile, config.linkcheck_exclude_documents))
+         self.auth = [(re.compile(pattern), auth_info) for pattern, auth_info
+@@ -357,12 +553,19 @@ class HyperlinkAvailabilityCheckWorker(Thread):
+             yield self._session.head, {'allow_redirects': True}
+         yield self._session.get, {'stream': True}
+ 
++    @inspect_code
+     def _check_uri(self, uri: str, hyperlink: Hyperlink) -> tuple[str, str, int]:
+         req_url, delimiter, anchor = uri.partition('#')
+-        for rex in self.anchors_ignore if delimiter and anchor else []:
+-            if rex.match(anchor):
+-                anchor = ''
+-                break
++        if delimiter and anchor:
++            for rex in self.anchors_ignore:
++                if rex.match(anchor):
++                    anchor = ''
++                    break
++            else:
++                for rex in self.anchors_ignore_for_url:
++                    if rex.match(req_url):
++                        anchor = ''
++                        break
+ 
+         # handle non-ASCII URIs
+         try:
+@@ -594,6 +797,7 @@ def compile_linkcheck_allowed_redirects(app: Sphinx, config: Config) -> None:
+             app.config.linkcheck_allowed_redirects.pop(url)
+ 
+ 
++@inspect_code
+ def setup(app: Sphinx) -> dict[str, Any]:
+     app.add_builder(CheckExternalLinksBuilder)
+     app.add_post_transform(HyperlinkCollector)
+@@ -610,6 +814,7 @@ def setup(app: Sphinx) -> dict[str, Any]:
+     # Anchors starting with ! are ignored since they are
+     # commonly used for dynamic pages
+     app.add_config_value('linkcheck_anchors_ignore', ['^!'], False)
++    app.add_config_value('linkcheck_anchors_ignore_for_url', (), False, (tuple, list))
+     app.add_config_value('linkcheck_rate_limit_timeout', 300.0, False)
+ 
+     app.add_event('linkcheck-process-uri')
+diff --git a/tests/test_build_linkcheck.py b/tests/test_build_linkcheck.py
+index cd0daaa..1016355 100644
+--- a/tests/test_build_linkcheck.py
++++ b/tests/test_build_linkcheck.py
+@@ -232,6 +232,64 @@ def test_anchors_ignored(app):
+     assert not content
+ 
+ 
++class AnchorsIgnoreForUrlHandler(http.server.BaseHTTPRequestHandler):
++    def do_HEAD(self):
++        if self.path in {'/valid', '/ignored'}:
++            self.send_response(200, "OK")
++        else:
++            self.send_response(404, "Not Found")
++        self.end_headers()
++
++    def do_GET(self):
++        self.do_HEAD()
++        if self.path == '/valid':
++            self.wfile.write(b"<h1 id='valid-anchor'>valid anchor</h1>\n")
++        elif self.path == '/ignored':
++            self.wfile.write(b"no anchor but page exists\n")
++
++
++@pytest.mark.sphinx(
++    'linkcheck', testroot='linkcheck-anchors-ignore-for-url', freshenv=True,
++    confoverrides={'linkcheck_anchors_ignore_for_url': [
++        'http://localhost:7777/ignored',  # existing page
++        'http://localhost:7777/invalid',  # unknown page
++    ]})
++def test_anchors_ignored_for_url(app):
++    with http_server(AnchorsIgnoreForUrlHandler):
++        app.build()
++
++    assert (app.outdir / 'output.txt').exists()
++    content = (app.outdir / 'output.json').read_text(encoding='utf8')
++
++    attrs = ('filename', 'lineno', 'status', 'code', 'uri', 'info')
++    data = [json.loads(x) for x in content.splitlines()]
++    assert len(data) == 7
++    assert all(all(attr in row for attr in attrs) for row in data)
++
++    # rows may be unsorted due to network latency or
++    # the order the threads are processing the links
++    rows = {r['uri']: {'status': r['status'], 'info': r['info']} for r in data}
++
++    assert rows['http://localhost:7777/valid']['status'] == 'working'
++    assert rows['http://localhost:7777/valid#valid-anchor']['status'] == 'working'
++    assert rows['http://localhost:7777/valid#invalid-anchor'] == {
++        'status': 'broken',
++        'info': "Anchor 'invalid-anchor' not found",
++    }
++
++    assert rows['http://localhost:7777/ignored']['status'] == 'working'
++    assert rows['http://localhost:7777/ignored#invalid-anchor']['status'] == 'working'
++
++    assert rows['http://localhost:7777/invalid'] == {
++        'status': 'broken',
++        'info': '404 Client Error: Not Found for url: http://localhost:7777/invalid',
++    }
++    assert rows['http://localhost:7777/invalid#anchor'] == {
++        'status': 'broken',
++        'info': '404 Client Error: Not Found for url: http://localhost:7777/invalid',
++    }
++
++
+ @pytest.mark.sphinx('linkcheck', testroot='linkcheck-localserver-anchor', freshenv=True)
+ def test_raises_for_invalid_status(app):
+     class InternalServerErrorHandler(http.server.BaseHTTPRequestHandler):

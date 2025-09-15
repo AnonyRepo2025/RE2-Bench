@@ -1,0 +1,176 @@
+
+[OUTPUT]
+```
+{
+    "_shape": [
+        0,
+        11
+    ],
+    "maxprint": 50,
+    "indices": "[]",
+    "indptr": "[0]",
+    "data": "[]"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[EXAMPLE]
+[PYTHON]
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+from sklearn.utils import check_array
+from sklearn.utils.validation import check_is_fitted
+
+class OneHotEncoder(LabelEncoder):
+
+    def __init__(self, categories='auto', drop=None, sparse=True, dtype=np.float64, handle_unknown='error'):
+        self.categories = categories
+        self.drop = drop
+        self.sparse = sparse
+        self.dtype = dtype
+        self.handle_unknown = handle_unknown
+
+    def fit(self, y):
+        self.categories_ = super().fit(y)
+        return self
+
+    def fit_transform(self, y):
+        self.fit(y)
+        return self.transform(y)
+
+    def transform(self, y):
+        check_is_fitted(self, 'categories_')
+        y = column_or_1d(y, warn=True)
+        y = self._check_unknown(y)
+        return self._encode(y)
+
+    def _more_tags(self):
+        return {'X_types': ['1dlabels']}
+
+    def _check_unknown(self, value):
+        if self.handle_unknown not in ['error', 'ignore']:
+            template = ("handle_unknown should be either 'error' or "
+                        "'ignore', got {}".format(self.handle_unknown))
+            raise ValueError(template)
+        if self.handle_unknown == 'ignore':
+            diff = np.setdiff1d(value, self.categories_)
+            if diff.size > 0:
+                diff_str = ", ".join(str(d) for d in diff)
+                raise ValueError("y contains previously unseen labels: {}".format(diff_str))
+        return value
+
+    def _encode(self, y):
+        y = check_array(y, ensure_2d=False, dtype=None)
+        if y.ndim == 2 and y.shape[1] != 1:
+            raise ValueError("y should be a 1d array, got an array of shape {} instead.".format(y.shape))
+        y = y.ravel()
+        n_samples = y.size
+        n_features = len(self.categories_)
+        y_int = np.zeros(n_samples, dtype=int)
+        mask = np.in1d(y, self.categories_)
+        if not np.all(mask):
+            if self.handle_unknown == 'error':
+                diff = np.unique(y[~mask])
+                raise ValueError("y contains previously unseen labels: %s" % str(diff))
+            else:
+                y = y[mask]
+        y_int[mask] = self._transform(y)
+        y_onehot = np.zeros((n_samples, n_features), dtype=self.dtype)
+        y_onehot[np.arange(n_samples), y_int] = 1
+        return y_onehot
+
+    def _transform(self, y):
+        return super().transform(y)
+
+    def inverse_transform(self, y):
+        check_is_fitted(self, 'categories_')
+        y = check_array(y, accept_sparse='csr', ensure_2d=False, dtype=None)
+        if y.ndim == 1:
+            y = y.reshape(-1, 1)
+        if y.shape[1] != len(self.categories_):
+            raise ValueError("The number of features of the data (%d) should match the number of features of the data when fitted (%d)." % (y.shape[1], len(self.categories_)))
+        return self._decode(y)
+
+    def _decode(self, y):
+        return super().inverse_transform(np.argmax(y, axis=1))
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_is_fitted
+
+def check_is_fitted(estimator, attributes=None, msg=None, all_or_any=all):
+    if msg is None:
+        msg = ("This %(name)s instance is not fitted yet. Call 'fit' with appropriate arguments before using this method.")
+    if not hasattr(estimator, 'fit'):
+        raise TypeError("%s is not an estimator instance." % (estimator))
+    if attributes is not None:
+        if not isinstance(attributes, (list, tuple)):
+            attributes = [attributes]
+        if not all_or_any([hasattr(estimator, attr) for attr in attributes]):
+            raise NotFittedError(msg % {'name': type(estimator).__name__})
+
+.sklearn.utils.check_array
+
+def check_array(array, accept_sparse=None, accept_large_sparse=True, dtype="numeric", order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=False, estimator=None):
+    if not allow_nd and array.ndim >= 3:
+        raise ValueError("Found array with dim %d. %s expected <= 2." % (array.ndim, estimator))
+    return array
+
+.sklearn.preprocessing.LabelEncoder.transform
+
+def transform(self, y):
+    check_is_fitted(self)
+    y = column_or_1d(y, warn=True)
+    return self._label_transform(y)
+
+.sklearn.preprocessing.LabelEncoder._label_transform
+
+def _label_transform(self, y):
+    y = np.asarray(y)
+    if len(y.shape) == 1:
+        y = y[:, np.newaxis]
+    y = column_or_1d(y, warn=False)
+    classes = np.unique(y)
+    if classes.shape[0] > len(self.classes_):
+        diff = np.setdiff1d(classes, self.classes_)
+        raise ValueError("y contains new labels: %s" % str(diff))
+    transformed = np.searchsorted(self.classes_, y).astype(self.dtype)
+    return transformed
+
+.sklearn.preprocessing.LabelEncoder.inverse_transform
+
+def inverse_transform(self, y):
+    check_is_fitted(self)
+    y = column_or_1d(y, warn=True)
+    return self.classes_[y]
+
+.sklearn.utils.column_or_1d
+
+def column_or_1d(y, warn=False):
+    shape = np.shape(y)
+    if len(shape) == 1:
+        return np.atleast_2d(y).T
+    if len(shape) > 2 or (len(shape) == 2 and shape[1] != 1):
+        if warn:
+            warnings.warn("A column-vector y was passed when a 1d array was expected. Please change the shape of y to (n_samples, ), for example using ravel().", DataConversionWarning, stacklevel=2)
+        return y
+    return np.ravel(y)
+[/PYTHON]
+What will be the output of `transform`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "categories": "auto",
+        "drop": null,
+        "sparse": true,
+        "dtype": {
+            "__repr__": "\"<function __repr__>\"",
+            "__hash__": "\"<function __hash__>\"",
+            "__str__": "\"<function __str__>\"",
+            "__lt__": "\"<function __lt__>\"",
+            "__le__": "\"<function __le__>\"",
+            "__eq__": "\"<function __eq__>\"",
+            "__ne__": "\"<function __ne__>\"",
+            "__gt__": "

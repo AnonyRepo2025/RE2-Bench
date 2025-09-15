@@ -1,0 +1,608 @@
+diff --git a/django/core/management/commands/sqlmigrate.py b/django/core/management/commands/sqlmigrate.py
+index b75e0a7..6ae6c5b 100644
+--- a/django/core/management/commands/sqlmigrate.py
++++ b/django/core/management/commands/sqlmigrate.py
+@@ -1,8 +1,200 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12518/django/core/management/commands/sqlmigrate.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from django.apps import apps
+ from django.core.management.base import BaseCommand, CommandError
+ from django.db import DEFAULT_DB_ALIAS, connections
+-from django.db.migrations.executor import MigrationExecutor
+-from django.db.migrations.loader import AmbiguityError
++from django.db.migrations.loader import AmbiguityError, MigrationLoader
+ 
+ 
+ class Command(BaseCommand):
+@@ -29,12 +221,14 @@ class Command(BaseCommand):
+         options['no_color'] = True
+         return super().execute(*args, **options)
+ 
++    @inspect_code
+     def handle(self, *args, **options):
+         # Get the database we're operating from
+         connection = connections[options['database']]
+ 
+-        # Load up an executor to get all the migration data
+-        executor = MigrationExecutor(connection)
++        # Load up an loader to get all the migration data, but don't replace
++        # migrations.
++        loader = MigrationLoader(connection, replace_migrations=False)
+ 
+         # Resolve command-line arguments into a migration
+         app_label, migration_name = options['app_label'], options['migration_name']
+@@ -43,10 +237,10 @@ class Command(BaseCommand):
+             apps.get_app_config(app_label)
+         except LookupError as err:
+             raise CommandError(str(err))
+-        if app_label not in executor.loader.migrated_apps:
++        if app_label not in loader.migrated_apps:
+             raise CommandError("App '%s' does not have migrations" % app_label)
+         try:
+-            migration = executor.loader.get_migration_by_prefix(app_label, migration_name)
++            migration = loader.get_migration_by_prefix(app_label, migration_name)
+         except AmbiguityError:
+             raise CommandError("More than one migration matches '%s' in app '%s'. Please be more specific." % (
+                 migration_name, app_label))
+@@ -61,8 +255,8 @@ class Command(BaseCommand):
+ 
+         # Make a plan that represents just the requested migrations and show SQL
+         # for it
+-        plan = [(executor.loader.graph.nodes[target], options['backwards'])]
+-        sql_statements = executor.collect_sql(plan)
++        plan = [(loader.graph.nodes[target], options['backwards'])]
++        sql_statements = loader.collect_sql(plan)
+         if not sql_statements and options['verbosity'] >= 1:
+             self.stderr.write('No operations found.')
+         return '\n'.join(sql_statements)
+diff --git a/django/db/migrations/executor.py b/django/db/migrations/executor.py
+index 2765ac2..83d624e 100644
+--- a/django/db/migrations/executor.py
++++ b/django/db/migrations/executor.py
+@@ -210,24 +210,6 @@ class MigrationExecutor:
+ 
+         return state
+ 
+-    def collect_sql(self, plan):
+-        """
+-        Take a migration plan and return a list of collected SQL statements
+-        that represent the best-efforts version of that plan.
+-        """
+-        statements = []
+-        state = None
+-        for migration, backwards in plan:
+-            with self.connection.schema_editor(collect_sql=True, atomic=migration.atomic) as schema_editor:
+-                if state is None:
+-                    state = self.loader.project_state((migration.app_label, migration.name), at_end=False)
+-                if not backwards:
+-                    state = migration.apply(state, schema_editor, collect_sql=True)
+-                else:
+-                    state = migration.unapply(state, schema_editor, collect_sql=True)
+-            statements.extend(schema_editor.collected_sql)
+-        return statements
+-
+     def apply_migration(self, state, migration, fake=False, fake_initial=False):
+         """Run a migration forwards."""
+         migration_recorded = False
+diff --git a/django/db/migrations/loader.py b/django/db/migrations/loader.py
+index 09a58d1..6f45673 100644
+--- a/django/db/migrations/loader.py
++++ b/django/db/migrations/loader.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12518/django/db/migrations/loader.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import pkgutil
+ import sys
+ from importlib import import_module, reload
+@@ -40,11 +233,15 @@ class MigrationLoader:
+     in memory.
+     """
+ 
+-    def __init__(self, connection, load=True, ignore_no_migrations=False):
++    def __init__(
++        self, connection, load=True, ignore_no_migrations=False,
++        replace_migrations=True,
++    ):
+         self.connection = connection
+         self.disk_migrations = None
+         self.applied_migrations = None
+         self.ignore_no_migrations = ignore_no_migrations
++        self.replace_migrations = replace_migrations
+         if load:
+             self.build_graph()
+ 
+@@ -194,6 +391,7 @@ class MigrationLoader:
+             if child is not None:
+                 self.graph.add_dependency(migration, child, key, skip_validation=True)
+ 
++    @inspect_code
+     def build_graph(self):
+         """
+         Build a migration dependency graph using both the disk and database.
+@@ -223,24 +421,27 @@ class MigrationLoader:
+         # Add external dependencies now that the internal ones have been resolved.
+         for key, migration in self.disk_migrations.items():
+             self.add_external_dependencies(key, migration)
+-        # Carry out replacements where possible.
+-        for key, migration in self.replacements.items():
+-            # Get applied status of each of this migration's replacement targets.
+-            applied_statuses = [(target in self.applied_migrations) for target in migration.replaces]
+-            # Ensure the replacing migration is only marked as applied if all of
+-            # its replacement targets are.
+-            if all(applied_statuses):
+-                self.applied_migrations[key] = migration
+-            else:
+-                self.applied_migrations.pop(key, None)
+-            # A replacing migration can be used if either all or none of its
+-            # replacement targets have been applied.
+-            if all(applied_statuses) or (not any(applied_statuses)):
+-                self.graph.remove_replaced_nodes(key, migration.replaces)
+-            else:
+-                # This replacing migration cannot be used because it is partially applied.
+-                # Remove it from the graph and remap dependencies to it (#25945).
+-                self.graph.remove_replacement_node(key, migration.replaces)
++        # Carry out replacements where possible and if enabled.
++        if self.replace_migrations:
++            for key, migration in self.replacements.items():
++                # Get applied status of each of this migration's replacement
++                # targets.
++                applied_statuses = [(target in self.applied_migrations) for target in migration.replaces]
++                # The replacing migration is only marked as applied if all of
++                # its replacement targets are.
++                if all(applied_statuses):
++                    self.applied_migrations[key] = migration
++                else:
++                    self.applied_migrations.pop(key, None)
++                # A replacing migration can be used if either all or none of
++                # its replacement targets have been applied.
++                if all(applied_statuses) or (not any(applied_statuses)):
++                    self.graph.remove_replaced_nodes(key, migration.replaces)
++                else:
++                    # This replacing migration cannot be used because it is
++                    # partially applied. Remove it from the graph and remap
++                    # dependencies to it (#25945).
++                    self.graph.remove_replacement_node(key, migration.replaces)
+         # Ensure the graph is consistent.
+         try:
+             self.graph.validate_consistency()
+@@ -320,3 +521,21 @@ class MigrationLoader:
+         See graph.make_state() for the meaning of "nodes" and "at_end".
+         """
+         return self.graph.make_state(nodes=nodes, at_end=at_end, real_apps=list(self.unmigrated_apps))
++
++    def collect_sql(self, plan):
++        """
++        Take a migration plan and return a list of collected SQL statements
++        that represent the best-efforts version of that plan.
++        """
++        statements = []
++        state = None
++        for migration, backwards in plan:
++            with self.connection.schema_editor(collect_sql=True, atomic=migration.atomic) as schema_editor:
++                if state is None:
++                    state = self.project_state((migration.app_label, migration.name), at_end=False)
++                if not backwards:
++                    state = migration.apply(state, schema_editor, collect_sql=True)
++                else:
++                    state = migration.unapply(state, schema_editor, collect_sql=True)
++            statements.extend(schema_editor.collected_sql)
++        return statements
+diff --git a/tests/migrations/test_commands.py b/tests/migrations/test_commands.py
+index b98b77c..14c09c8 100644
+--- a/tests/migrations/test_commands.py
++++ b/tests/migrations/test_commands.py
+@@ -695,6 +695,32 @@ class MigrateTests(MigrationTestBase):
+             self.assertNotIn(start_transaction_sql.lower(), queries)
+         self.assertNotIn(connection.ops.end_transaction_sql().lower(), queries)
+ 
++    @override_settings(MIGRATION_MODULES={'migrations': 'migrations.test_migrations_squashed'})
++    def test_sqlmigrate_ambiguous_prefix_squashed_migrations(self):
++        msg = (
++            "More than one migration matches '0001' in app 'migrations'. "
++            "Please be more specific."
++        )
++        with self.assertRaisesMessage(CommandError, msg):
++            call_command('sqlmigrate', 'migrations', '0001')
++
++    @override_settings(MIGRATION_MODULES={'migrations': 'migrations.test_migrations_squashed'})
++    def test_sqlmigrate_squashed_migration(self):
++        out = io.StringIO()
++        call_command('sqlmigrate', 'migrations', '0001_squashed_0002', stdout=out)
++        output = out.getvalue().lower()
++        self.assertIn('-- create model author', output)
++        self.assertIn('-- create model book', output)
++        self.assertNotIn('-- create model tribble', output)
++
++    @override_settings(MIGRATION_MODULES={'migrations': 'migrations.test_migrations_squashed'})
++    def test_sqlmigrate_replaced_migration(self):
++        out = io.StringIO()
++        call_command('sqlmigrate', 'migrations', '0001_initial', stdout=out)
++        output = out.getvalue().lower()
++        self.assertIn('-- create model author', output)
++        self.assertIn('-- create model tribble', output)
++
+     @override_settings(MIGRATION_MODULES={'migrations': 'migrations.test_migrations_no_operations'})
+     def test_migrations_no_operations(self):
+         err = io.StringIO()

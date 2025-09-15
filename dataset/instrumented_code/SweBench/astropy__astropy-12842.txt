@@ -1,0 +1,735 @@
+diff --git a/astropy/io/ascii/tests/test_ecsv.py b/astropy/io/ascii/tests/test_ecsv.py
+index 050de03..0e63b5c 100644
+--- a/astropy/io/ascii/tests/test_ecsv.py
++++ b/astropy/io/ascii/tests/test_ecsv.py
+@@ -822,13 +822,13 @@ exps['2-d regular array'] = [
+      'name': '2-d regular array',
+      'subtype': 'float16[2,2]'}]
+ 
+-cols['scalar object'] = np.array([{'a': 1}, {'b':2}], dtype=object)
++cols['scalar object'] = np.array([{'a': 1}, {'b': 2}], dtype=object)
+ exps['scalar object'] = [
+     {'datatype': 'string', 'name': 'scalar object', 'subtype': 'json'}]
+ 
+ cols['1-d object'] = np.array(
+-    [[{'a': 1}, {'b':2}],
+-     [{'a': 1}, {'b':2}]], dtype=object)
++    [[{'a': 1}, {'b': 2}],
++     [{'a': 1}, {'b': 2}]], dtype=object)
+ exps['1-d object'] = [
+     {'datatype': 'string',
+      'name': '1-d object',
+@@ -966,7 +966,7 @@ def test_masked_vals_in_array_subtypes():
+     assert t2.colnames == t.colnames
+     for name in t2.colnames:
+         assert t2[name].dtype == t[name].dtype
+-        assert type(t2[name]) is type(t[name])
++        assert type(t2[name]) is type(t[name])  # noqa
+         for val1, val2 in zip(t2[name], t[name]):
+             if isinstance(val1, np.ndarray):
+                 assert val1.dtype == val2.dtype
+diff --git a/astropy/time/core.py b/astropy/time/core.py
+index a2dfc61..9387579 100644
+--- a/astropy/time/core.py
++++ b/astropy/time/core.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/astropy__astropy-12842/astropy/time/core.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # -*- coding: utf-8 -*-
+ # Licensed under a 3-clause BSD style license - see LICENSE.rst
+ """
+@@ -34,7 +227,7 @@ from .formats import TimeFromEpoch  # noqa
+ 
+ from astropy.extern import _strptime
+ 
+-__all__ = ['TimeBase', 'Time', 'TimeDelta', 'TimeInfo', 'update_leap_seconds',
++__all__ = ['TimeBase', 'Time', 'TimeDelta', 'TimeInfo', 'TimeInfoBase', 'update_leap_seconds',
+            'TIME_SCALES', 'STANDARD_TIME_SCALES', 'TIME_DELTA_SCALES',
+            'ScaleValueError', 'OperandTypeError', 'TimeDeltaMissingUnitWarning']
+ 
+@@ -110,11 +303,13 @@ _LEAP_SECONDS_CHECK = _LeapSecondsCheck.NOT_STARTED
+ _LEAP_SECONDS_LOCK = threading.RLock()
+ 
+ 
+-class TimeInfo(MixinInfo):
++class TimeInfoBase(MixinInfo):
+     """
+     Container for meta information like name, description, format.  This is
+     required when the object is used as a mixin column within a table, but can
+     be used as a general way to store meta information.
++
++    This base class is common between TimeInfo and TimeDeltaInfo.
+     """
+     attr_names = MixinInfo.attr_names | {'serialize_method'}
+     _supports_indexing = True
+@@ -133,6 +328,7 @@ class TimeInfo(MixinInfo):
+     @property
+     def _represent_as_dict_attrs(self):
+         method = self.serialize_method[self._serialize_context]
++
+         if method == 'formatted_value':
+             out = ('value',)
+         elif method == 'jd1_jd2':
+@@ -182,7 +378,8 @@ class TimeInfo(MixinInfo):
+     # When Time has mean, std, min, max methods:
+     # funcs = [lambda x: getattr(x, stat)() for stat_name in MixinInfo._stats])
+ 
+-    def _construct_from_dict_base(self, map):
++    @inspect_code
++    def _construct_from_dict(self, map):
+         if 'jd1' in map and 'jd2' in map:
+             # Initialize as JD but revert to desired format and out_subfmt (if needed)
+             format = map.pop('format')
+@@ -201,19 +398,6 @@ class TimeInfo(MixinInfo):
+ 
+         return out
+ 
+-    def _construct_from_dict(self, map):
+-        delta_ut1_utc = map.pop('_delta_ut1_utc', None)
+-        delta_tdb_tt = map.pop('_delta_tdb_tt', None)
+-
+-        out = self._construct_from_dict_base(map)
+-
+-        if delta_ut1_utc is not None:
+-            out._delta_ut1_utc = delta_ut1_utc
+-        if delta_tdb_tt is not None:
+-            out._delta_tdb_tt = delta_tdb_tt
+-
+-        return out
+-
+     def new_like(self, cols, length, metadata_conflicts='warn', name=None):
+         """
+         Return a new Time instance which is consistent with the input Time objects
+@@ -276,11 +460,69 @@ class TimeInfo(MixinInfo):
+         return out
+ 
+ 
+-class TimeDeltaInfo(TimeInfo):
+-    _represent_as_dict_extra_attrs = ('format', 'scale')
++class TimeInfo(TimeInfoBase):
++    """
++    Container for meta information like name, description, format.  This is
++    required when the object is used as a mixin column within a table, but can
++    be used as a general way to store meta information.
++    """
++    def _represent_as_dict(self, attrs=None):
++        """Get the values for the parent ``attrs`` and return as a dict.
++
++        By default, uses '_represent_as_dict_attrs'.
++        """
++        map = super()._represent_as_dict(attrs=attrs)
++
++        # TODO: refactor these special cases into the TimeFormat classes?
++
++        # The datetime64 format requires special handling for ECSV (see #12840).
++        # The `value` has numpy dtype datetime64 but this is not an allowed
++        # datatype for ECSV. Instead convert to a string representation.
++        if (self._serialize_context == 'ecsv'
++                and map['format'] == 'datetime64'
++                and 'value' in map):
++            map['value'] = map['value'].astype('U')
++
++        # The datetime format is serialized as ISO with no loss of precision.
++        if map['format'] == 'datetime' and 'value' in map:
++            map['value'] = np.vectorize(lambda x: x.isoformat())(map['value'])
++
++        return map
+ 
+     def _construct_from_dict(self, map):
+-        return self._construct_from_dict_base(map)
++        # See comment above. May need to convert string back to datetime64.
++        # Note that _serialize_context is not set here so we just look for the
++        # string value directly.
++        if (map['format'] == 'datetime64'
++                and 'value' in map
++                and map['value'].dtype.kind == 'U'):
++            map['value'] = map['value'].astype('datetime64')
++
++        # Convert back to datetime objects for datetime format.
++        if map['format'] == 'datetime' and 'value' in map:
++            from datetime import datetime
++            map['value'] = np.vectorize(datetime.fromisoformat)(map['value'])
++
++        delta_ut1_utc = map.pop('_delta_ut1_utc', None)
++        delta_tdb_tt = map.pop('_delta_tdb_tt', None)
++
++        out = super()._construct_from_dict(map)
++
++        if delta_ut1_utc is not None:
++            out._delta_ut1_utc = delta_ut1_utc
++        if delta_tdb_tt is not None:
++            out._delta_tdb_tt = delta_tdb_tt
++
++        return out
++
++
++class TimeDeltaInfo(TimeInfoBase):
++    """
++    Container for meta information like name, description, format.  This is
++    required when the object is used as a mixin column within a table, but can
++    be used as a general way to store meta information.
++    """
++    _represent_as_dict_extra_attrs = ('format', 'scale')
+ 
+     def new_like(self, cols, length, metadata_conflicts='warn', name=None):
+         """
+@@ -1775,6 +2017,7 @@ class Time(TimeBase):
+         tcor_val = (spos * cpos).sum(axis=-1) / const.c
+         return TimeDelta(tcor_val, scale='tdb')
+ 
++    @inspect_code
+     def earth_rotation_angle(self, longitude=None):
+         """Calculate local Earth rotation angle.
+ 
+@@ -1815,7 +2058,7 @@ class Time(TimeBase):
+         and is rigorously corrected for polar motion.
+         (except when ``longitude='tio'``).
+ 
+-        """
++        """  # noqa
+         if isinstance(longitude, str) and longitude == 'tio':
+             longitude = 0
+             include_tio = False
+@@ -1826,6 +2069,7 @@ class Time(TimeBase):
+                                                function=erfa.era00, scales=('ut1',),
+                                                include_tio=include_tio)
+ 
++    @inspect_code
+     def sidereal_time(self, kind, longitude=None, model=None):
+         """Calculate sidereal time.
+ 
+@@ -1877,7 +2121,7 @@ class Time(TimeBase):
+         the equator of the Celestial Intermediate Pole (CIP) and is rigorously
+         corrected for polar motion (except when ``longitude='tio'`` or ``'greenwich'``).
+ 
+-        """  # docstring is formatted below
++        """  # noqa (docstring is formatted below)
+ 
+         if kind.lower() not in SIDEREAL_TIME_MODELS.keys():
+             raise ValueError('The kind of sidereal time has to be {}'.format(
+@@ -1907,6 +2151,7 @@ class Time(TimeBase):
+             'apparent', sorted(SIDEREAL_TIME_MODELS['apparent'].keys()),
+             'mean', sorted(SIDEREAL_TIME_MODELS['mean'].keys()))
+ 
++    @inspect_code
+     def _sid_time_or_earth_rot_ang(self, longitude, function, scales, include_tio=True):
+         """Calculate a local sidereal time or Earth rotation angle.
+ 
+@@ -1929,7 +2174,7 @@ class Time(TimeBase):
+         `~astropy.coordinates.Longitude`
+             Local sidereal time or Earth rotation angle, with units of hourangle.
+ 
+-        """
++        """  # noqa
+         from astropy.coordinates import Longitude, EarthLocation
+         from astropy.coordinates.builtin_frames.utils import get_polar_motion
+         from astropy.coordinates.matrix_utilities import rotation_matrix
+@@ -1956,7 +2201,7 @@ class Time(TimeBase):
+             r = (rotation_matrix(longitude, 'z')
+                  @ rotation_matrix(-yp, 'x', unit=u.radian)
+                  @ rotation_matrix(-xp, 'y', unit=u.radian)
+-                 @ rotation_matrix(theta+sp, 'z', unit=u.radian))
++                 @ rotation_matrix(theta + sp, 'z', unit=u.radian))
+             # Solve for angle.
+             angle = np.arctan2(r[..., 0, 1], r[..., 0, 0]) << u.radian
+ 
+@@ -2781,7 +3026,6 @@ class OperandTypeError(TypeError):
+ def _check_leapsec():
+     global _LEAP_SECONDS_CHECK
+     if _LEAP_SECONDS_CHECK != _LeapSecondsCheck.DONE:
+-        from astropy.utils import iers
+         with _LEAP_SECONDS_LOCK:
+             # There are three ways we can get here:
+             # 1. First call (NOT_STARTED).
+diff --git a/astropy/time/formats.py b/astropy/time/formats.py
+index 164dbd4..af6d437 100644
+--- a/astropy/time/formats.py
++++ b/astropy/time/formats.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/astropy__astropy-12842/astropy/time/formats.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # -*- coding: utf-8 -*-
+ # Licensed under a 3-clause BSD style license - see LICENSE.rst
+ import fnmatch
+@@ -1743,9 +1936,10 @@ class TimeBesselianEpoch(TimeEpochDate):
+     epoch_to_jd = 'epb2jd'
+     jd_to_epoch = 'epb'
+ 
++    @inspect_code
+     def _check_val_type(self, val1, val2):
+         """Input value validation, typically overridden by derived classes"""
+-        if hasattr(val1, 'to') and hasattr(val1, 'unit'):
++        if hasattr(val1, 'to') and hasattr(val1, 'unit') and val1.unit is not None:
+             raise ValueError("Cannot use Quantities for 'byear' format, "
+                              "as the interpretation would be ambiguous. "
+                              "Use float with Besselian year instead. ")
+diff --git a/astropy/time/tests/test_basic.py b/astropy/time/tests/test_basic.py
+index 300a0c2..bf8d63c 100644
+--- a/astropy/time/tests/test_basic.py
++++ b/astropy/time/tests/test_basic.py
+@@ -6,6 +6,7 @@ import functools
+ import datetime
+ from copy import deepcopy
+ from decimal import Decimal, localcontext
++from io import StringIO
+ 
+ import numpy as np
+ import pytest
+@@ -20,7 +21,7 @@ from astropy.time import (Time, TimeDelta, ScaleValueError, STANDARD_TIME_SCALES
+ from astropy.coordinates import EarthLocation
+ from astropy import units as u
+ from astropy.table import Column, Table
+-from astropy.utils.compat.optional_deps import HAS_PYTZ  # noqa
++from astropy.utils.compat.optional_deps import HAS_PYTZ, HAS_H5PY  # noqa
+ 
+ 
+ allclose_jd = functools.partial(np.allclose, rtol=np.finfo(float).eps, atol=0)
+@@ -2221,6 +2222,66 @@ def test_ymdhms_output():
+     assert t.ymdhms.year == 2015
+ 
+ 
++@pytest.mark.parametrize('fmt', TIME_FORMATS)
++def test_write_every_format_to_ecsv(fmt):
++    """Test special-case serialization of certain Time formats"""
++    t = Table()
++    # Use a time that tests the default serialization of the time format
++    tm = (Time('2020-01-01')
++          + [[1, 1 / 7],
++             [3, 4.5]] * u.s)
++    tm.format = fmt
++    t['a'] = tm
++    out = StringIO()
++    t.write(out, format='ascii.ecsv')
++    t2 = Table.read(out.getvalue(), format='ascii.ecsv')
++    assert t['a'].format == t2['a'].format
++    # Some loss of precision in the serialization
++    assert not np.all(t['a'] == t2['a'])
++    # But no loss in the format representation
++    assert np.all(t['a'].value == t2['a'].value)
++
++
++@pytest.mark.parametrize('fmt', TIME_FORMATS)
++def test_write_every_format_to_fits(fmt, tmp_path):
++    """Test special-case serialization of certain Time formats"""
++    t = Table()
++    # Use a time that tests the default serialization of the time format
++    tm = (Time('2020-01-01')
++          + [[1, 1 / 7],
++             [3, 4.5]] * u.s)
++    tm.format = fmt
++    t['a'] = tm
++    out = tmp_path / 'out.fits'
++    t.write(out, format='fits')
++    t2 = Table.read(out, format='fits', astropy_native=True)
++    # Currently the format is lost in FITS so set it back
++    t2['a'].format = fmt
++    # No loss of precision in the serialization or representation
++    assert np.all(t['a'] == t2['a'])
++    assert np.all(t['a'].value == t2['a'].value)
++
++
++@pytest.mark.skipif(not HAS_H5PY, reason='Needs h5py')
++@pytest.mark.parametrize('fmt', TIME_FORMATS)
++def test_write_every_format_to_hdf5(fmt, tmp_path):
++    """Test special-case serialization of certain Time formats"""
++    t = Table()
++    # Use a time that tests the default serialization of the time format
++    tm = (Time('2020-01-01')
++          + [[1, 1 / 7],
++             [3, 4.5]] * u.s)
++    tm.format = fmt
++    t['a'] = tm
++    out = tmp_path / 'out.h5'
++    t.write(str(out), format='hdf5', path='root', serialize_meta=True)
++    t2 = Table.read(str(out), format='hdf5', path='root')
++    assert t['a'].format == t2['a'].format
++    # No loss of precision in the serialization or representation
++    assert np.all(t['a'] == t2['a'])
++    assert np.all(t['a'].value == t2['a'].value)
++
++
+ # There are two stages of validation now - one on input into a format, so that
+ # the format conversion code has tidy matched arrays to work with, and the
+ # other when object construction does not go through a format object. Or at

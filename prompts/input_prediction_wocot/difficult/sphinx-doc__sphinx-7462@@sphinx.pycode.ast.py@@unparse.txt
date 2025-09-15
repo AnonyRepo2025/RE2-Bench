@@ -1,0 +1,221 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. The input structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict input variable values to fill out placeholders XXX in the structure, and print input between [INPUT] and [\INPUT]. You should maintain the structure when printing inputs. Do not change anything else.  ONLY print the input, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import sys
+from typing import Dict, List, Type
+import ast
+from typed_ast import ast3 as ast
+import ast
+OPERATORS = {ast.Add: '+', ast.And: 'and', ast.BitAnd: '&', ast.BitOr: '|', ast.BitXor: '^', ast.Div: '/', ast.FloorDiv: '//', ast.Invert: '~', ast.LShift: '<<', ast.MatMult: '@', ast.Mult: '*', ast.Mod: '%', ast.Not: 'not', ast.Pow: '**', ast.Or: 'or', ast.RShift: '>>', ast.Sub: '-', ast.UAdd: '+', ast.USub: '-'}
+
+def unparse(node: ast.AST) -> str:
+    if node is None:
+        return None
+    elif isinstance(node, str):
+        return node
+    elif node.__class__ in OPERATORS:
+        return OPERATORS[node.__class__]
+    elif isinstance(node, ast.arg):
+        if node.annotation:
+            return '%s: %s' % (node.arg, unparse(node.annotation))
+        else:
+            return node.arg
+    elif isinstance(node, ast.arguments):
+        return unparse_arguments(node)
+    elif isinstance(node, ast.Attribute):
+        return '%s.%s' % (unparse(node.value), node.attr)
+    elif isinstance(node, ast.BinOp):
+        return ' '.join((unparse(e) for e in [node.left, node.op, node.right]))
+    elif isinstance(node, ast.BoolOp):
+        op = ' %s ' % unparse(node.op)
+        return op.join((unparse(e) for e in node.values))
+    elif isinstance(node, ast.Bytes):
+        return repr(node.s)
+    elif isinstance(node, ast.Call):
+        args = [unparse(e) for e in node.args] + ['%s=%s' % (k.arg, unparse(k.value)) for k in node.keywords]
+        return '%s(%s)' % (unparse(node.func), ', '.join(args))
+    elif isinstance(node, ast.Dict):
+        keys = (unparse(k) for k in node.keys)
+        values = (unparse(v) for v in node.values)
+        items = (k + ': ' + v for k, v in zip(keys, values))
+        return '{' + ', '.join(items) + '}'
+    elif isinstance(node, ast.Ellipsis):
+        return '...'
+    elif isinstance(node, ast.Index):
+        return unparse(node.value)
+    elif isinstance(node, ast.Lambda):
+        return 'lambda %s: ...' % unparse(node.args)
+    elif isinstance(node, ast.List):
+        return '[' + ', '.join((unparse(e) for e in node.elts)) + ']'
+    elif isinstance(node, ast.Name):
+        return node.id
+    elif isinstance(node, ast.NameConstant):
+        return repr(node.value)
+    elif isinstance(node, ast.Num):
+        return repr(node.n)
+    elif isinstance(node, ast.Set):
+        return '{' + ', '.join((unparse(e) for e in node.elts)) + '}'
+    elif isinstance(node, ast.Str):
+        return repr(node.s)
+    elif isinstance(node, ast.Subscript):
+        return '%s[%s]' % (unparse(node.value), unparse(node.slice))
+    elif isinstance(node, ast.UnaryOp):
+        return '%s %s' % (unparse(node.op), unparse(node.operand))
+    elif isinstance(node, ast.Tuple):
+        if node.elts:
+            return ', '.join((unparse(e) for e in node.elts))
+        else:
+            return '()'
+    elif sys.version_info > (3, 6) and isinstance(node, ast.Constant):
+        return repr(node.value)
+    else:
+        raise NotImplementedError('Unable to parse %s object' % type(node).__name__)
+[/PYTHON]
+
+What will be the input of `unparse`, given the following output:
+[OUTPUT]
+```
+{
+    "output": "[1, 2, 3]"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {},
+    "args": {
+        "node": {
+            "elts": XXX,
+            "ctx": {},
+            "lineno": XXX,
+            "col_offset": XXX,
+            "end_lineno": XXX,
+            "end_col_offset": XXX
+        }
+    },
+    "kwargs": {}
+}
+```
+[/STRUCTURE]

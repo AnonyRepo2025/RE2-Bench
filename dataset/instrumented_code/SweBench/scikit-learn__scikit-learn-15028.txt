@@ -1,0 +1,600 @@
+diff --git a/sklearn/model_selection/tests/test_search.py b/sklearn/model_selection/tests/test_search.py
+index db69c66..55cf58d 100644
+--- a/sklearn/model_selection/tests/test_search.py
++++ b/sklearn/model_selection/tests/test_search.py
+@@ -1692,12 +1692,16 @@ def test_custom_run_search():
+ 
+     results = mycv.cv_results_
+     check_results(results, gscv)
+-    for attr in dir(gscv):
+-        if attr[0].islower() and attr[-1:] == '_' and \
+-           attr not in {'cv_results_', 'best_estimator_',
+-                        'refit_time_'}:
+-            assert getattr(gscv, attr) == getattr(mycv, attr), \
+-                   "Attribute %s not equal" % attr
++    # TODO: remove in v0.24, the deprecation goes away then.
++    with pytest.warns(DeprecationWarning,
++                      match="attribute is to be deprecated from version 0.22"):
++        for attr in dir(gscv):
++            if (attr[0].islower() and attr[-1:] == '_' and
++                    attr not in {'cv_results_', 'best_estimator_',
++                                 'refit_time_',
++                                 }):
++                assert getattr(gscv, attr) == getattr(mycv, attr), \
++                    "Attribute %s not equal" % attr
+ 
+ 
+ def test__custom_fit_no_run_search():
+diff --git a/sklearn/tree/export.py b/sklearn/tree/export.py
+index e75522b..200e380 100644
+--- a/sklearn/tree/export.py
++++ b/sklearn/tree/export.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-15028/sklearn/tree/export.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ This module defines export functions for decision trees.
+ """
+@@ -18,6 +211,7 @@ from numbers import Integral
+ import numpy as np
+ 
+ from ..utils.validation import check_is_fitted
++from ..base import is_classifier
+ 
+ from . import _criterion
+ from . import _tree
+@@ -791,6 +985,7 @@ def _compute_depth(tree, node):
+     return max(depths)
+ 
+ 
++@inspect_code
+ def export_text(decision_tree, feature_names=None, max_depth=10,
+                 spacing=3, decimals=2, show_weights=False):
+     """Build a text report showing the rules of a decision tree.
+@@ -850,7 +1045,8 @@ def export_text(decision_tree, feature_names=None, max_depth=10,
+     """
+     check_is_fitted(decision_tree)
+     tree_ = decision_tree.tree_
+-    class_names = decision_tree.classes_
++    if is_classifier(decision_tree):
++        class_names = decision_tree.classes_
+     right_child_fmt = "{} {} <= {}\n"
+     left_child_fmt = "{} {} >  {}\n"
+     truncation_fmt = "{} {}\n"
+diff --git a/sklearn/tree/tests/test_tree.py b/sklearn/tree/tests/test_tree.py
+index 1672d12..55ae6e2 100644
+--- a/sklearn/tree/tests/test_tree.py
++++ b/sklearn/tree/tests/test_tree.py
+@@ -433,12 +433,12 @@ def test_max_features():
+         est = TreeEstimator(max_features="sqrt")
+         est.fit(iris.data, iris.target)
+         assert (est.max_features_ ==
+-                     int(np.sqrt(iris.data.shape[1])))
++                int(np.sqrt(iris.data.shape[1])))
+ 
+         est = TreeEstimator(max_features="log2")
+         est.fit(iris.data, iris.target)
+         assert (est.max_features_ ==
+-                     int(np.log2(iris.data.shape[1])))
++                int(np.log2(iris.data.shape[1])))
+ 
+         est = TreeEstimator(max_features=1)
+         est.fit(iris.data, iris.target)
+@@ -455,7 +455,7 @@ def test_max_features():
+         est = TreeEstimator(max_features=0.5)
+         est.fit(iris.data, iris.target)
+         assert (est.max_features_ ==
+-                     int(0.5 * iris.data.shape[1]))
++                int(0.5 * iris.data.shape[1]))
+ 
+         est = TreeEstimator(max_features=1.0)
+         est.fit(iris.data, iris.target)
+@@ -1966,3 +1966,20 @@ def test_prune_tree_raises_negative_ccp_alpha():
+     with pytest.raises(ValueError, match=msg):
+         clf.set_params(ccp_alpha=-1.0)
+         clf._prune_tree()
++
++
++def test_classes_deprecated():
++    X = [[0, 0], [2, 2], [4, 6], [10, 11]]
++    y = [0.5, 2.5, 3.5, 5.5]
++    clf = DecisionTreeRegressor()
++    clf = clf.fit(X, y)
++
++    match = ("attribute is to be deprecated from version "
++             "0.22 and will be removed in 0.24.")
++
++    with pytest.warns(DeprecationWarning, match=match):
++        n = len(clf.classes_)
++        assert n == clf.n_outputs_
++
++    with pytest.warns(DeprecationWarning, match=match):
++        assert len(clf.n_classes_) == clf.n_outputs_
+diff --git a/sklearn/tree/tree.py b/sklearn/tree/tree.py
+index c862a09..441f9aa 100644
+--- a/sklearn/tree/tree.py
++++ b/sklearn/tree/tree.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-15028/sklearn/tree/tree.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ This module gathers tree-based methods, including decision, regression and
+ randomized trees. Single and multi-output problems are both handled.
+@@ -126,6 +319,7 @@ class BaseDecisionTree(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
+         check_is_fitted(self)
+         return self.tree_.n_leaves
+ 
++    @inspect_code
+     def fit(self, X, y, sample_weight=None, check_input=True,
+             X_idx_sorted=None):
+ 
+@@ -180,11 +374,7 @@ class BaseDecisionTree(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
+                 expanded_class_weight = compute_sample_weight(
+                     self.class_weight, y_original)
+ 
+-        else:
+-            self.classes_ = [None] * self.n_outputs_
+-            self.n_classes_ = [1] * self.n_outputs_
+-
+-        self.n_classes_ = np.array(self.n_classes_, dtype=np.intp)
++            self.n_classes_ = np.array(self.n_classes_, dtype=np.intp)
+ 
+         if getattr(y, "dtype", None) != DOUBLE or not y.flags.contiguous:
+             y = np.ascontiguousarray(y, dtype=DOUBLE)
+@@ -341,7 +531,14 @@ class BaseDecisionTree(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
+                                                 min_weight_leaf,
+                                                 random_state)
+ 
+-        self.tree_ = Tree(self.n_features_, self.n_classes_, self.n_outputs_)
++        if is_classifier(self):
++            self.tree_ = Tree(self.n_features_,
++                              self.n_classes_, self.n_outputs_)
++        else:
++            self.tree_ = Tree(self.n_features_,
++                              # TODO: tree should't need this in this case
++                              np.array([1] * self.n_outputs_, dtype=np.intp),
++                              self.n_outputs_)
+ 
+         # Use BestFirst if max_leaf_nodes given; use DepthFirst otherwise
+         if max_leaf_nodes < 0:
+@@ -362,7 +559,7 @@ class BaseDecisionTree(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
+ 
+         builder.build(self.tree_, X, y, sample_weight, X_idx_sorted)
+ 
+-        if self.n_outputs_ == 1:
++        if self.n_outputs_ == 1 and is_classifier(self):
+             self.n_classes_ = self.n_classes_[0]
+             self.classes_ = self.classes_[0]
+ 
+@@ -495,6 +692,7 @@ class BaseDecisionTree(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
+         X = self._validate_X_predict(X, check_input)
+         return self.tree_.decision_path(X)
+ 
++    @inspect_code
+     def _prune_tree(self):
+         """Prune tree using Minimal Cost-Complexity Pruning."""
+         check_is_fitted(self)
+@@ -505,9 +703,15 @@ class BaseDecisionTree(MultiOutputMixin, BaseEstimator, metaclass=ABCMeta):
+         if self.ccp_alpha == 0.0:
+             return
+ 
+-        # build pruned treee
+-        n_classes = np.atleast_1d(self.n_classes_)
+-        pruned_tree = Tree(self.n_features_, n_classes, self.n_outputs_)
++        # build pruned tree
++        if is_classifier(self):
++            n_classes = np.atleast_1d(self.n_classes_)
++            pruned_tree = Tree(self.n_features_, n_classes, self.n_outputs_)
++        else:
++            pruned_tree = Tree(self.n_features_,
++                               # TODO: the tree shouldn't need this param
++                               np.array([1] * self.n_outputs_, dtype=np.intp),
++                               self.n_outputs_)
+         _build_pruned_tree_ccp(pruned_tree, self.tree_, self.ccp_alpha)
+ 
+         self.tree_ = pruned_tree
+@@ -1214,6 +1418,22 @@ class DecisionTreeRegressor(RegressorMixin, BaseDecisionTree):
+             X_idx_sorted=X_idx_sorted)
+         return self
+ 
++    @property
++    def classes_(self):
++        # TODO: Remove method in 0.24
++        msg = ("the classes_ attribute is to be deprecated from version "
++               "0.22 and will be removed in 0.24.")
++        warnings.warn(msg, DeprecationWarning)
++        return np.array([None] * self.n_outputs_)
++
++    @property
++    def n_classes_(self):
++        # TODO: Remove method in 0.24
++        msg = ("the n_classes_ attribute is to be deprecated from version "
++               "0.22 and will be removed in 0.24.")
++        warnings.warn(msg, DeprecationWarning)
++        return np.array([1] * self.n_outputs_, dtype=np.intp)
++
+ 
+ class ExtraTreeClassifier(DecisionTreeClassifier):
+     """An extremely randomized tree classifier.

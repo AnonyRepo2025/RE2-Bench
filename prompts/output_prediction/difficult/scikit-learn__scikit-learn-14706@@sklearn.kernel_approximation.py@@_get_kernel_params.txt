@@ -1,0 +1,218 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT].
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]
+1. Inside `mktemp`, since `numbered`=True (default), it calls: p = make_numbered_dir(root=self.getbasetemp(), prefix="world")
+2. Inside `getbasetemp`, since `_basetemp` is None, so basetemp = Path("/tmp/pytest-of-root/pytest-0/test_mktemp0"). Therefore, getbasetemp() returns "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+3. Inside `make_numbered_dir`:
+    root = /tmp/pytest-of-root/pytest-0/test_mktemp0
+    prefix = "world"
+    Since max_existing = -1, new_number = 0, so `new_path` = "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import warnings
+import numpy as np
+import scipy.sparse as sp
+from scipy.linalg import svd
+from .base import BaseEstimator
+from .base import TransformerMixin
+from .utils import check_array, check_random_state, as_float_array
+from .utils.extmath import safe_sparse_dot
+from .utils.validation import check_is_fitted
+from .metrics.pairwise import pairwise_kernels, KERNEL_PARAMS
+
+class Nystroem(BaseEstimator, TransformerMixin):
+
+    def __init__(self, kernel='rbf', gamma=None, coef0=None, degree=None, kernel_params=None, n_components=100, random_state=None):
+        self.kernel = kernel
+        self.gamma = gamma
+        self.coef0 = coef0
+        self.degree = degree
+        self.kernel_params = kernel_params
+        self.n_components = n_components
+        self.random_state = random_state
+
+    def fit(self, X, y=None):
+        X = check_array(X, accept_sparse='csr')
+        rnd = check_random_state(self.random_state)
+        n_samples = X.shape[0]
+        if self.n_components > n_samples:
+            n_components = n_samples
+            warnings.warn('n_components > n_samples. This is not possible.\nn_components was set to n_samples, which results in inefficient evaluation of the full kernel.')
+        else:
+            n_components = self.n_components
+        n_components = min(n_samples, n_components)
+        inds = rnd.permutation(n_samples)
+        basis_inds = inds[:n_components]
+        basis = X[basis_inds]
+        basis_kernel = pairwise_kernels(basis, metric=self.kernel, filter_params=True, **self._get_kernel_params())
+        U, S, V = svd(basis_kernel)
+        S = np.maximum(S, 1e-12)
+        self.normalization_ = np.dot(U / np.sqrt(S), V)
+        self.components_ = basis
+        self.component_indices_ = inds
+        return self
+
+    def transform(self, X):
+        check_is_fitted(self)
+        X = check_array(X, accept_sparse='csr')
+        kernel_params = self._get_kernel_params()
+        embedded = pairwise_kernels(X, self.components_, metric=self.kernel, filter_params=True, **kernel_params)
+        return np.dot(embedded, self.normalization_.T)
+
+    def _get_kernel_params(self):
+        params = self.kernel_params
+        if params is None:
+            params = {}
+        if not callable(self.kernel) and self.kernel != 'precomputed':
+            for param in KERNEL_PARAMS[self.kernel]:
+                if getattr(self, param) is not None:
+                    params[param] = getattr(self, param)
+        elif self.gamma is not None or self.coef0 is not None or self.degree is not None:
+            raise ValueError("Don't pass gamma, coef0 or degree to Nystroem if using a callable or precomputed kernel")
+        return params
+[/PYTHON]
+
+What will be the output of `_get_kernel_params`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "kernel": "polynomial",
+        "gamma": null,
+        "coef0": 0.1,
+        "degree": 3.1,
+        "kernel_params": null,
+        "n_components": 10,
+        "random_state": null,
+        "normalization_": "[[ 30.17354652  -1.35671868  -1.50205958   0.82627223  -6.95460029\n    1.41772554  -1.44371499  -1.50605883   4.49574041  -0.14719941]\n [ -1.35671868   6.20684165   0.69105551  -1.73611448   0.51356651\n   -1.10798135   0.10508688  -1.6259864    1.14171044   0.67861028]\n [ -1.50205958   0.69105551  14.68750245   2.71840442   0.06028339\n   -7.1360436   -5.56257824  -0.16616765  -1.87130863   1.27559974]\n [  0.82627223  -1.73611448   2.71840442   6.81177684  -0.96451827\n   -0.70058553  -5.43115502  -1.41376713  -1.5935794    0.28483002]\n [ -6.95460029   0.51356651   0.06028339  -0.96451827  19.75134411\n   -0.12227175  -0.3435224    3.14156305 -17.40051419   2.54551552]\n [  1.41772554  -1.10798135  -7.1360436   -0.70058553  -0.12227175\n    8.60460385  -0.45270216   0.11249333   2.65873729  -2.9413417 ]\n [ -1.44371499   0.10508688  -5.56257824  -5.43115502  -0.3435224\n   -0.45270216  12.0313862    2.02760042   0.13739215  -0.59148049]\n [ -1.50605883  -1.6259864   -0.16616765  -1.41376713   3.14156305\n    0.11249333   2.02760042   8.37227054  -5.97380761  -1.50790787]\n [  4.49574041   1.14171044  -1.87130863  -1.5935794  -17.40051419\n    2.65873729   0.13739215  -5.97380761  28.11929534  -6.19148412]\n [ -0.14719941   0.67861028   1.27559974   0.28483002   2.54551552\n   -2.9413417   -0.59148049  -1.50790787  -6.19148412   6.80808215]]",
+        "components_": "[[0.05122983 0.13481199 0.11702851 0.36472476]\n [0.64027138 0.01913701 0.80603837 0.40489265]\n [0.17893745 0.90253449 0.76357569 0.19886053]\n [0.59595113 0.57337695 0.70494935 0.92926202]\n [0.36568617 0.59558227 0.04009427 0.82462798]\n [0.44348884 0.96346535 0.89706655 0.19680429]\n [0.28197907 0.75342459 0.79270563 0.6274006 ]\n [0.9444966  0.46409817 0.19279503 0.58189488]\n [0.62008421 0.68422402 0.10343756 0.74547577]\n [0.80341084 0.97024272 0.33297926 0.47841987]]",
+        "component_indices_": "[5 9 7 4 8 3 2 0 1 6]"
+    },
+    "args": {},
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "coef0": XXX,
+    "degree": XXX
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]

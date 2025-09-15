@@ -1,0 +1,121 @@
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index 62631f7..a38e601 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -109,12 +109,14 @@ def exclude_members_option(arg: Any) -> Union[object, Set[str]]:
+     return {x.strip() for x in arg.split(',') if x.strip()}
+ 
+ 
+-def inherited_members_option(arg: Any) -> Union[object, Set[str]]:
++def inherited_members_option(arg: Any) -> Set[str]:
+     """Used to convert the :members: option to auto directives."""
+     if arg in (None, True):
+-        return 'object'
++        return {'object'}
++    elif arg:
++        return set(x.strip() for x in arg.split(','))
+     else:
+-        return arg
++        return set()
+ 
+ 
+ def member_order_option(arg: Any) -> Optional[str]:
+@@ -680,9 +682,11 @@ class Documenter:
+         ``autodoc-skip-member`` event.
+         """
+         def is_filtered_inherited_member(name: str, obj: Any) -> bool:
++            inherited_members = self.options.inherited_members or set()
++
+             if inspect.isclass(self.object):
+                 for cls in self.object.__mro__:
+-                    if cls.__name__ == self.options.inherited_members and cls != self.object:
++                    if cls.__name__ in inherited_members and cls != self.object:
+                         # given member is a member of specified *super class*
+                         return True
+                     elif name in cls.__dict__:
+diff --git a/tests/roots/test-ext-autodoc/target/inheritance.py b/tests/roots/test-ext-autodoc/target/inheritance.py
+index ffac84b..485a943 100644
+--- a/tests/roots/test-ext-autodoc/target/inheritance.py
++++ b/tests/roots/test-ext-autodoc/target/inheritance.py
+@@ -15,3 +15,8 @@ class Derived(Base):
+     def inheritedmeth(self):
+         # no docstring here
+         pass
++
++
++class MyList(list):
++    def meth(self):
++        """docstring"""
+diff --git a/tests/test_ext_autodoc_automodule.py b/tests/test_ext_autodoc_automodule.py
+index 06a4ab2..8208d86 100644
+--- a/tests/test_ext_autodoc_automodule.py
++++ b/tests/test_ext_autodoc_automodule.py
+@@ -113,6 +113,68 @@ def test_automodule_special_members(app):
+     ]
+ 
+ 
++@pytest.mark.sphinx('html', testroot='ext-autodoc')
++def test_automodule_inherited_members(app):
++    if sys.version_info < (3, 7):
++        args = ''
++    else:
++        args = '(iterable=(), /)'
++
++    options = {'members': None,
++               'undoc-members': None,
++               'inherited-members': 'Base, list'}
++    actual = do_autodoc(app, 'module', 'target.inheritance', options)
++    assert list(actual) == [
++        '',
++        '.. py:module:: target.inheritance',
++        '',
++        '',
++        '.. py:class:: Base()',
++        '   :module: target.inheritance',
++        '',
++        '',
++        '   .. py:method:: Base.inheritedclassmeth()',
++        '      :module: target.inheritance',
++        '      :classmethod:',
++        '',
++        '      Inherited class method.',
++        '',
++        '',
++        '   .. py:method:: Base.inheritedmeth()',
++        '      :module: target.inheritance',
++        '',
++        '      Inherited function.',
++        '',
++        '',
++        '   .. py:method:: Base.inheritedstaticmeth(cls)',
++        '      :module: target.inheritance',
++        '      :staticmethod:',
++        '',
++        '      Inherited static method.',
++        '',
++        '',
++        '.. py:class:: Derived()',
++        '   :module: target.inheritance',
++        '',
++        '',
++        '   .. py:method:: Derived.inheritedmeth()',
++        '      :module: target.inheritance',
++        '',
++        '      Inherited function.',
++        '',
++        '',
++        '.. py:class:: MyList%s' % args,
++        '   :module: target.inheritance',
++        '',
++        '',
++        '   .. py:method:: MyList.meth()',
++        '      :module: target.inheritance',
++        '',
++        '      docstring',
++        '',
++    ]
++
++
+ @pytest.mark.sphinx('html', testroot='ext-autodoc',
+                     confoverrides={'autodoc_mock_imports': ['missing_module',
+                                                             'missing_package1',

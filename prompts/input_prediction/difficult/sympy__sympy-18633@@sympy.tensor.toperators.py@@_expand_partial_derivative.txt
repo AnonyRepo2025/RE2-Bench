@@ -1,0 +1,380 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. The input structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict input variable values to fill out placeholders XXX in the structure, and print input between [INPUT] and [\INPUT]. You should maintain the structure when printing inputs. Do not change anything else. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT].
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+from sympy import Symbol, Number, sympify
+from sympy import MutableDenseNDimArray, S
+from sympy.tensor.tensor import Tensor, TensExpr, TensAdd, TensMul, TensorIndex
+from .array import derive_by_array, tensorcontraction
+
+class PartialDerivative(TensExpr):
+
+    def __new__(cls, expr, *variables):
+        if isinstance(expr, PartialDerivative):
+            variables = expr.variables + variables
+            expr = expr.expr
+        args, indices, free, dum = cls._contract_indices_for_derivative(S(expr), variables)
+        obj = TensExpr.__new__(cls, *args)
+        obj._indices = indices
+        obj._free = free
+        obj._dum = dum
+        return obj
+
+    @classmethod
+    def _contract_indices_for_derivative(cls, expr, variables):
+        variables_opposite_valence = []
+        for i in variables:
+            if isinstance(i, Tensor):
+                i_free_indices = i.get_free_indices()
+                variables_opposite_valence.append(i.xreplace({k: -k for k in i_free_indices}))
+            elif isinstance(i, Symbol):
+                variables_opposite_valence.append(i)
+        args, indices, free, dum = TensMul._tensMul_contract_indices([expr] + variables_opposite_valence, replace_indices=True)
+        for i in range(1, len(args)):
+            args_i = args[i]
+            if isinstance(args_i, Tensor):
+                i_indices = args[i].get_free_indices()
+                args[i] = args[i].xreplace({k: -k for k in i_indices})
+        return (args, indices, free, dum)
+
+    def _expand_partial_derivative(self):
+        args, indices, free, dum = self._contract_indices_for_derivative(self.expr, self.variables)
+        obj = self.func(*args)
+        obj._indices = indices
+        obj._free = free
+        obj._dum = dum
+        result = obj
+        if not args[0].free_symbols:
+            return S.Zero
+        elif isinstance(obj.expr, TensAdd):
+            result = obj.expr.func(*[self.func(a, *obj.variables)._expand_partial_derivative() for a in result.expr.args])
+        elif isinstance(obj.expr, TensMul):
+            if len(obj.variables) == 1:
+                terms = []
+                mulargs = list(obj.expr.args)
+                for ind in range(len(mulargs)):
+                    if not isinstance(sympify(mulargs[ind]), Number):
+                        d = self.func(mulargs[ind], *obj.variables)._expand_partial_derivative()
+                        terms.append(TensMul(*mulargs[:ind] + [d] + mulargs[ind + 1:]))
+                result = TensAdd.fromiter(terms)
+            else:
+                result = obj.expr
+                for v in obj.variables:
+                    result = self.func(result, v)._expand_partial_derivative()
+        return result
+
+    @property
+    def expr(self):
+        return self.args[0]
+
+    @property
+    def variables(self):
+        return self.args[1:]
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.core.basic.Basic.args
+
+def args(self):
+    return self._args
+
+.sympy.tensor.tensor.TensMul._tensMul_contract_indices
+
+def _tensMul_contract_indices(args, replace_indices=True):
+    replacements = [{} for _ in args]
+    args_indices = [get_indices(arg) for arg in args]
+    indices, free, free_names, dummy_data = TensMul._indices_to_free_dum(args_indices)
+    cdt = defaultdict(int)
+
+    def dummy_name_gen(tensor_index_type):
+        nd = str(cdt[tensor_index_type])
+        cdt[tensor_index_type] += 1
+        return tensor_index_type.dummy_name + '_' + nd
+    if replace_indices:
+        for old_index, pos1cov, pos1contra, pos2cov, pos2contra in dummy_data:
+            index_type = old_index.tensor_index_type
+            while True:
+                dummy_name = dummy_name_gen(index_type)
+                if dummy_name not in free_names:
+                    break
+            dummy = TensorIndex(dummy_name, index_type, True)
+            replacements[pos1cov][old_index] = dummy
+            replacements[pos1contra][-old_index] = -dummy
+            indices[pos2cov] = dummy
+            indices[pos2contra] = -dummy
+        args = [arg._replace_indices(repl) if isinstance(arg, TensExpr) else arg for arg, repl in zip(args, replacements)]
+    dum = TensMul._dummy_data_to_dum(dummy_data)
+    return (args, indices, free, dum)
+
+.sympy.tensor.tensor.get_indices
+
+def get_indices(t):
+    if not isinstance(t, TensExpr):
+        return ()
+    return t.get_indices()
+
+.sympy.tensor.tensor.Tensor.get_indices
+
+def get_indices(self):
+    return list(self.args[1])
+
+.sympy.core.containers.Tuple.__len__
+
+def __len__(self):
+    return len(self.args)
+
+.sympy.core.containers.Tuple.__iter__
+
+def __iter__(self):
+    return iter(self.args)
+
+.sympy.tensor.tensor.TensMul._indices_to_free_dum
+
+def _indices_to_free_dum(args_indices):
+    free2pos1 = {}
+    free2pos2 = {}
+    dummy_data = []
+    indices = []
+    pos2 = 0
+    for pos1, arg_indices in enumerate(args_indices):
+        for index_pos, index in enumerate(arg_indices):
+            if not isinstance(index, TensorIndex):
+                raise TypeError('expected TensorIndex')
+            if -index in free2pos1:
+                other_pos1 = free2pos1.pop(-index)
+                other_pos2 = free2pos2.pop(-index)
+                if index.is_up:
+                    dummy_data.append((index, pos1, other_pos1, pos2, other_pos2))
+                else:
+                    dummy_data.append((-index, other_pos1, pos1, other_pos2, pos2))
+                indices.append(index)
+            elif index in free2pos1:
+                raise ValueError('Repeated index: %s' % index)
+            else:
+                free2pos1[index] = pos1
+                free2pos2[index] = pos2
+                indices.append(index)
+            pos2 += 1
+    free = [(i, p) for i, p in free2pos2.items()]
+    free_names = [i.name for i in free2pos2.keys()]
+    dummy_data.sort(key=lambda x: x[3])
+    return (indices, free, free_names, dummy_data)
+
+.sympy.tensor.tensor.TensorIndex.__neg__
+
+def __neg__(self):
+    t1 = TensorIndex(self.name, self.tensor_index_type, not self.is_up)
+    return t1
+
+.sympy.tensor.tensor.TensorIndex.name
+
+def name(self):
+    return self.args[0].name
+
+.sympy.tensor.tensor.TensorIndex.tensor_index_type
+
+def tensor_index_type(self):
+    return self.args[1]
+
+.sympy.tensor.tensor.TensorIndex.is_up
+
+def is_up(self):
+    return self.args[2]
+
+.sympy.logic.boolalg.BooleanTrue.__nonzero__
+
+def __nonzero__(self):
+    return True
+
+.sympy.tensor.tensor.TensorIndex.__new__
+
+def __new__(cls, name, tensor_index_type, is_up=True):
+    if isinstance(name, str):
+        name_symbol = Symbol(name)
+    elif isinstance(name, Symbol):
+        name_symbol = name
+    elif name is True:
+        name = '_i{0}'.format(len(tensor_index_type._autogenerated))
+        name_symbol = Symbol(name)
+        tensor_index_type._autogenerated.append(name_symbol)
+    else:
+        raise ValueError('invalid name')
+    is_up = sympify(is_up)
+    return Basic.__new__(cls, name_symbol, tensor_index_type, is_up)
+
+.sympy.core.symbol.Symbol.__new__
+
+def __new__(cls, name, **assumptions):
+    cls._sanitize(assumptions, cls)
+    return Symbol.__xnew_cached_(cls, name, **assumptions)
+
+.sympy.core.symbol.Symbol._sanitize
+
+def _sanitize(assumptions, obj=None):
+    is_commutative = fuzzy_bool(assumptions.get('commutative', True))
+    if is_commutative is None:
+        whose = '%s ' % obj.__name__ if obj else ''
+        raise ValueError('%scommutativity must be True or False.' % whose)
+    for key in list(assumptions.keys()):
+        v = assumptions[key]
+        if v is None:
+            assumptions.pop(key)
+            continue
+        assumptions[key] = bool(v)
+
+
+[/PYTHON]
+What will be the input of `_expand_partial_derivative`, given the following output:
+[OUTPUT]
+```
+{
+    "_indices": null,
+    "_free": null,
+    "_dum": null
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_indices": XXX,
+        "_free": XXX,
+        "_dum": XXX
+    },
+    "args": {},
+    "kwargs": {}
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]

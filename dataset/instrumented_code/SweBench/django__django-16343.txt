@@ -1,0 +1,483 @@
+diff --git a/django/core/signing.py b/django/core/signing.py
+index b402d87..50dff4c 100644
+--- a/django/core/signing.py
++++ b/django/core/signing.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-16343/django/core/signing.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Functions for creating and restoring url-safe signed JSON objects.
+ 
+@@ -37,10 +230,12 @@ import base64
+ import datetime
+ import json
+ import time
++import warnings
+ import zlib
+ 
+ from django.conf import settings
+ from django.utils.crypto import constant_time_compare, salted_hmac
++from django.utils.deprecation import RemovedInDjango51Warning
+ from django.utils.encoding import force_bytes
+ from django.utils.module_loading import import_string
+ from django.utils.regex_helper import _lazy_re_compile
+@@ -128,6 +323,7 @@ class JSONSerializer:
+         return json.loads(data.decode("latin-1"))
+ 
+ 
++@inspect_code
+ def dumps(
+     obj, key=None, salt="django.core.signing", serializer=JSONSerializer, compress=False
+ ):
+@@ -147,11 +343,12 @@ def dumps(
+ 
+     The serializer is expected to return a bytestring.
+     """
+-    return TimestampSigner(key, salt=salt).sign_object(
++    return TimestampSigner(key=key, salt=salt).sign_object(
+         obj, serializer=serializer, compress=compress
+     )
+ 
+ 
++@inspect_code
+ def loads(
+     s,
+     key=None,
+@@ -165,7 +362,9 @@ def loads(
+ 
+     The serializer is expected to accept a bytestring.
+     """
+-    return TimestampSigner(key, salt=salt, fallback_keys=fallback_keys).unsign_object(
++    return TimestampSigner(
++        key=key, salt=salt, fallback_keys=fallback_keys
++    ).unsign_object(
+         s,
+         serializer=serializer,
+         max_age=max_age,
+@@ -173,8 +372,14 @@ def loads(
+ 
+ 
+ class Signer:
++    # RemovedInDjango51Warning: When the deprecation ends, replace with:
++    # def __init__(
++    #   self, *, key=None, sep=":", salt=None, algorithm=None, fallback_keys=None
++    # ):
++    @inspect_code
+     def __init__(
+         self,
++        *args,
+         key=None,
+         sep=":",
+         salt=None,
+@@ -188,16 +393,29 @@ class Signer:
+             else settings.SECRET_KEY_FALLBACKS
+         )
+         self.sep = sep
+-        if _SEP_UNSAFE.match(self.sep):
+-            raise ValueError(
+-                "Unsafe Signer separator: %r (cannot be empty or consist of "
+-                "only A-z0-9-_=)" % sep,
+-            )
+         self.salt = salt or "%s.%s" % (
+             self.__class__.__module__,
+             self.__class__.__name__,
+         )
+         self.algorithm = algorithm or "sha256"
++        # RemovedInDjango51Warning.
++        if args:
++            warnings.warn(
++                f"Passing positional arguments to {self.__class__.__name__} is "
++                f"deprecated.",
++                RemovedInDjango51Warning,
++                stacklevel=2,
++            )
++            for arg, attr in zip(
++                args, ["key", "sep", "salt", "algorithm", "fallback_keys"]
++            ):
++                if arg or attr == "sep":
++                    setattr(self, attr, arg)
++        if _SEP_UNSAFE.match(self.sep):
++            raise ValueError(
++                "Unsafe Signer separator: %r (cannot be empty or consist of "
++                "only A-z0-9-_=)" % sep,
++            )
+ 
+     def signature(self, value, key=None):
+         key = key or self.key
+diff --git a/tests/signing/tests.py b/tests/signing/tests.py
+index 15d66f2..c145ce1 100644
+--- a/tests/signing/tests.py
++++ b/tests/signing/tests.py
+@@ -2,15 +2,16 @@ import datetime
+ 
+ from django.core import signing
+ from django.test import SimpleTestCase, override_settings
+-from django.test.utils import freeze_time
++from django.test.utils import freeze_time, ignore_warnings
+ from django.utils.crypto import InvalidAlgorithm
++from django.utils.deprecation import RemovedInDjango51Warning
+ 
+ 
+ class TestSigner(SimpleTestCase):
+     def test_signature(self):
+         "signature() method should generate a signature"
+-        signer = signing.Signer("predictable-secret")
+-        signer2 = signing.Signer("predictable-secret2")
++        signer = signing.Signer(key="predictable-secret")
++        signer2 = signing.Signer(key="predictable-secret2")
+         for s in (
+             b"hello",
+             b"3098247:529:087:",
+@@ -28,8 +29,7 @@ class TestSigner(SimpleTestCase):
+             self.assertNotEqual(signer.signature(s), signer2.signature(s))
+ 
+     def test_signature_with_salt(self):
+-        "signature(value, salt=...) should work"
+-        signer = signing.Signer("predictable-secret", salt="extra-salt")
++        signer = signing.Signer(key="predictable-secret", salt="extra-salt")
+         self.assertEqual(
+             signer.signature("hello"),
+             signing.base64_hmac(
+@@ -40,12 +40,12 @@ class TestSigner(SimpleTestCase):
+             ),
+         )
+         self.assertNotEqual(
+-            signing.Signer("predictable-secret", salt="one").signature("hello"),
+-            signing.Signer("predictable-secret", salt="two").signature("hello"),
++            signing.Signer(key="predictable-secret", salt="one").signature("hello"),
++            signing.Signer(key="predictable-secret", salt="two").signature("hello"),
+         )
+ 
+     def test_custom_algorithm(self):
+-        signer = signing.Signer("predictable-secret", algorithm="sha512")
++        signer = signing.Signer(key="predictable-secret", algorithm="sha512")
+         self.assertEqual(
+             signer.signature("hello"),
+             "Usf3uVQOZ9m6uPfVonKR-EBXjPe7bjMbp3_Fq8MfsptgkkM1ojidN0BxYaT5HAEN1"
+@@ -53,14 +53,14 @@ class TestSigner(SimpleTestCase):
+         )
+ 
+     def test_invalid_algorithm(self):
+-        signer = signing.Signer("predictable-secret", algorithm="whatever")
++        signer = signing.Signer(key="predictable-secret", algorithm="whatever")
+         msg = "'whatever' is not an algorithm accepted by the hashlib module."
+         with self.assertRaisesMessage(InvalidAlgorithm, msg):
+             signer.sign("hello")
+ 
+     def test_sign_unsign(self):
+         "sign/unsign should be reversible"
+-        signer = signing.Signer("predictable-secret")
++        signer = signing.Signer(key="predictable-secret")
+         examples = [
+             "q;wjmbk;wkmb",
+             "3098247529087",
+@@ -75,7 +75,7 @@ class TestSigner(SimpleTestCase):
+             self.assertEqual(example, signer.unsign(signed))
+ 
+     def test_sign_unsign_non_string(self):
+-        signer = signing.Signer("predictable-secret")
++        signer = signing.Signer(key="predictable-secret")
+         values = [
+             123,
+             1.23,
+@@ -91,7 +91,7 @@ class TestSigner(SimpleTestCase):
+ 
+     def test_unsign_detects_tampering(self):
+         "unsign should raise an exception if the value has been tampered with"
+-        signer = signing.Signer("predictable-secret")
++        signer = signing.Signer(key="predictable-secret")
+         value = "Another string"
+         signed_value = signer.sign(value)
+         transforms = (
+@@ -106,7 +106,7 @@ class TestSigner(SimpleTestCase):
+                 signer.unsign(transform(signed_value))
+ 
+     def test_sign_unsign_object(self):
+-        signer = signing.Signer("predictable-secret")
++        signer = signing.Signer(key="predictable-secret")
+         tests = [
+             ["a", "list"],
+             "a string \u2019",
+@@ -155,7 +155,7 @@ class TestSigner(SimpleTestCase):
+     def test_works_with_non_ascii_keys(self):
+         binary_key = b"\xe7"  # Set some binary (non-ASCII key)
+ 
+-        s = signing.Signer(binary_key)
++        s = signing.Signer(key=binary_key)
+         self.assertEqual(
+             "foo:EE4qGC5MEKyQG5msxYA0sBohAxLC0BJf8uRhemh0BGU",
+             s.sign("foo"),
+@@ -164,7 +164,7 @@ class TestSigner(SimpleTestCase):
+     def test_valid_sep(self):
+         separators = ["/", "*sep*", ","]
+         for sep in separators:
+-            signer = signing.Signer("predictable-secret", sep=sep)
++            signer = signing.Signer(key="predictable-secret", sep=sep)
+             self.assertEqual(
+                 "foo%sjZQoX_FtSO70jX9HLRGg2A_2s4kdDBxz1QoO_OpEQb0" % sep,
+                 signer.sign("foo"),
+@@ -181,16 +181,16 @@ class TestSigner(SimpleTestCase):
+                 signing.Signer(sep=sep)
+ 
+     def test_verify_with_non_default_key(self):
+-        old_signer = signing.Signer("secret")
++        old_signer = signing.Signer(key="secret")
+         new_signer = signing.Signer(
+-            "newsecret", fallback_keys=["othersecret", "secret"]
++            key="newsecret", fallback_keys=["othersecret", "secret"]
+         )
+         signed = old_signer.sign("abc")
+         self.assertEqual(new_signer.unsign(signed), "abc")
+ 
+     def test_sign_unsign_multiple_keys(self):
+         """The default key is a valid verification key."""
+-        signer = signing.Signer("secret", fallback_keys=["oldsecret"])
++        signer = signing.Signer(key="secret", fallback_keys=["oldsecret"])
+         signed = signer.sign("abc")
+         self.assertEqual(signer.unsign(signed), "abc")
+ 
+@@ -199,7 +199,7 @@ class TestSigner(SimpleTestCase):
+         SECRET_KEY_FALLBACKS=["oldsecret"],
+     )
+     def test_sign_unsign_ignore_secret_key_fallbacks(self):
+-        old_signer = signing.Signer("oldsecret")
++        old_signer = signing.Signer(key="oldsecret")
+         signed = old_signer.sign("abc")
+         signer = signing.Signer(fallback_keys=[])
+         with self.assertRaises(signing.BadSignature):
+@@ -210,7 +210,7 @@ class TestSigner(SimpleTestCase):
+         SECRET_KEY_FALLBACKS=["oldsecret"],
+     )
+     def test_default_keys_verification(self):
+-        old_signer = signing.Signer("oldsecret")
++        old_signer = signing.Signer(key="oldsecret")
+         signed = old_signer.sign("abc")
+         signer = signing.Signer()
+         self.assertEqual(signer.unsign(signed), "abc")
+@@ -220,9 +220,9 @@ class TestTimestampSigner(SimpleTestCase):
+     def test_timestamp_signer(self):
+         value = "hello"
+         with freeze_time(123456789):
+-            signer = signing.TimestampSigner("predictable-key")
++            signer = signing.TimestampSigner(key="predictable-key")
+             ts = signer.sign(value)
+-            self.assertNotEqual(ts, signing.Signer("predictable-key").sign(value))
++            self.assertNotEqual(ts, signing.Signer(key="predictable-key").sign(value))
+             self.assertEqual(signer.unsign(ts), value)
+ 
+         with freeze_time(123456800):
+@@ -240,3 +240,23 @@ class TestBase62(SimpleTestCase):
+         tests = [-(10**10), 10**10, 1620378259, *range(-100, 100)]
+         for i in tests:
+             self.assertEqual(i, signing.b62_decode(signing.b62_encode(i)))
++
++
++class SignerPositionalArgumentsDeprecationTests(SimpleTestCase):
++    def test_deprecation(self):
++        msg = "Passing positional arguments to Signer is deprecated."
++        with self.assertRaisesMessage(RemovedInDjango51Warning, msg):
++            signing.Signer("predictable-secret")
++        msg = "Passing positional arguments to TimestampSigner is deprecated."
++        with self.assertRaisesMessage(RemovedInDjango51Warning, msg):
++            signing.TimestampSigner("predictable-secret")
++
++    @ignore_warnings(category=RemovedInDjango51Warning)
++    def test_positional_arguments(self):
++        signer = signing.Signer("secret", "/", "somesalt", "sha1", ["oldsecret"])
++        signed = signer.sign("xyz")
++        self.assertEqual(signed, "xyz/zzdO_8rk-NGnm8jNasXRTF2P5kY")
++        self.assertEqual(signer.unsign(signed), "xyz")
++        old_signer = signing.Signer("oldsecret", "/", "somesalt", "sha1")
++        signed = old_signer.sign("xyz")
++        self.assertEqual(signer.unsign(signed), "xyz")

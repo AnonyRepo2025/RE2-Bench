@@ -1,0 +1,53 @@
+[THOUGHT]
+We need to simulate `_BaseComposition._get_params(self, attr, deep=True)` on the given `self`.  
+
+1. First we call  
+   out = super(_BaseComposition, self).get_params(deep=True)  
+   which is `BaseEstimator.get_params(deep=True)`.  
+   Its parameter names (from ColumnTransformer’s __init__) include at least  
+     – “transformers” → getattr(self, "transformers") is None  
+     – “remainder”    → getattr(self, "remainder")    is the StandardScaler‐like object  
+     – “n_jobs”       → 1  
+     – “transformer_weights” → None  
+   Since `deep=True`, for each of these that has a `get_params` method we would flatten its sub‐params;  
+   only `remainder` is itself an estimator object (with get_params), so we get:  
+     remainder.get_params() → { "with_mean": true, "with_std": false, "copy": true }  
+   and BaseEstimator.get_params will:  
+     out["remainder__with_mean"] = true  
+     out["remainder__with_std"]  = false  
+     out["remainder__copy"]      = true  
+   then in all cases also set out["transformers"] = None, out["remainder"] = <the object>, out["n_jobs"] = 1, out["transformer_weights"] = None.  
+
+2. Next `_get_params` continues (deep is True), so it does  
+     estimators = getattr(self, "_transformers")  
+   In `ColumnTransformer` that method returns a list of `(name, transformer)` pairs.  
+   By assumption there is one transformer named `"trans1"`, so  
+     estimators = [ ("trans1", <some transformer>) ]  
+   Then  
+     out.update(estimators)  
+   will do  
+     out["trans1"] = <that transformer>  
+   Finally, for each `(name, estimator)` in `estimators`, if that estimator has `get_params`  
+   we would further flatten it.  We assume our `trans1` transformer has no further parameters  
+   (or at least we don't need to list them here), so no extra keys are added.  
+
+Putting that all together, the resulting dictionary has exactly the keys requested in the structure.  We mirror the input values for each.  
+
+[OUTPUT]
+```
+{
+    "n_jobs": 1,
+    "remainder__copy": true,
+    "remainder__with_mean": true,
+    "remainder__with_std": false,
+    "remainder": {
+        "with_mean": true,
+        "with_std": false,
+        "copy": true
+    },
+    "transformer_weights": null,
+    "transformers": null,
+    "trans1": null
+}
+```
+[/OUTPUT]

@@ -1,0 +1,1459 @@
+diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
+index f01c9fe..6006151 100644
+--- a/django/db/migrations/autodetector.py
++++ b/django/db/migrations/autodetector.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12771/django/db/migrations/autodetector.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import functools
+ import re
+ from itertools import chain
+@@ -86,6 +279,7 @@ class MigrationAutodetector:
+         else:
+             return obj
+ 
++    @inspect_code
+     def only_relation_agnostic_fields(self, fields):
+         """
+         Return a definition of the fields that ignores field names and
+@@ -93,7 +287,7 @@ class MigrationAutodetector:
+         of course, the related fields change during renames).
+         """
+         fields_def = []
+-        for name, field in sorted(fields):
++        for name, field in sorted(fields.items()):
+             deconstruction = self.deep_deconstruct(field)
+             if field.remote_field and field.remote_field.model:
+                 del deconstruction[2]['to']
+@@ -208,25 +402,26 @@ class MigrationAutodetector:
+         self.kept_unmanaged_keys = self.old_unmanaged_keys & self.new_unmanaged_keys
+         self.through_users = {}
+         self.old_field_keys = {
+-            (app_label, model_name, x)
++            (app_label, model_name, field_name)
+             for app_label, model_name in self.kept_model_keys
+-            for x, y in self.from_state.models[
++            for field_name in self.from_state.models[
+                 app_label,
+                 self.renamed_models.get((app_label, model_name), model_name)
+             ].fields
+         }
+         self.new_field_keys = {
+-            (app_label, model_name, x)
++            (app_label, model_name, field_name)
+             for app_label, model_name in self.kept_model_keys
+-            for x, y in self.to_state.models[app_label, model_name].fields
++            for field_name in self.to_state.models[app_label, model_name].fields
+         }
+ 
++    @inspect_code
+     def _generate_through_model_map(self):
+         """Through model map generation."""
+         for app_label, model_name in sorted(self.old_model_keys):
+             old_model_name = self.renamed_models.get((app_label, model_name), model_name)
+             old_model_state = self.from_state.models[app_label, old_model_name]
+-            for field_name, field in old_model_state.fields:
++            for field_name in old_model_state.fields:
+                 old_field = self.old_apps.get_model(app_label, old_model_name)._meta.get_field(field_name)
+                 if (hasattr(old_field, "remote_field") and getattr(old_field.remote_field, "through", None) and
+                         not old_field.remote_field.through._meta.auto_created):
+@@ -508,6 +703,7 @@ class MigrationAutodetector:
+                             self.old_model_keys.add((app_label, model_name))
+                             break
+ 
++    @inspect_code
+     def generate_created_models(self):
+         """
+         Find all new models (both managed and unmanaged) and make create
+@@ -576,7 +772,7 @@ class MigrationAutodetector:
+                 app_label,
+                 operations.CreateModel(
+                     name=model_state.name,
+-                    fields=[d for d in model_state.fields if d[0] not in related_fields],
++                    fields=[d for d in model_state.fields.items() if d[0] not in related_fields],
+                     options=model_state.options,
+                     bases=model_state.bases,
+                     managers=model_state.managers,
+@@ -809,6 +1005,7 @@ class MigrationAutodetector:
+                 ),
+             )
+ 
++    @inspect_code
+     def generate_renamed_fields(self):
+         """Work out renamed fields."""
+         self.renamed_fields = {}
+@@ -820,7 +1017,7 @@ class MigrationAutodetector:
+             field_dec = self.deep_deconstruct(field)
+             for rem_app_label, rem_model_name, rem_field_name in sorted(self.old_field_keys - self.new_field_keys):
+                 if rem_app_label == app_label and rem_model_name == model_name:
+-                    old_field = old_model_state.get_field_by_name(rem_field_name)
++                    old_field = old_model_state.fields[rem_field_name]
+                     old_field_dec = self.deep_deconstruct(old_field)
+                     if field.remote_field and field.remote_field.model and 'to' in old_field_dec[2]:
+                         old_rel_to = old_field_dec[2]['to']
+diff --git a/django/db/migrations/operations/fields.py b/django/db/migrations/operations/fields.py
+index ecb2af8..ceee7e2 100644
+--- a/django/db/migrations/operations/fields.py
++++ b/django/db/migrations/operations/fields.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12771/django/db/migrations/operations/fields.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from django.core.exceptions import FieldDoesNotExist
+ from django.db.models import NOT_PROVIDED
+ from django.utils.functional import cached_property
+@@ -82,6 +275,7 @@ class AddField(FieldOperation):
+             kwargs
+         )
+ 
++    @inspect_code
+     def state_forwards(self, app_label, state):
+         # If preserve default is off, don't use the default for future state
+         if not self.preserve_default:
+@@ -89,7 +283,7 @@ class AddField(FieldOperation):
+             field.default = NOT_PROVIDED
+         else:
+             field = self.field
+-        state.models[app_label, self.model_name_lower].fields.append((self.name, field))
++        state.models[app_label, self.model_name_lower].fields[self.name] = field
+         # Delay rendering of relationships if it's not a relational field
+         delay = not field.is_relation
+         state.reload_model(app_label, self.model_name_lower, delay=delay)
+@@ -153,15 +347,10 @@ class RemoveField(FieldOperation):
+             kwargs
+         )
+ 
++    @inspect_code
+     def state_forwards(self, app_label, state):
+-        new_fields = []
+-        old_field = None
+-        for name, instance in state.models[app_label, self.model_name_lower].fields:
+-            if name != self.name:
+-                new_fields.append((name, instance))
+-            else:
+-                old_field = instance
+-        state.models[app_label, self.model_name_lower].fields = new_fields
++        model_state = state.models[app_label, self.model_name_lower]
++        old_field = model_state.fields.pop(self.name)
+         # Delay rendering of relationships if it's not a relational field
+         delay = not old_field.is_relation
+         state.reload_model(app_label, self.model_name_lower, delay=delay)
+@@ -211,17 +400,15 @@ class AlterField(FieldOperation):
+             kwargs
+         )
+ 
++    @inspect_code
+     def state_forwards(self, app_label, state):
+         if not self.preserve_default:
+             field = self.field.clone()
+             field.default = NOT_PROVIDED
+         else:
+             field = self.field
+-        state.models[app_label, self.model_name_lower].fields = [
+-            (n, field if n == self.name else f)
+-            for n, f in
+-            state.models[app_label, self.model_name_lower].fields
+-        ]
++        model_state = state.models[app_label, self.model_name_lower]
++        model_state.fields[self.name] = field
+         # TODO: investigate if old relational fields must be reloaded or if it's
+         # sufficient if the new field is (#27737).
+         # Delay rendering of relationships if it's not a relational field and
+@@ -295,15 +482,19 @@ class RenameField(FieldOperation):
+             kwargs
+         )
+ 
++    @inspect_code
+     def state_forwards(self, app_label, state):
+         model_state = state.models[app_label, self.model_name_lower]
+         # Rename the field
+         fields = model_state.fields
+-        found = None
+-        for index, (name, field) in enumerate(fields):
+-            if not found and name == self.old_name:
+-                fields[index] = (self.new_name, field)
+-                found = field
++        try:
++            found = fields.pop(self.old_name)
++        except KeyError:
++            raise FieldDoesNotExist(
++                "%s.%s has no field named '%s'" % (app_label, self.model_name, self.old_name)
++            )
++        fields[self.new_name] = found
++        for field in fields.values():
+             # Fix from_fields to refer to the new field.
+             from_fields = getattr(field, 'from_fields', None)
+             if from_fields:
+@@ -311,10 +502,6 @@ class RenameField(FieldOperation):
+                     self.new_name if from_field_name == self.old_name else from_field_name
+                     for from_field_name in from_fields
+                 ])
+-        if found is None:
+-            raise FieldDoesNotExist(
+-                "%s.%s has no field named '%s'" % (app_label, self.model_name, self.old_name)
+-            )
+         # Fix index/unique_together to refer to the new field
+         options = model_state.options
+         for option in ('index_together', 'unique_together'):
+diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
+index baa9020..292687d 100644
+--- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12771/django/db/migrations/operations/models.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from django.db import models
+ from django.db.migrations.operations.base import Operation
+ from django.db.migrations.state import ModelState
+@@ -301,6 +494,7 @@ class RenameModel(ModelOperation):
+             kwargs
+         )
+ 
++    @inspect_code
+     def state_forwards(self, app_label, state):
+         # Add a new model.
+         renamed_model = state.models[app_label, self.old_name_lower].clone()
+@@ -310,7 +504,7 @@ class RenameModel(ModelOperation):
+         old_model_tuple = (app_label, self.old_name_lower)
+         new_remote_model = '%s.%s' % (app_label, self.new_name)
+         to_reload = set()
+-        for model_state, index, name, field, reference in get_references(state, old_model_tuple):
++        for model_state, name, field, reference in get_references(state, old_model_tuple):
+             changed_field = None
+             if reference.to:
+                 changed_field = field.clone()
+@@ -320,7 +514,7 @@ class RenameModel(ModelOperation):
+                     changed_field = field.clone()
+                 changed_field.remote_field.through = new_remote_model
+             if changed_field:
+-                model_state.fields[index] = name, changed_field
++                model_state.fields[name] = changed_field
+                 to_reload.add((model_state.app_label, model_state.name_lower))
+         # Reload models related to old model before removing the old model.
+         state.reload_models(to_reload, delay=True)
+diff --git a/django/db/migrations/operations/utils.py b/django/db/migrations/operations/utils.py
+index 0295d60..6e2bacd 100644
+--- a/django/db/migrations/operations/utils.py
++++ b/django/db/migrations/operations/utils.py
+@@ -83,17 +83,17 @@ def field_references(
+ 
+ def get_references(state, model_tuple, field_tuple=()):
+     """
+-    Generator of (model_state, index, name, field, reference) referencing
++    Generator of (model_state, name, field, reference) referencing
+     provided context.
+ 
+     If field_tuple is provided only references to this particular field of
+     model_tuple will be generated.
+     """
+     for state_model_tuple, model_state in state.models.items():
+-        for index, (name, field) in enumerate(model_state.fields):
++        for name, field in model_state.fields.items():
+             reference = field_references(state_model_tuple, field, model_tuple, *field_tuple)
+             if reference:
+-                yield model_state, index, name, field, reference
++                yield model_state, name, field, reference
+ 
+ 
+ def field_is_referenced(state, model_tuple, field_tuple):
+diff --git a/django/db/migrations/state.py b/django/db/migrations/state.py
+index fe8594a..922d472 100644
+--- a/django/db/migrations/state.py
++++ b/django/db/migrations/state.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12771/django/db/migrations/state.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import copy
+ from contextlib import contextmanager
+ 
+@@ -102,6 +295,7 @@ class ProjectState:
+             # the cache automatically (#24513)
+             self.apps.clear_cache()
+ 
++    @inspect_code
+     def _find_reload_model(self, app_label, model_name, delay=False):
+         if delay:
+             self.is_delayed = True
+@@ -125,7 +319,7 @@ class ProjectState:
+         # Directly related models are the models pointed to by ForeignKeys,
+         # OneToOneFields, and ManyToManyFields.
+         direct_related_models = set()
+-        for name, field in model_state.fields:
++        for field in model_state.fields.values():
+             if field.is_relation:
+                 if field.remote_field.model == RECURSIVE_RELATIONSHIP_CONSTANT:
+                     continue
+@@ -359,16 +553,13 @@ class ModelState:
+     def __init__(self, app_label, name, fields, options=None, bases=None, managers=None):
+         self.app_label = app_label
+         self.name = name
+-        self.fields = fields
++        self.fields = dict(fields)
+         self.options = options or {}
+         self.options.setdefault('indexes', [])
+         self.options.setdefault('constraints', [])
+         self.bases = bases or (models.Model,)
+         self.managers = managers or []
+-        # Sanity-check that fields is NOT a dict. It must be ordered.
+-        if isinstance(self.fields, dict):
+-            raise ValueError("ModelState.fields cannot be a dict - it must be a list of 2-tuples.")
+-        for name, field in fields:
++        for name, field in self.fields.items():
+             # Sanity-check that fields are NOT already bound to a model.
+             if hasattr(field, 'model'):
+                 raise ValueError(
+@@ -539,12 +730,13 @@ class ModelState:
+                 manager_class = import_string(manager_path)
+                 yield mgr_name, manager_class(*args, **kwargs)
+ 
++    @inspect_code
+     def clone(self):
+         """Return an exact copy of this ModelState."""
+         return self.__class__(
+             app_label=self.app_label,
+             name=self.name,
+-            fields=list(self.fields),
++            fields=dict(self.fields),
+             # Since options are shallow-copied here, operations such as
+             # AddIndex must replace their option (e.g 'indexes') rather
+             # than mutating it.
+@@ -553,6 +745,7 @@ class ModelState:
+             managers=list(self.managers),
+         )
+ 
++    @inspect_code
+     def render(self, apps):
+         """Create a Model object from our current state into the given apps."""
+         # First, make a Meta object
+@@ -566,8 +759,8 @@ class ModelState:
+             )
+         except LookupError:
+             raise InvalidBasesError("Cannot resolve one or more bases from %r" % (self.bases,))
+-        # Turn fields into a dict for the body, add other bits
+-        body = {name: field.clone() for name, field in self.fields}
++        # Clone fields for the body, add other bits.
++        body = {name: field.clone() for name, field in self.fields.items()}
+         body['Meta'] = meta
+         body['__module__'] = "__fake__"
+ 
+@@ -576,12 +769,6 @@ class ModelState:
+         # Then, make a Model object (apps.register_model is called in __new__)
+         return type(self.name, bases, body)
+ 
+-    def get_field_by_name(self, name):
+-        for fname, field in self.fields:
+-            if fname == name:
+-                return field
+-        raise ValueError("No field called %s on model %s" % (name, self.name))
+-
+     def get_index_by_name(self, name):
+         for index in self.options['indexes']:
+             if index.name == name:
+@@ -597,13 +784,19 @@ class ModelState:
+     def __repr__(self):
+         return "<%s: '%s.%s'>" % (self.__class__.__name__, self.app_label, self.name)
+ 
++    @inspect_code
+     def __eq__(self, other):
+         return (
+             (self.app_label == other.app_label) and
+             (self.name == other.name) and
+             (len(self.fields) == len(other.fields)) and
+-            all((k1 == k2 and (f1.deconstruct()[1:] == f2.deconstruct()[1:]))
+-                for (k1, f1), (k2, f2) in zip(self.fields, other.fields)) and
++            all(
++                k1 == k2 and f1.deconstruct()[1:] == f2.deconstruct()[1:]
++                for (k1, f1), (k2, f2) in zip(
++                    sorted(self.fields.items()),
++                    sorted(other.fields.items()),
++                )
++            ) and
+             (self.options == other.options) and
+             (self.bases == other.bases) and
+             (self.managers == other.managers)
+diff --git a/tests/migrations/test_executor.py b/tests/migrations/test_executor.py
+index 38391cd..5a122bc 100644
+--- a/tests/migrations/test_executor.py
++++ b/tests/migrations/test_executor.py
+@@ -516,13 +516,13 @@ class ExecutorTests(MigrationTestBase):
+         state = executor.migrate([
+             ('mutate_state_a', '0001_initial'),
+         ])
+-        self.assertIn('added', dict(state.models['mutate_state_b', 'b'].fields))
++        self.assertIn('added', state.models['mutate_state_b', 'b'].fields)
+         executor.loader.build_graph()
+         # Migrate backward.
+         state = executor.migrate([
+             ('mutate_state_a', None),
+         ])
+-        self.assertIn('added', dict(state.models['mutate_state_b', 'b'].fields))
++        self.assertIn('added', state.models['mutate_state_b', 'b'].fields)
+         executor.migrate([
+             ('mutate_state_b', None),
+         ])
+diff --git a/tests/migrations/test_loader.py b/tests/migrations/test_loader.py
+index 7bc9cca..ce2f209 100644
+--- a/tests/migrations/test_loader.py
++++ b/tests/migrations/test_loader.py
+@@ -73,15 +73,12 @@ class LoaderTests(TestCase):
+ 
+         author_state = project_state.models["migrations", "author"]
+         self.assertEqual(
+-            [x for x, y in author_state.fields],
++            list(author_state.fields),
+             ["id", "name", "slug", "age", "rating"]
+         )
+ 
+         book_state = project_state.models["migrations", "book"]
+-        self.assertEqual(
+-            [x for x, y in book_state.fields],
+-            ["id", "author"]
+-        )
++        self.assertEqual(list(book_state.fields), ['id', 'author'])
+ 
+         # Ensure we've included unmigrated apps in there too
+         self.assertIn("basic", project_state.real_apps)
+@@ -122,10 +119,7 @@ class LoaderTests(TestCase):
+         self.assertEqual(len([m for a, m in project_state.models if a == "migrations"]), 1)
+ 
+         book_state = project_state.models["migrations", "book"]
+-        self.assertEqual(
+-            [x for x, y in book_state.fields],
+-            ["id", "user"]
+-        )
++        self.assertEqual(list(book_state.fields), ['id', 'user'])
+ 
+     @override_settings(MIGRATION_MODULES={"migrations": "migrations.test_migrations_run_before"})
+     def test_run_before(self):
+diff --git a/tests/migrations/test_operations.py b/tests/migrations/test_operations.py
+index bb4b74e..55c2021 100644
+--- a/tests/migrations/test_operations.py
++++ b/tests/migrations/test_operations.py
+@@ -521,7 +521,10 @@ class OperationTests(OperationTestBase):
+         self.assertNotIn(("test_rnmo", "pony"), new_state.models)
+         self.assertIn(("test_rnmo", "horse"), new_state.models)
+         # RenameModel also repoints all incoming FKs and M2Ms
+-        self.assertEqual("test_rnmo.Horse", new_state.models["test_rnmo", "rider"].fields[1][1].remote_field.model)
++        self.assertEqual(
++            new_state.models['test_rnmo', 'rider'].fields['pony'].remote_field.model,
++            'test_rnmo.Horse',
++        )
+         self.assertTableNotExists("test_rnmo_pony")
+         self.assertTableExists("test_rnmo_horse")
+         if connection.features.supports_foreign_keys:
+@@ -532,7 +535,10 @@ class OperationTests(OperationTestBase):
+         # Test original state and database
+         self.assertIn(("test_rnmo", "pony"), original_state.models)
+         self.assertNotIn(("test_rnmo", "horse"), original_state.models)
+-        self.assertEqual("Pony", original_state.models["test_rnmo", "rider"].fields[1][1].remote_field.model)
++        self.assertEqual(
++            original_state.models['test_rnmo', 'rider'].fields['pony'].remote_field.model,
++            'Pony',
++        )
+         self.assertTableExists("test_rnmo_pony")
+         self.assertTableNotExists("test_rnmo_horse")
+         if connection.features.supports_foreign_keys:
+@@ -579,7 +585,7 @@ class OperationTests(OperationTestBase):
+         # Remember, RenameModel also repoints all incoming FKs and M2Ms
+         self.assertEqual(
+             'self',
+-            new_state.models["test_rmwsrf", "horserider"].fields[2][1].remote_field.model
++            new_state.models["test_rmwsrf", "horserider"].fields['friend'].remote_field.model
+         )
+         HorseRider = new_state.apps.get_model('test_rmwsrf', 'horserider')
+         self.assertIs(HorseRider._meta.get_field('horserider').remote_field.model, HorseRider)
+@@ -621,8 +627,8 @@ class OperationTests(OperationTestBase):
+         self.assertIn(("test_rmwsc", "littlehorse"), new_state.models)
+         # RenameModel shouldn't repoint the superclass's relations, only local ones
+         self.assertEqual(
+-            project_state.models["test_rmwsc", "rider"].fields[1][1].remote_field.model,
+-            new_state.models["test_rmwsc", "rider"].fields[1][1].remote_field.model
++            project_state.models['test_rmwsc', 'rider'].fields['pony'].remote_field.model,
++            new_state.models['test_rmwsc', 'rider'].fields['pony'].remote_field.model,
+         )
+         # Before running the migration we have a table for Shetland Pony, not Little Horse
+         self.assertTableExists("test_rmwsc_shetlandpony")
+@@ -797,10 +803,7 @@ class OperationTests(OperationTestBase):
+         self.assertEqual(operation.describe(), "Add field height to Pony")
+         project_state, new_state = self.make_test_state("test_adfl", operation)
+         self.assertEqual(len(new_state.models["test_adfl", "pony"].fields), 4)
+-        field = [
+-            f for n, f in new_state.models["test_adfl", "pony"].fields
+-            if n == "height"
+-        ][0]
++        field = new_state.models['test_adfl', 'pony'].fields['height']
+         self.assertEqual(field.default, 5)
+         # Test the database alteration
+         self.assertColumnNotExists("test_adfl_pony", "height")
+@@ -974,10 +977,7 @@ class OperationTests(OperationTestBase):
+         new_state = project_state.clone()
+         operation.state_forwards("test_adflpd", new_state)
+         self.assertEqual(len(new_state.models["test_adflpd", "pony"].fields), 4)
+-        field = [
+-            f for n, f in new_state.models["test_adflpd", "pony"].fields
+-            if n == "height"
+-        ][0]
++        field = new_state.models['test_adflpd', 'pony'].fields['height']
+         self.assertEqual(field.default, models.NOT_PROVIDED)
+         # Test the database alteration
+         project_state.apps.get_model("test_adflpd", "pony").objects.create(
+@@ -1234,8 +1234,8 @@ class OperationTests(OperationTestBase):
+         self.assertEqual(operation.describe(), "Alter field pink on Pony")
+         new_state = project_state.clone()
+         operation.state_forwards("test_alfl", new_state)
+-        self.assertIs(project_state.models["test_alfl", "pony"].get_field_by_name("pink").null, False)
+-        self.assertIs(new_state.models["test_alfl", "pony"].get_field_by_name("pink").null, True)
++        self.assertIs(project_state.models['test_alfl', 'pony'].fields['pink'].null, False)
++        self.assertIs(new_state.models['test_alfl', 'pony'].fields['pink'].null, True)
+         # Test the database alteration
+         self.assertColumnNotNull("test_alfl_pony", "pink")
+         with connection.schema_editor() as editor:
+@@ -1260,8 +1260,14 @@ class OperationTests(OperationTestBase):
+         operation = migrations.AlterField("Pony", "id", models.IntegerField(primary_key=True))
+         new_state = project_state.clone()
+         operation.state_forwards("test_alflpk", new_state)
+-        self.assertIsInstance(project_state.models["test_alflpk", "pony"].get_field_by_name("id"), models.AutoField)
+-        self.assertIsInstance(new_state.models["test_alflpk", "pony"].get_field_by_name("id"), models.IntegerField)
++        self.assertIsInstance(
++            project_state.models['test_alflpk', 'pony'].fields['id'],
++            models.AutoField,
++        )
++        self.assertIsInstance(
++            new_state.models['test_alflpk', 'pony'].fields['id'],
++            models.IntegerField,
++        )
+         # Test the database alteration
+         with connection.schema_editor() as editor:
+             operation.database_forwards("test_alflpk", editor, project_state, new_state)
+@@ -1289,8 +1295,14 @@ class OperationTests(OperationTestBase):
+         operation = migrations.AlterField("Pony", "id", models.FloatField(primary_key=True))
+         new_state = project_state.clone()
+         operation.state_forwards("test_alflpkfk", new_state)
+-        self.assertIsInstance(project_state.models["test_alflpkfk", "pony"].get_field_by_name("id"), models.AutoField)
+-        self.assertIsInstance(new_state.models["test_alflpkfk", "pony"].get_field_by_name("id"), models.FloatField)
++        self.assertIsInstance(
++            project_state.models['test_alflpkfk', 'pony'].fields['id'],
++            models.AutoField,
++        )
++        self.assertIsInstance(
++            new_state.models['test_alflpkfk', 'pony'].fields['id'],
++            models.FloatField,
++        )
+ 
+         def assertIdTypeEqualsFkType():
+             with connection.cursor() as cursor:
+@@ -1479,8 +1491,8 @@ class OperationTests(OperationTestBase):
+         self.assertEqual(operation.describe(), "Rename field pink on Pony to blue")
+         new_state = project_state.clone()
+         operation.state_forwards("test_rnfl", new_state)
+-        self.assertIn("blue", [n for n, f in new_state.models["test_rnfl", "pony"].fields])
+-        self.assertNotIn("pink", [n for n, f in new_state.models["test_rnfl", "pony"].fields])
++        self.assertIn("blue", new_state.models["test_rnfl", "pony"].fields)
++        self.assertNotIn("pink", new_state.models["test_rnfl", "pony"].fields)
+         # Make sure the unique_together has the renamed column too
+         self.assertIn("blue", new_state.models["test_rnfl", "pony"].options['unique_together'][0])
+         self.assertNotIn("pink", new_state.models["test_rnfl", "pony"].options['unique_together'][0])
+@@ -1536,19 +1548,19 @@ class OperationTests(OperationTestBase):
+         operation = migrations.RenameField('Model', 'field', 'renamed')
+         new_state = state.clone()
+         operation.state_forwards('app', new_state)
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[1][1].remote_field.field_name, 'renamed')
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[1][1].from_fields, ['self'])
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[1][1].to_fields, ('renamed',))
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[2][1].from_fields, ('fk',))
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[2][1].to_fields, ('renamed',))
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['fk'].remote_field.field_name, 'renamed')
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['fk'].from_fields, ['self'])
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['fk'].to_fields, ('renamed',))
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['fo'].from_fields, ('fk',))
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['fo'].to_fields, ('renamed',))
+         operation = migrations.RenameField('OtherModel', 'fk', 'renamed_fk')
+         new_state = state.clone()
+         operation.state_forwards('app', new_state)
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[1][1].remote_field.field_name, 'renamed')
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[1][1].from_fields, ('self',))
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[1][1].to_fields, ('renamed',))
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[2][1].from_fields, ('renamed_fk',))
+-        self.assertEqual(new_state.models['app', 'othermodel'].fields[2][1].to_fields, ('renamed',))
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['renamed_fk'].remote_field.field_name, 'renamed')
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['renamed_fk'].from_fields, ('self',))
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['renamed_fk'].to_fields, ('renamed',))
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['fo'].from_fields, ('renamed_fk',))
++        self.assertEqual(new_state.models['app', 'othermodel'].fields['fo'].to_fields, ('renamed',))
+ 
+     def test_alter_unique_together(self):
+         """
+diff --git a/tests/migrations/test_state.py b/tests/migrations/test_state.py
+index 1bb6b66..40277bf 100644
+--- a/tests/migrations/test_state.py
++++ b/tests/migrations/test_state.py
+@@ -121,10 +121,10 @@ class StateTests(SimpleTestCase):
+ 
+         self.assertEqual(author_state.app_label, "migrations")
+         self.assertEqual(author_state.name, "Author")
+-        self.assertEqual([x for x, y in author_state.fields], ["id", "name", "bio", "age"])
+-        self.assertEqual(author_state.fields[1][1].max_length, 255)
+-        self.assertIs(author_state.fields[2][1].null, False)
+-        self.assertIs(author_state.fields[3][1].null, True)
++        self.assertEqual(list(author_state.fields), ["id", "name", "bio", "age"])
++        self.assertEqual(author_state.fields['name'].max_length, 255)
++        self.assertIs(author_state.fields['bio'].null, False)
++        self.assertIs(author_state.fields['age'].null, True)
+         self.assertEqual(
+             author_state.options,
+             {
+@@ -138,10 +138,10 @@ class StateTests(SimpleTestCase):
+ 
+         self.assertEqual(book_state.app_label, "migrations")
+         self.assertEqual(book_state.name, "Book")
+-        self.assertEqual([x for x, y in book_state.fields], ["id", "title", "author", "contributors"])
+-        self.assertEqual(book_state.fields[1][1].max_length, 1000)
+-        self.assertIs(book_state.fields[2][1].null, False)
+-        self.assertEqual(book_state.fields[3][1].__class__.__name__, "ManyToManyField")
++        self.assertEqual(list(book_state.fields), ["id", "title", "author", "contributors"])
++        self.assertEqual(book_state.fields['title'].max_length, 1000)
++        self.assertIs(book_state.fields['author'].null, False)
++        self.assertEqual(book_state.fields['contributors'].__class__.__name__, 'ManyToManyField')
+         self.assertEqual(
+             book_state.options,
+             {"verbose_name": "tome", "db_table": "test_tome", "indexes": [book_index], "constraints": []},
+@@ -150,7 +150,7 @@ class StateTests(SimpleTestCase):
+ 
+         self.assertEqual(author_proxy_state.app_label, "migrations")
+         self.assertEqual(author_proxy_state.name, "AuthorProxy")
+-        self.assertEqual(author_proxy_state.fields, [])
++        self.assertEqual(author_proxy_state.fields, {})
+         self.assertEqual(
+             author_proxy_state.options,
+             {"proxy": True, "ordering": ["name"], "indexes": [], "constraints": []},
+@@ -923,7 +923,7 @@ class StateTests(SimpleTestCase):
+         project_state.add_model(ModelState.from_model(Author))
+         project_state.add_model(ModelState.from_model(Book))
+         self.assertEqual(
+-            [name for name, field in project_state.models["migrations", "book"].fields],
++            list(project_state.models['migrations', 'book'].fields),
+             ["id", "author"],
+         )
+ 
+@@ -1042,6 +1042,28 @@ class ModelStateTests(SimpleTestCase):
+         with self.assertRaisesMessage(InvalidBasesError, "Cannot resolve bases for [<ModelState: 'app.Model'>]"):
+             project_state.apps
+ 
++    def test_fields_ordering_equality(self):
++        state = ModelState(
++            'migrations',
++            'Tag',
++            [
++                ('id', models.AutoField(primary_key=True)),
++                ('name', models.CharField(max_length=100)),
++                ('hidden', models.BooleanField()),
++            ],
++        )
++        reordered_state = ModelState(
++            'migrations',
++            'Tag',
++            [
++                ('id', models.AutoField(primary_key=True)),
++                # Purposedly re-ordered.
++                ('hidden', models.BooleanField()),
++                ('name', models.CharField(max_length=100)),
++            ],
++        )
++        self.assertEqual(state, reordered_state)
++
+     @override_settings(TEST_SWAPPABLE_MODEL='migrations.SomeFakeModel')
+     def test_create_swappable(self):
+         """
+@@ -1062,10 +1084,10 @@ class ModelStateTests(SimpleTestCase):
+         author_state = ModelState.from_model(Author)
+         self.assertEqual(author_state.app_label, 'migrations')
+         self.assertEqual(author_state.name, 'Author')
+-        self.assertEqual([x for x, y in author_state.fields], ['id', 'name', 'bio', 'age'])
+-        self.assertEqual(author_state.fields[1][1].max_length, 255)
+-        self.assertIs(author_state.fields[2][1].null, False)
+-        self.assertIs(author_state.fields[3][1].null, True)
++        self.assertEqual(list(author_state.fields), ['id', 'name', 'bio', 'age'])
++        self.assertEqual(author_state.fields['name'].max_length, 255)
++        self.assertIs(author_state.fields['bio'].null, False)
++        self.assertIs(author_state.fields['age'].null, True)
+         self.assertEqual(author_state.options, {'swappable': 'TEST_SWAPPABLE_MODEL', 'indexes': [], "constraints": []})
+         self.assertEqual(author_state.bases, (models.Model,))
+         self.assertEqual(author_state.managers, [])
+@@ -1104,11 +1126,11 @@ class ModelStateTests(SimpleTestCase):
+         self.assertEqual(station_state.app_label, 'migrations')
+         self.assertEqual(station_state.name, 'BusStation')
+         self.assertEqual(
+-            [x for x, y in station_state.fields],
++            list(station_state.fields),
+             ['searchablelocation_ptr', 'name', 'bus_routes', 'inbound']
+         )
+-        self.assertEqual(station_state.fields[1][1].max_length, 128)
+-        self.assertIs(station_state.fields[2][1].null, False)
++        self.assertEqual(station_state.fields['name'].max_length, 128)
++        self.assertIs(station_state.fields['bus_routes'].null, False)
+         self.assertEqual(
+             station_state.options,
+             {'abstract': False, 'swappable': 'TEST_SWAPPABLE_MODEL', 'indexes': [], 'constraints': []}

@@ -1,0 +1,464 @@
+diff --git a/examples/svm/plot_separating_hyperplane_unbalanced.py b/examples/svm/plot_separating_hyperplane_unbalanced.py
+index 85a3573..05c768c 100644
+--- a/examples/svm/plot_separating_hyperplane_unbalanced.py
++++ b/examples/svm/plot_separating_hyperplane_unbalanced.py
+@@ -29,14 +29,17 @@ print(__doc__)
+ import numpy as np
+ import matplotlib.pyplot as plt
+ from sklearn import svm
++from sklearn.datasets import make_blobs
+ 
+-# we create clusters with 1000 and 100 points
+-rng = np.random.RandomState(0)
++# we create two clusters of random points
+ n_samples_1 = 1000
+ n_samples_2 = 100
+-X = np.r_[1.5 * rng.randn(n_samples_1, 2),
+-          0.5 * rng.randn(n_samples_2, 2) + [2, 2]]
+-y = [0] * (n_samples_1) + [1] * (n_samples_2)
++centers = [[0.0, 0.0], [2.0, 2.0]]
++clusters_std = [1.5, 0.5]
++X, y = make_blobs(n_samples=[n_samples_1, n_samples_2],
++                  centers=centers,
++                  cluster_std=clusters_std,
++                  random_state=0, shuffle=False)
+ 
+ # fit the model and get the separating hyperplane
+ clf = svm.SVC(kernel='linear', C=1.0)
+diff --git a/sklearn/datasets/samples_generator.py b/sklearn/datasets/samples_generator.py
+index e26fdc7..f0d864f 100644
+--- a/sklearn/datasets/samples_generator.py
++++ b/sklearn/datasets/samples_generator.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-10577/sklearn/datasets/samples_generator.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Generate samples of synthetic data sets.
+ """
+@@ -11,6 +204,7 @@ import array
+ import numpy as np
+ from scipy import linalg
+ import scipy.sparse as sp
++from collections import Iterable
+ 
+ from ..preprocessing import MultiLabelBinarizer
+ from ..utils import check_array, check_random_state
+@@ -696,7 +890,8 @@ def make_moons(n_samples=100, shuffle=True, noise=None, random_state=None):
+     return X, y
+ 
+ 
+-def make_blobs(n_samples=100, n_features=2, centers=3, cluster_std=1.0,
++@inspect_code
++def make_blobs(n_samples=100, n_features=2, centers=None, cluster_std=1.0,
+                center_box=(-10.0, 10.0), shuffle=True, random_state=None):
+     """Generate isotropic Gaussian blobs for clustering.
+ 
+@@ -704,15 +899,21 @@ def make_blobs(n_samples=100, n_features=2, centers=3, cluster_std=1.0,
+ 
+     Parameters
+     ----------
+-    n_samples : int, optional (default=100)
+-        The total number of points equally divided among clusters.
++    n_samples : int or array-like, optional (default=100)
++        If int, it is the the total number of points equally divided among
++        clusters.
++        If array-like, each element of the sequence indicates
++        the number of samples per cluster.
+ 
+     n_features : int, optional (default=2)
+         The number of features for each sample.
+ 
+     centers : int or array of shape [n_centers, n_features], optional
+-        (default=3)
++        (default=None)
+         The number of centers to generate, or the fixed center locations.
++        If n_samples is an int and centers is None, 3 centers are generated.
++        If n_samples is array-like, centers must be
++        either None or an array of length equal to the length of n_samples.
+ 
+     cluster_std : float or sequence of floats, optional (default=1.0)
+         The standard deviation of the clusters.
+@@ -747,6 +948,12 @@ def make_blobs(n_samples=100, n_features=2, centers=3, cluster_std=1.0,
+     (10, 2)
+     >>> y
+     array([0, 0, 1, 0, 2, 2, 2, 1, 1, 0])
++    >>> X, y = make_blobs(n_samples=[3, 3, 4], centers=None, n_features=2,
++    ...                   random_state=0)
++    >>> print(X.shape)
++    (10, 2)
++    >>> y
++    array([0, 1, 2, 0, 2, 2, 2, 1, 1, 0])
+ 
+     See also
+     --------
+@@ -754,12 +961,46 @@ def make_blobs(n_samples=100, n_features=2, centers=3, cluster_std=1.0,
+     """
+     generator = check_random_state(random_state)
+ 
+-    if isinstance(centers, numbers.Integral):
+-        centers = generator.uniform(center_box[0], center_box[1],
+-                                    size=(centers, n_features))
++    if isinstance(n_samples, numbers.Integral):
++        # Set n_centers by looking at centers arg
++        if centers is None:
++            centers = 3
++
++        if isinstance(centers, numbers.Integral):
++            n_centers = centers
++            centers = generator.uniform(center_box[0], center_box[1],
++                                        size=(n_centers, n_features))
++
++        else:
++            centers = check_array(centers)
++            n_features = centers.shape[1]
++            n_centers = centers.shape[0]
++
+     else:
+-        centers = check_array(centers)
+-        n_features = centers.shape[1]
++        # Set n_centers by looking at [n_samples] arg
++        n_centers = len(n_samples)
++        if centers is None:
++            centers = generator.uniform(center_box[0], center_box[1],
++                                        size=(n_centers, n_features))
++        try:
++            assert len(centers) == n_centers
++        except TypeError:
++            raise ValueError("Parameter `centers` must be array-like. "
++                             "Got {!r} instead".format(centers))
++        except AssertionError:
++            raise ValueError("Length of `n_samples` not consistent"
++                             " with number of centers. Got n_samples = {} "
++                             "and centers = {}".format(n_samples, centers))
++        else:
++            centers = check_array(centers)
++            n_features = centers.shape[1]
++
++    # stds: if cluster_std is given as list, it must be consistent
++    # with the n_centers
++    if (hasattr(cluster_std, "__len__") and len(cluster_std) != n_centers):
++        raise ValueError("Length of `clusters_std` not consistent with "
++                         "number of centers. Got centers = {} "
++                         "and cluster_std = {}".format(centers, cluster_std))
+ 
+     if isinstance(cluster_std, numbers.Real):
+         cluster_std = np.ones(len(centers)) * cluster_std
+@@ -767,22 +1008,25 @@ def make_blobs(n_samples=100, n_features=2, centers=3, cluster_std=1.0,
+     X = []
+     y = []
+ 
+-    n_centers = centers.shape[0]
+-    n_samples_per_center = [int(n_samples // n_centers)] * n_centers
++    if isinstance(n_samples, Iterable):
++        n_samples_per_center = n_samples
++    else:
++        n_samples_per_center = [int(n_samples // n_centers)] * n_centers
+ 
+-    for i in range(n_samples % n_centers):
+-        n_samples_per_center[i] += 1
++        for i in range(n_samples % n_centers):
++            n_samples_per_center[i] += 1
+ 
+     for i, (n, std) in enumerate(zip(n_samples_per_center, cluster_std)):
+-        X.append(centers[i] + generator.normal(scale=std,
+-                                               size=(n, n_features)))
++        X.append(generator.normal(loc=centers[i], scale=std,
++                                  size=(n, n_features)))
+         y += [i] * n
+ 
+     X = np.concatenate(X)
+     y = np.array(y)
+ 
+     if shuffle:
+-        indices = np.arange(n_samples)
++        total_n_samples = np.sum(n_samples)
++        indices = np.arange(total_n_samples)
+         generator.shuffle(indices)
+         X = X[indices]
+         y = y[indices]
+diff --git a/sklearn/datasets/tests/test_samples_generator.py b/sklearn/datasets/tests/test_samples_generator.py
+index 8b98104..c5a0c48 100644
+--- a/sklearn/datasets/tests/test_samples_generator.py
++++ b/sklearn/datasets/tests/test_samples_generator.py
+@@ -4,6 +4,7 @@ from collections import defaultdict
+ from functools import partial
+ 
+ import numpy as np
++import pytest
+ import scipy.sparse as sp
+ from sklearn.externals.six.moves import zip
+ 
+@@ -14,6 +15,7 @@ from sklearn.utils.testing import assert_array_almost_equal
+ from sklearn.utils.testing import assert_true
+ from sklearn.utils.testing import assert_less
+ from sklearn.utils.testing import assert_raises
++from sklearn.utils.testing import assert_raise_message
+ 
+ from sklearn.datasets import make_classification
+ from sklearn.datasets import make_multilabel_classification
+@@ -238,13 +240,72 @@ def test_make_blobs():
+     X, y = make_blobs(random_state=0, n_samples=50, n_features=2,
+                       centers=cluster_centers, cluster_std=cluster_stds)
+ 
+-    assert_equal(X.shape, (50, 2), "X shape mismatch")
+-    assert_equal(y.shape, (50,), "y shape mismatch")
++    assert X.shape == (50, 2), "X shape mismatch"
++    assert y.shape == (50,), "y shape mismatch"
+     assert_equal(np.unique(y).shape, (3,), "Unexpected number of blobs")
+     for i, (ctr, std) in enumerate(zip(cluster_centers, cluster_stds)):
+         assert_almost_equal((X[y == i] - ctr).std(), std, 1, "Unexpected std")
+ 
+ 
++def test_make_blobs_n_samples_list():
++    n_samples = [50, 30, 20]
++    X, y = make_blobs(n_samples=n_samples, n_features=2, random_state=0)
++
++    assert X.shape == (sum(n_samples), 2), "X shape mismatch"
++    assert all(np.bincount(y, minlength=len(n_samples)) == n_samples), \
++        "Incorrect number of samples per blob"
++
++
++def test_make_blobs_n_samples_list_with_centers():
++    n_samples = [20, 20, 20]
++    centers = np.array([[0.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
++    cluster_stds = np.array([0.05, 0.2, 0.4])
++    X, y = make_blobs(n_samples=n_samples, centers=centers,
++                      cluster_std=cluster_stds, random_state=0)
++
++    assert X.shape == (sum(n_samples), 2), "X shape mismatch"
++    assert all(np.bincount(y, minlength=len(n_samples)) == n_samples), \
++        "Incorrect number of samples per blob"
++    for i, (ctr, std) in enumerate(zip(centers, cluster_stds)):
++        assert_almost_equal((X[y == i] - ctr).std(), std, 1, "Unexpected std")
++
++
++@pytest.mark.parametrize(
++    "n_samples",
++    [[5, 3, 0],
++     np.array([5, 3, 0]),
++     tuple([5, 3, 0])]
++)
++def test_make_blobs_n_samples_centers_none(n_samples):
++    centers = None
++    X, y = make_blobs(n_samples=n_samples, centers=centers, random_state=0)
++
++    assert X.shape == (sum(n_samples), 2), "X shape mismatch"
++    assert all(np.bincount(y, minlength=len(n_samples)) == n_samples), \
++        "Incorrect number of samples per blob"
++
++
++def test_make_blobs_error():
++    n_samples = [20, 20, 20]
++    centers = np.array([[0.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
++    cluster_stds = np.array([0.05, 0.2, 0.4])
++    wrong_centers_msg = ("Length of `n_samples` not consistent "
++                         "with number of centers. Got n_samples = {} "
++                         "and centers = {}".format(n_samples, centers[:-1]))
++    assert_raise_message(ValueError, wrong_centers_msg,
++                         make_blobs, n_samples, centers=centers[:-1])
++    wrong_std_msg = ("Length of `clusters_std` not consistent with "
++                     "number of centers. Got centers = {} "
++                     "and cluster_std = {}".format(centers, cluster_stds[:-1]))
++    assert_raise_message(ValueError, wrong_std_msg,
++                         make_blobs, n_samples,
++                         centers=centers, cluster_std=cluster_stds[:-1])
++    wrong_type_msg = ("Parameter `centers` must be array-like. "
++                      "Got {!r} instead".format(3))
++    assert_raise_message(ValueError, wrong_type_msg,
++                         make_blobs, n_samples, centers=3)
++
++
+ def test_make_friedman1():
+     X, y = make_friedman1(n_samples=5, n_features=10, noise=0.0,
+                           random_state=0)

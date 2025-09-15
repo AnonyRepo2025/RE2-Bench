@@ -1,0 +1,286 @@
+def args(self):
+    return self._args
+
+def __eq__(self, other):
+    return other == Interval(-S.Infinity, S.Infinity)
+
+def __neg__(self):
+    return S.NegativeInfinity
+
+def __new__(cls, start, end, left_open=False, right_open=False):
+    start = _sympify(start)
+    end = _sympify(end)
+    left_open = _sympify(left_open)
+    right_open = _sympify(right_open)
+    if not all((isinstance(a, (type(true), type(false))) for a in [left_open, right_open])):
+        raise NotImplementedError('left_open and right_open can have only true/false values, got %s and %s' % (left_open, right_open))
+    inftys = [S.Infinity, S.NegativeInfinity]
+    if not all((i.is_real is not False or i in inftys for i in (start, end))):
+        raise ValueError('Non-real intervals are not supported')
+    if (end < start) == True:
+        return S.EmptySet
+    elif (end - start).is_negative:
+        return S.EmptySet
+    if end == start and (left_open or right_open):
+        return S.EmptySet
+    if end == start and (not (left_open or right_open)):
+        if start == S.Infinity or start == S.NegativeInfinity:
+            return S.EmptySet
+        return FiniteSet(end)
+    if start == S.NegativeInfinity:
+        left_open = true
+    if end == S.Infinity:
+        right_open = true
+    return Basic.__new__(cls, start, end, left_open, right_open)
+
+def _sympify(a):
+    return sympify(a, strict=True)
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            return _convert_numpy_types(a)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    try:
+        from ..tensor.array import Array
+        return Array(a.flat, a.shape)
+    except AttributeError:
+        pass
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+def __hash__(self):
+    return super(NegativeInfinity, self).__hash__()
+
+def __hash__(self):
+    return super(Number, self).__hash__()
+
+def __hash__(self):
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+def __hash__(self):
+    return super(Infinity, self).__hash__()
+
+def __lt__(self, other):
+    try:
+        other = _sympify(other)
+    except SympifyError:
+        raise TypeError('Invalid comparison %s < %s' % (self, other))
+    if other.is_real:
+        return S.false
+    return Expr.__lt__(self, other)
+
+def __eq__(self, other):
+    from sympy import Pow
+    if self is other:
+        return True
+    if type(self) is not type(other):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            return NotImplemented
+        if type(self) != type(other):
+            return False
+    return self._hashable_content() == other._hashable_content()
+
+def __sympifyit_wrapper(a, b):
+    try:
+        if not hasattr(b, '_op_priority'):
+            b = sympify(b, strict=True)
+        return func(a, b)
+    except SympifyError:
+        return retval
+
+def __sub__(self, other):
+    if isinstance(other, Number):
+        if other is S.Infinity or other is S.NaN:
+            return S.NaN
+        elif other.is_Float:
+            if other == Float('inf'):
+                return S.NaN
+            else:
+                return Float('inf')
+        else:
+            return S.Infinity
+    return NotImplemented
+
+def __eq__(self, other):
+    return other is S.Infinity
+
+
+
+from __future__ import print_function, division
+from itertools import product
+from sympy.core.sympify import _sympify, sympify, converter, SympifyError
+from sympy.core.basic import Basic
+from sympy.core.expr import Expr
+from sympy.core.singleton import Singleton, S
+from sympy.core.evalf import EvalfMixin
+from sympy.core.numbers import Float
+from sympy.core.compatibility import iterable, with_metaclass, ordered, range, PY3
+from sympy.core.evaluate import global_evaluate
+from sympy.core.function import FunctionClass
+from sympy.core.mul import Mul
+from sympy.core.relational import Eq, Ne
+from sympy.core.symbol import Symbol, Dummy, _uniquely_named_symbol
+from sympy.sets.contains import Contains
+from sympy.utilities.iterables import sift
+from sympy.utilities.misc import func_name, filldedent
+from mpmath import mpi, mpf
+from sympy.logic.boolalg import And, Or, Not, true, false
+from sympy.utilities import subsets
+from sympy.core import Lambda
+from sympy.sets.fancysets import ImageSet
+from sympy.sets.fancysets import ImageSet
+from sympy.functions.elementary.miscellaneous import Min, Max
+from sympy.solvers.solveset import solveset
+from sympy.core.function import diff, Lambda
+from sympy.series import limit
+from sympy.calculus.singularities import singularities
+from sympy.functions.elementary.miscellaneous import Min
+from sympy.functions.elementary.miscellaneous import Max
+import itertools
+from sympy.core.logic import fuzzy_and, fuzzy_bool
+from sympy.core.compatibility import zip_longest
+from sympy.simplify.simplify import clear_coefficients
+from sympy.functions.elementary.miscellaneous import Min
+from sympy.functions.elementary.miscellaneous import Max
+from sympy.core.relational import Eq
+from sympy.functions.elementary.miscellaneous import Min, Max
+import sys
+from sympy.utilities.iterables import sift
+converter[set] = lambda x: FiniteSet(*x)
+converter[frozenset] = lambda x: FiniteSet(*x)
+
+class Set(Basic):
+    is_number = False
+    is_iterable = False
+    is_interval = False
+    is_FiniteSet = False
+    is_Interval = False
+    is_ProductSet = False
+    is_Union = False
+    is_Intersection = None
+    is_EmptySet = None
+    is_UniversalSet = None
+    is_Complement = None
+    is_ComplexRegion = False
+
+    @staticmethod
+    def _infimum_key(expr):
+        try:
+            infimum = expr.inf
+            assert infimum.is_comparable
+        except (NotImplementedError, AttributeError, AssertionError, ValueError):
+            infimum = S.Infinity
+        return infimum
+
+    def _complement(self, other):
+        if isinstance(other, ProductSet):
+            switch_sets = ProductSet((FiniteSet(o, o - s) for s, o in zip(self.sets, other.sets)))
+            product_sets = (ProductSet(*set) for set in switch_sets)
+            return Union((p for p in product_sets if p != other))
+        elif isinstance(other, Interval):
+            if isinstance(self, Interval) or isinstance(self, FiniteSet):
+                return Intersection(other, self.complement(S.Reals))
+        elif isinstance(other, Union):
+            return Union((o - self for o in other.args))
+        elif isinstance(other, Complement):
+            return Complement(other.args[0], Union(other.args[1], self), evaluate=False)
+        elif isinstance(other, EmptySet):
+            return S.EmptySet
+        elif isinstance(other, FiniteSet):
+            from sympy.utilities.iterables import sift
+
+            def ternary_sift(el):
+                contains = self.contains(el)
+                return contains if contains in [True, False] else None
+            sifted = sift(other, ternary_sift)
+            return Union(FiniteSet(*sifted[False]), Complement(FiniteSet(*sifted[None]), self, evaluate=False) if sifted[None] else S.EmptySet)
+
+    def contains(self, other):
+        other = sympify(other, strict=True)
+        ret = sympify(self._contains(other))
+        if ret is None:
+            ret = Contains(other, self, evaluate=False)
+        return ret
+
+    def __contains__(self, other):
+        symb = sympify(self.contains(other))
+        if not (symb is S.true or symb is S.false):
+            raise TypeError('contains did not evaluate to a bool: %r' % symb)
+        return bool(symb)

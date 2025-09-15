@@ -1,0 +1,3498 @@
+diff --git a/django/core/management/commands/inspectdb.py b/django/core/management/commands/inspectdb.py
+index 9abf816..4b1f433 100644
+--- a/django/core/management/commands/inspectdb.py
++++ b/django/core/management/commands/inspectdb.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/core/management/commands/inspectdb.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import keyword
+ import re
+ 
+@@ -51,6 +244,7 @@ class Command(BaseCommand):
+                 "database backend."
+             )
+ 
++    @inspect_code
+     def handle_inspection(self, options):
+         connection = connections[options["database"]]
+         # 'table_name_filter' is a stealth option
+@@ -78,18 +272,16 @@ class Command(BaseCommand):
+             )
+             yield "from %s import models" % self.db_module
+             known_models = []
+-            table_info = connection.introspection.get_table_list(cursor)
+-
+             # Determine types of tables and/or views to be introspected.
+             types = {"t"}
+             if options["include_partitions"]:
+                 types.add("p")
+             if options["include_views"]:
+                 types.add("v")
++            table_info = connection.introspection.get_table_list(cursor)
++            table_info = {info.name: info for info in table_info if info.type in types}
+ 
+-            for table_name in options["table"] or sorted(
+-                info.name for info in table_info if info.type in types
+-            ):
++            for table_name in options["table"] or sorted(name for name in table_info):
+                 if table_name_filter is not None and callable(table_name_filter):
+                     if not table_name_filter(table_name):
+                         continue
+@@ -232,6 +424,10 @@ class Command(BaseCommand):
+                     if field_type.startswith(("ForeignKey(", "OneToOneField(")):
+                         field_desc += ", models.DO_NOTHING"
+ 
++                    # Add comment.
++                    if connection.features.supports_comments and row.comment:
++                        extra_params["db_comment"] = row.comment
++
+                     if extra_params:
+                         if not field_desc.endswith("("):
+                             field_desc += ", "
+@@ -242,14 +438,22 @@ class Command(BaseCommand):
+                     if comment_notes:
+                         field_desc += "  # " + " ".join(comment_notes)
+                     yield "    %s" % field_desc
+-                is_view = any(
+-                    info.name == table_name and info.type == "v" for info in table_info
+-                )
+-                is_partition = any(
+-                    info.name == table_name and info.type == "p" for info in table_info
+-                )
++                comment = None
++                if info := table_info.get(table_name):
++                    is_view = info.type == "v"
++                    is_partition = info.type == "p"
++                    if connection.features.supports_comments:
++                        comment = info.comment
++                else:
++                    is_view = False
++                    is_partition = False
+                 yield from self.get_meta(
+-                    table_name, constraints, column_to_field_name, is_view, is_partition
++                    table_name,
++                    constraints,
++                    column_to_field_name,
++                    is_view,
++                    is_partition,
++                    comment,
+                 )
+ 
+     def normalize_col_name(self, col_name, used_column_names, is_relation):
+@@ -352,8 +556,15 @@ class Command(BaseCommand):
+ 
+         return field_type, field_params, field_notes
+ 
++    @inspect_code
+     def get_meta(
+-        self, table_name, constraints, column_to_field_name, is_view, is_partition
++        self,
++        table_name,
++        constraints,
++        column_to_field_name,
++        is_view,
++        is_partition,
++        comment,
+     ):
+         """
+         Return a sequence comprising the lines of code necessary
+@@ -391,4 +602,6 @@ class Command(BaseCommand):
+         if unique_together:
+             tup = "(" + ", ".join(unique_together) + ",)"
+             meta += ["        unique_together = %s" % tup]
++        if comment:
++            meta += [f"        db_table_comment = {comment!r}"]
+         return meta
+diff --git a/django/db/backends/base/features.py b/django/db/backends/base/features.py
+index 190f728..b5b6c5b 100644
+--- a/django/db/backends/base/features.py
++++ b/django/db/backends/base/features.py
+@@ -334,6 +334,11 @@ class BaseDatabaseFeatures:
+     # Does the backend support non-deterministic collations?
+     supports_non_deterministic_collations = True
+ 
++    # Does the backend support column and table comments?
++    supports_comments = False
++    # Does the backend support column comments in ADD COLUMN statements?
++    supports_comments_inline = False
++
+     # Does the backend support the logical XOR operator?
+     supports_logical_xor = False
+ 
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+index 2451fc5..5730bd7 100644
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/db/backends/base/schema.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import logging
+ import operator
+ from datetime import datetime
+@@ -141,6 +334,9 @@ class BaseDatabaseSchemaEditor:
+ 
+     sql_delete_procedure = "DROP PROCEDURE %(procedure)s"
+ 
++    sql_alter_table_comment = "COMMENT ON TABLE %(table)s IS %(comment)s"
++    sql_alter_column_comment = "COMMENT ON COLUMN %(table)s.%(column)s IS %(comment)s"
++
+     def __init__(self, connection, collect_sql=False, atomic=True):
+         self.connection = connection
+         self.collect_sql = collect_sql
+@@ -283,12 +479,15 @@ class BaseDatabaseSchemaEditor:
+ 
+     # Field <-> database mapping functions
+ 
++    @inspect_code
+     def _iter_column_sql(
+         self, column_db_type, params, model, field, field_db_params, include_default
+     ):
+         yield column_db_type
+         if collation := field_db_params.get("collation"):
+             yield self._collate_sql(collation)
++        if self.connection.features.supports_comments_inline and field.db_comment:
++            yield self._comment_sql(field.db_comment)
+         # Work out nullability.
+         null = field.null
+         # Include a default value, if requested.
+@@ -435,6 +634,7 @@ class BaseDatabaseSchemaEditor:
+ 
+     # Actions
+ 
++    @inspect_code
+     def create_model(self, model):
+         """
+         Create a table and any accompanying indexes or unique constraints for
+@@ -445,6 +645,23 @@ class BaseDatabaseSchemaEditor:
+         # definition.
+         self.execute(sql, params or None)
+ 
++        if self.connection.features.supports_comments:
++            # Add table comment.
++            if model._meta.db_table_comment:
++                self.alter_db_table_comment(model, None, model._meta.db_table_comment)
++            # Add column comments.
++            if not self.connection.features.supports_comments_inline:
++                for field in model._meta.local_fields:
++                    if field.db_comment:
++                        field_db_params = field.db_parameters(
++                            connection=self.connection
++                        )
++                        field_type = field_db_params["type"]
++                        self.execute(
++                            *self._alter_column_comment_sql(
++                                model, field, field_type, field.db_comment
++                            )
++                        )
+         # Add any field index and index_together's (deferred as SQLite
+         # _remake_table needs it).
+         self.deferred_sql.extend(self._model_indexes_sql(model))
+@@ -614,6 +831,16 @@ class BaseDatabaseSchemaEditor:
+             if isinstance(sql, Statement):
+                 sql.rename_table_references(old_db_table, new_db_table)
+ 
++    @inspect_code
++    def alter_db_table_comment(self, model, old_db_table_comment, new_db_table_comment):
++        self.execute(
++            self.sql_alter_table_comment
++            % {
++                "table": self.quote_name(model._meta.db_table),
++                "comment": self.quote_value(new_db_table_comment or ""),
++            }
++        )
++
+     def alter_db_tablespace(self, model, old_db_tablespace, new_db_tablespace):
+         """Move a model's table between tablespaces."""
+         self.execute(
+@@ -625,6 +852,7 @@ class BaseDatabaseSchemaEditor:
+             }
+         )
+ 
++    @inspect_code
+     def add_field(self, model, field):
+         """
+         Create a field on a model. Usually involves adding a column, but may
+@@ -693,6 +921,18 @@ class BaseDatabaseSchemaEditor:
+                 "changes": changes_sql,
+             }
+             self.execute(sql, params)
++        # Add field comment, if required.
++        if (
++            field.db_comment
++            and self.connection.features.supports_comments
++            and not self.connection.features.supports_comments_inline
++        ):
++            field_type = db_params["type"]
++            self.execute(
++                *self._alter_column_comment_sql(
++                    model, field, field_type, field.db_comment
++                )
++            )
+         # Add an index, if required
+         self.deferred_sql.extend(self._field_indexes_sql(model, field))
+         # Reset connection if required
+@@ -795,6 +1035,7 @@ class BaseDatabaseSchemaEditor:
+             strict,
+         )
+ 
++    @inspect_code
+     def _alter_field(
+         self,
+         model,
+@@ -813,6 +1054,11 @@ class BaseDatabaseSchemaEditor:
+             self.connection.features.supports_foreign_keys
+             and old_field.remote_field
+             and old_field.db_constraint
++            and self._field_should_be_altered(
++                old_field,
++                new_field,
++                ignore={"db_comment"},
++            )
+         ):
+             fk_names = self._constraint_names(
+                 model, [old_field.column], foreign_key=True
+@@ -949,11 +1195,15 @@ class BaseDatabaseSchemaEditor:
+         # Type suffix change? (e.g. auto increment).
+         old_type_suffix = old_field.db_type_suffix(connection=self.connection)
+         new_type_suffix = new_field.db_type_suffix(connection=self.connection)
+-        # Type or collation change?
++        # Type, collation, or comment change?
+         if (
+             old_type != new_type
+             or old_type_suffix != new_type_suffix
+             or old_collation != new_collation
++            or (
++                self.connection.features.supports_comments
++                and old_field.db_comment != new_field.db_comment
++            )
+         ):
+             fragment, other_actions = self._alter_column_type_sql(
+                 model, old_field, new_field, new_type, old_collation, new_collation
+@@ -1211,12 +1461,26 @@ class BaseDatabaseSchemaEditor:
+         an ALTER TABLE statement and a list of extra (sql, params) tuples to
+         run once the field is altered.
+         """
++        other_actions = []
+         if collate_sql := self._collate_sql(
+             new_collation, old_collation, model._meta.db_table
+         ):
+             collate_sql = f" {collate_sql}"
+         else:
+             collate_sql = ""
++        # Comment change?
++        comment_sql = ""
++        if self.connection.features.supports_comments and not new_field.many_to_many:
++            if old_field.db_comment != new_field.db_comment:
++                # PostgreSQL and Oracle can't execute 'ALTER COLUMN ...' and
++                # 'COMMENT ON ...' at the same time.
++                sql, params = self._alter_column_comment_sql(
++                    model, new_field, new_type, new_field.db_comment
++                )
++                if sql:
++                    other_actions.append((sql, params))
++            if new_field.db_comment:
++                comment_sql = self._comment_sql(new_field.db_comment)
+         return (
+             (
+                 self.sql_alter_column_type
+@@ -1224,12 +1488,27 @@ class BaseDatabaseSchemaEditor:
+                     "column": self.quote_name(new_field.column),
+                     "type": new_type,
+                     "collation": collate_sql,
++                    "comment": comment_sql,
+                 },
+                 [],
+             ),
++            other_actions,
++        )
++
++    def _alter_column_comment_sql(self, model, new_field, new_type, new_db_comment):
++        return (
++            self.sql_alter_column_comment
++            % {
++                "table": self.quote_name(model._meta.db_table),
++                "column": self.quote_name(new_field.column),
++                "comment": self._comment_sql(new_db_comment),
++            },
+             [],
+         )
+ 
++    def _comment_sql(self, comment):
++        return self.quote_value(comment or "")
++
+     def _alter_many_to_many(self, model, old_field, new_field, strict):
+         """Alter M2Ms to repoint their to= endpoints."""
+         # Rename the through table
+@@ -1423,16 +1702,18 @@ class BaseDatabaseSchemaEditor:
+             output.append(self._create_index_sql(model, fields=[field]))
+         return output
+ 
+-    def _field_should_be_altered(self, old_field, new_field):
++    def _field_should_be_altered(self, old_field, new_field, ignore=None):
++        ignore = ignore or set()
+         _, old_path, old_args, old_kwargs = old_field.deconstruct()
+         _, new_path, new_args, new_kwargs = new_field.deconstruct()
+         # Don't alter when:
+         # - changing only a field name
+         # - changing an attribute that doesn't affect the schema
++        # - changing an attribute in the provided set of ignored attributes
+         # - adding only a db_column and the column name is not changed
+-        for attr in old_field.non_db_attrs:
++        for attr in ignore.union(old_field.non_db_attrs):
+             old_kwargs.pop(attr, None)
+-        for attr in new_field.non_db_attrs:
++        for attr in ignore.union(new_field.non_db_attrs):
+             new_kwargs.pop(attr, None)
+         return self.quote_name(old_field.column) != self.quote_name(
+             new_field.column
+diff --git a/django/db/backends/mysql/features.py b/django/db/backends/mysql/features.py
+index 5631591..2f5cc91 100644
+--- a/django/db/backends/mysql/features.py
++++ b/django/db/backends/mysql/features.py
+@@ -18,6 +18,8 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     requires_explicit_null_ordering_when_grouping = True
+     atomic_transactions = False
+     can_clone_databases = True
++    supports_comments = True
++    supports_comments_inline = True
+     supports_temporal_subtraction = True
+     supports_slicing_ordering_in_compound = True
+     supports_index_on_text_field = False
+diff --git a/django/db/backends/mysql/introspection.py b/django/db/backends/mysql/introspection.py
+index b8228f3..97aa97d 100644
+--- a/django/db/backends/mysql/introspection.py
++++ b/django/db/backends/mysql/introspection.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/db/backends/mysql/introspection.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from collections import namedtuple
+ 
+ import sqlparse
+@@ -5,18 +198,20 @@ from MySQLdb.constants import FIELD_TYPE
+ 
+ from django.db.backends.base.introspection import BaseDatabaseIntrospection
+ from django.db.backends.base.introspection import FieldInfo as BaseFieldInfo
+-from django.db.backends.base.introspection import TableInfo
++from django.db.backends.base.introspection import TableInfo as BaseTableInfo
+ from django.db.models import Index
+ from django.utils.datastructures import OrderedSet
+ 
+ FieldInfo = namedtuple(
+-    "FieldInfo", BaseFieldInfo._fields + ("extra", "is_unsigned", "has_json_constraint")
++    "FieldInfo",
++    BaseFieldInfo._fields + ("extra", "is_unsigned", "has_json_constraint", "comment"),
+ )
+ InfoLine = namedtuple(
+     "InfoLine",
+     "col_name data_type max_len num_prec num_scale extra column_default "
+-    "collation is_unsigned",
++    "collation is_unsigned comment",
+ )
++TableInfo = namedtuple("TableInfo", BaseTableInfo._fields + ("comment",))
+ 
+ 
+ class DatabaseIntrospection(BaseDatabaseIntrospection):
+@@ -68,12 +263,22 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+ 
+     def get_table_list(self, cursor):
+         """Return a list of table and view names in the current database."""
+-        cursor.execute("SHOW FULL TABLES")
++        cursor.execute(
++            """
++            SELECT
++                table_name,
++                table_type,
++                table_comment
++            FROM information_schema.tables
++            WHERE table_schema = DATABASE()
++            """
++        )
+         return [
+-            TableInfo(row[0], {"BASE TABLE": "t", "VIEW": "v"}.get(row[1]))
++            TableInfo(row[0], {"BASE TABLE": "t", "VIEW": "v"}.get(row[1]), row[2])
+             for row in cursor.fetchall()
+         ]
+ 
++    @inspect_code
+     def get_table_description(self, cursor, table_name):
+         """
+         Return a description of the table with the DB-API cursor.description
+@@ -128,7 +333,8 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                 CASE
+                     WHEN column_type LIKE '%% unsigned' THEN 1
+                     ELSE 0
+-                END AS is_unsigned
++                END AS is_unsigned,
++                column_comment
+             FROM information_schema.columns
+             WHERE table_name = %s AND table_schema = DATABASE()
+             """,
+@@ -159,6 +365,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                     info.extra,
+                     info.is_unsigned,
+                     line[0] in json_constraints,
++                    info.comment,
+                 )
+             )
+         return fields
+diff --git a/django/db/backends/mysql/schema.py b/django/db/backends/mysql/schema.py
+index 6be755f..64771fe 100644
+--- a/django/db/backends/mysql/schema.py
++++ b/django/db/backends/mysql/schema.py
+@@ -9,7 +9,7 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+ 
+     sql_alter_column_null = "MODIFY %(column)s %(type)s NULL"
+     sql_alter_column_not_null = "MODIFY %(column)s %(type)s NOT NULL"
+-    sql_alter_column_type = "MODIFY %(column)s %(type)s%(collation)s"
++    sql_alter_column_type = "MODIFY %(column)s %(type)s%(collation)s%(comment)s"
+     sql_alter_column_no_default_null = "ALTER COLUMN %(column)s SET DEFAULT NULL"
+ 
+     # No 'CASCADE' which works as a no-op in MySQL but is undocumented
+@@ -32,6 +32,9 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+ 
+     sql_create_index = "CREATE INDEX %(name)s ON %(table)s (%(columns)s)%(extra)s"
+ 
++    sql_alter_table_comment = "ALTER TABLE %(table)s COMMENT = %(comment)s"
++    sql_alter_column_comment = None
++
+     @property
+     def sql_delete_check(self):
+         if self.connection.mysql_is_mariadb:
+@@ -228,3 +231,11 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
+     def _rename_field_sql(self, table, old_field, new_field, new_type):
+         new_type = self._set_field_new_type_null_status(old_field, new_type)
+         return super()._rename_field_sql(table, old_field, new_field, new_type)
++
++    def _alter_column_comment_sql(self, model, new_field, new_type, new_db_comment):
++        # Comment is alter when altering the column type.
++        return "", []
++
++    def _comment_sql(self, comment):
++        comment_sql = super()._comment_sql(comment)
++        return f" COMMENT {comment_sql}"
+diff --git a/django/db/backends/oracle/features.py b/django/db/backends/oracle/features.py
+index a85cf45..df36245 100644
+--- a/django/db/backends/oracle/features.py
++++ b/django/db/backends/oracle/features.py
+@@ -25,6 +25,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     supports_partially_nullable_unique_constraints = False
+     supports_deferrable_unique_constraints = True
+     truncates_names = True
++    supports_comments = True
+     supports_tablespaces = True
+     supports_sequence_reset = False
+     can_introspect_materialized_views = True
+diff --git a/django/db/backends/oracle/introspection.py b/django/db/backends/oracle/introspection.py
+index af4e1a9..5209638 100644
+--- a/django/db/backends/oracle/introspection.py
++++ b/django/db/backends/oracle/introspection.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/db/backends/oracle/introspection.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from collections import namedtuple
+ 
+ import cx_Oracle
+@@ -5,10 +198,13 @@ import cx_Oracle
+ from django.db import models
+ from django.db.backends.base.introspection import BaseDatabaseIntrospection
+ from django.db.backends.base.introspection import FieldInfo as BaseFieldInfo
+-from django.db.backends.base.introspection import TableInfo
++from django.db.backends.base.introspection import TableInfo as BaseTableInfo
+ from django.utils.functional import cached_property
+ 
+-FieldInfo = namedtuple("FieldInfo", BaseFieldInfo._fields + ("is_autofield", "is_json"))
++FieldInfo = namedtuple(
++    "FieldInfo", BaseFieldInfo._fields + ("is_autofield", "is_json", "comment")
++)
++TableInfo = namedtuple("TableInfo", BaseTableInfo._fields + ("comment",))
+ 
+ 
+ class DatabaseIntrospection(BaseDatabaseIntrospection):
+@@ -77,8 +273,14 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+         """Return a list of table and view names in the current database."""
+         cursor.execute(
+             """
+-            SELECT table_name, 't'
++            SELECT
++                user_tables.table_name,
++                't',
++                user_tab_comments.comments
+             FROM user_tables
++            LEFT OUTER JOIN
++                user_tab_comments
++                ON user_tab_comments.table_name = user_tables.table_name
+             WHERE
+                 NOT EXISTS (
+                     SELECT 1
+@@ -86,16 +288,17 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                     WHERE user_mviews.mview_name = user_tables.table_name
+                 )
+             UNION ALL
+-            SELECT view_name, 'v' FROM user_views
++            SELECT view_name, 'v', NULL FROM user_views
+             UNION ALL
+-            SELECT mview_name, 'v' FROM user_mviews
++            SELECT mview_name, 'v', NULL FROM user_mviews
+         """
+         )
+         return [
+-            TableInfo(self.identifier_converter(row[0]), row[1])
++            TableInfo(self.identifier_converter(row[0]), row[1], row[2])
+             for row in cursor.fetchall()
+         ]
+ 
++    @inspect_code
+     def get_table_description(self, cursor, table_name):
+         """
+         Return a description of the table with the DB-API cursor.description
+@@ -131,10 +334,15 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                     )
+                     THEN 1
+                     ELSE 0
+-                END as is_json
++                END as is_json,
++                user_col_comments.comments as col_comment
+             FROM user_tab_cols
+             LEFT OUTER JOIN
+                 user_tables ON user_tables.table_name = user_tab_cols.table_name
++            LEFT OUTER JOIN
++                user_col_comments ON
++                user_col_comments.column_name = user_tab_cols.column_name AND
++                user_col_comments.table_name = user_tab_cols.table_name
+             WHERE user_tab_cols.table_name = UPPER(%s)
+             """,
+             [table_name],
+@@ -146,6 +354,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                 collation,
+                 is_autofield,
+                 is_json,
++                comment,
+             )
+             for (
+                 column,
+@@ -154,6 +363,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                 display_size,
+                 is_autofield,
+                 is_json,
++                comment,
+             ) in cursor.fetchall()
+         }
+         self.cache_bust_counter += 1
+@@ -165,7 +375,14 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+         description = []
+         for desc in cursor.description:
+             name = desc[0]
+-            display_size, default, collation, is_autofield, is_json = field_map[name]
++            (
++                display_size,
++                default,
++                collation,
++                is_autofield,
++                is_json,
++                comment,
++            ) = field_map[name]
+             name %= {}  # cx_Oracle, for some reason, doubles percent signs.
+             description.append(
+                 FieldInfo(
+@@ -180,6 +397,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                     collation,
+                     is_autofield,
+                     is_json,
++                    comment,
+                 )
+             )
+         return description
+diff --git a/django/db/backends/postgresql/features.py b/django/db/backends/postgresql/features.py
+index fd5b05a..49658cd 100644
+--- a/django/db/backends/postgresql/features.py
++++ b/django/db/backends/postgresql/features.py
+@@ -22,6 +22,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     has_select_for_update_skip_locked = True
+     has_select_for_no_key_update = True
+     can_release_savepoints = True
++    supports_comments = True
+     supports_tablespaces = True
+     supports_transactions = True
+     can_introspect_materialized_views = True
+diff --git a/django/db/backends/postgresql/introspection.py b/django/db/backends/postgresql/introspection.py
+index a08ac2d..6f9ed40 100644
+--- a/django/db/backends/postgresql/introspection.py
++++ b/django/db/backends/postgresql/introspection.py
+@@ -1,11 +1,205 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/db/backends/postgresql/introspection.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from collections import namedtuple
+ 
+ from django.db.backends.base.introspection import BaseDatabaseIntrospection
+ from django.db.backends.base.introspection import FieldInfo as BaseFieldInfo
+-from django.db.backends.base.introspection import TableInfo
++from django.db.backends.base.introspection import TableInfo as BaseTableInfo
+ from django.db.models import Index
+ 
+-FieldInfo = namedtuple("FieldInfo", BaseFieldInfo._fields + ("is_autofield",))
++FieldInfo = namedtuple("FieldInfo", BaseFieldInfo._fields + ("is_autofield", "comment"))
++TableInfo = namedtuple("TableInfo", BaseTableInfo._fields + ("comment",))
+ 
+ 
+ class DatabaseIntrospection(BaseDatabaseIntrospection):
+@@ -52,6 +246,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                 return "SmallAutoField"
+         return field_type
+ 
++    @inspect_code
+     def get_table_list(self, cursor):
+         """Return a list of table and view names in the current database."""
+         cursor.execute(
+@@ -62,7 +257,8 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                     WHEN c.relispartition THEN 'p'
+                     WHEN c.relkind IN ('m', 'v') THEN 'v'
+                     ELSE 't'
+-                END
++                END,
++                obj_description(c.oid)
+             FROM pg_catalog.pg_class c
+             LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             WHERE c.relkind IN ('f', 'm', 'p', 'r', 'v')
+@@ -76,6 +272,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+             if row[0] not in self.ignored_tables
+         ]
+ 
++    @inspect_code
+     def get_table_description(self, cursor, table_name):
+         """
+         Return a description of the table with the DB-API cursor.description
+@@ -91,7 +288,8 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
+                 NOT (a.attnotnull OR (t.typtype = 'd' AND t.typnotnull)) AS is_nullable,
+                 pg_get_expr(ad.adbin, ad.adrelid) AS column_default,
+                 CASE WHEN collname = 'default' THEN NULL ELSE collname END AS collation,
+-                a.attidentity != '' AS is_autofield
++                a.attidentity != '' AS is_autofield,
++                col_description(a.attrelid, a.attnum) AS column_comment
+             FROM pg_attribute a
+             LEFT JOIN pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum
+             LEFT JOIN pg_collation co ON a.attcollation = co.oid
+diff --git a/django/db/migrations/autodetector.py b/django/db/migrations/autodetector.py
+index eae09eb..e7ccb39 100644
+--- a/django/db/migrations/autodetector.py
++++ b/django/db/migrations/autodetector.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/db/migrations/autodetector.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import functools
+ import re
+ from collections import defaultdict
+@@ -101,6 +294,7 @@ class MigrationAutodetector:
+             fields_def.append(deconstruction)
+         return fields_def
+ 
++    @inspect_code
+     def _detect_changes(self, convert_apps=None, graph=None):
+         """
+         Return a dict of migration plans which will achieve the
+@@ -170,6 +364,7 @@ class MigrationAutodetector:
+         self.generate_created_proxies()
+         self.generate_altered_options()
+         self.generate_altered_managers()
++        self.generate_altered_db_table_comment()
+ 
+         # Create the renamed fields and store them in self.renamed_fields.
+         # They are used by create_altered_indexes(), generate_altered_fields(),
+@@ -1552,6 +1747,29 @@ class MigrationAutodetector:
+                     ),
+                 )
+ 
++    @inspect_code
++    def generate_altered_db_table_comment(self):
++        models_to_check = self.kept_model_keys.union(
++            self.kept_proxy_keys, self.kept_unmanaged_keys
++        )
++        for app_label, model_name in sorted(models_to_check):
++            old_model_name = self.renamed_models.get(
++                (app_label, model_name), model_name
++            )
++            old_model_state = self.from_state.models[app_label, old_model_name]
++            new_model_state = self.to_state.models[app_label, model_name]
++
++            old_db_table_comment = old_model_state.options.get("db_table_comment")
++            new_db_table_comment = new_model_state.options.get("db_table_comment")
++            if old_db_table_comment != new_db_table_comment:
++                self.add_operation(
++                    app_label,
++                    operations.AlterModelTableComment(
++                        name=model_name,
++                        table_comment=new_db_table_comment,
++                    ),
++                )
++
+     def generate_altered_options(self):
+         """
+         Work out if any non-schema-affecting options have changed and make an
+diff --git a/django/db/migrations/operations/__init__.py b/django/db/migrations/operations/__init__.py
+index 987c7c1..90dbdf8 100644
+--- a/django/db/migrations/operations/__init__.py
++++ b/django/db/migrations/operations/__init__.py
+@@ -6,6 +6,7 @@ from .models import (
+     AlterModelManagers,
+     AlterModelOptions,
+     AlterModelTable,
++    AlterModelTableComment,
+     AlterOrderWithRespectTo,
+     AlterUniqueTogether,
+     CreateModel,
+@@ -21,6 +22,7 @@ __all__ = [
+     "CreateModel",
+     "DeleteModel",
+     "AlterModelTable",
++    "AlterModelTableComment",
+     "AlterUniqueTogether",
+     "RenameModel",
+     "AlterIndexTogether",
+diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
+index 3a33b4a..a243aba 100644
+--- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -529,6 +529,44 @@ class AlterModelTable(ModelOptionOperation):
+         return "alter_%s_table" % self.name_lower
+ 
+ 
++class AlterModelTableComment(ModelOptionOperation):
++    def __init__(self, name, table_comment):
++        self.table_comment = table_comment
++        super().__init__(name)
++
++    def deconstruct(self):
++        kwargs = {
++            "name": self.name,
++            "table_comment": self.table_comment,
++        }
++        return (self.__class__.__qualname__, [], kwargs)
++
++    def state_forwards(self, app_label, state):
++        state.alter_model_options(
++            app_label, self.name_lower, {"db_table_comment": self.table_comment}
++        )
++
++    def database_forwards(self, app_label, schema_editor, from_state, to_state):
++        new_model = to_state.apps.get_model(app_label, self.name)
++        if self.allow_migrate_model(schema_editor.connection.alias, new_model):
++            old_model = from_state.apps.get_model(app_label, self.name)
++            schema_editor.alter_db_table_comment(
++                new_model,
++                old_model._meta.db_table_comment,
++                new_model._meta.db_table_comment,
++            )
++
++    def database_backwards(self, app_label, schema_editor, from_state, to_state):
++        return self.database_forwards(app_label, schema_editor, from_state, to_state)
++
++    def describe(self):
++        return f"Alter {self.name} table comment"
++
++    @property
++    def migration_name_fragment(self):
++        return f"alter_{self.name_lower}_table_comment"
++
++
+ class AlterTogetherOptionOperation(ModelOptionOperation):
+     option_name = None
+ 
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 668b8cc..27158a5 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/db/models/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import copy
+ import inspect
+ import warnings
+@@ -1524,6 +1717,7 @@ class Model(AltersData, metaclass=ModelBase):
+             raise ValidationError(errors)
+ 
+     @classmethod
++    @inspect_code
+     def check(cls, **kwargs):
+         errors = [
+             *cls._check_swappable(),
+@@ -1556,6 +1750,7 @@ class Model(AltersData, metaclass=ModelBase):
+                 *cls._check_ordering(),
+                 *cls._check_constraints(databases),
+                 *cls._check_default_pk(),
++                *cls._check_db_table_comment(databases),
+             ]
+ 
+         return errors
+@@ -1592,6 +1787,29 @@ class Model(AltersData, metaclass=ModelBase):
+             ]
+         return []
+ 
++    @classmethod
++    def _check_db_table_comment(cls, databases):
++        if not cls._meta.db_table_comment:
++            return []
++        errors = []
++        for db in databases:
++            if not router.allow_migrate_model(db, cls):
++                continue
++            connection = connections[db]
++            if not (
++                connection.features.supports_comments
++                or "supports_comments" in cls._meta.required_db_features
++            ):
++                errors.append(
++                    checks.Warning(
++                        f"{connection.display_name} does not support comments on "
++                        f"tables (db_table_comment).",
++                        obj=cls,
++                        id="models.W046",
++                    )
++                )
++        return errors
++
+     @classmethod
+     def _check_swappable(cls):
+         """Check if the swapped model exists."""
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+index 3737fa0..54cdc00 100644
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/db/models/fields/__init__.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import collections.abc
+ import copy
+ import datetime
+@@ -176,6 +369,7 @@ class Field(RegisterLookupMixin):
+ 
+     description = property(_description)
+ 
++    @inspect_code
+     def __init__(
+         self,
+         verbose_name=None,
+@@ -200,6 +394,7 @@ class Field(RegisterLookupMixin):
+         auto_created=False,
+         validators=(),
+         error_messages=None,
++        db_comment=None,
+     ):
+         self.name = name
+         self.verbose_name = verbose_name  # May be set by set_attributes_from_name
+@@ -221,6 +416,7 @@ class Field(RegisterLookupMixin):
+         self.help_text = help_text
+         self.db_index = db_index
+         self.db_column = db_column
++        self.db_comment = db_comment
+         self._db_tablespace = db_tablespace
+         self.auto_created = auto_created
+ 
+@@ -254,11 +450,13 @@ class Field(RegisterLookupMixin):
+             return "<%s: %s>" % (path, name)
+         return "<%s>" % path
+ 
++    @inspect_code
+     def check(self, **kwargs):
+         return [
+             *self._check_field_name(),
+             *self._check_choices(),
+             *self._check_db_index(),
++            *self._check_db_comment(**kwargs),
+             *self._check_null_allowed_for_primary_keys(),
+             *self._check_backend_specific_checks(**kwargs),
+             *self._check_validators(),
+@@ -385,6 +583,29 @@ class Field(RegisterLookupMixin):
+         else:
+             return []
+ 
++    @inspect_code
++    def _check_db_comment(self, databases=None, **kwargs):
++        if not self.db_comment or not databases:
++            return []
++        errors = []
++        for db in databases:
++            if not router.allow_migrate_model(db, self.model):
++                continue
++            connection = connections[db]
++            if not (
++                connection.features.supports_comments
++                or "supports_comments" in self.model._meta.required_db_features
++            ):
++                errors.append(
++                    checks.Warning(
++                        f"{connection.display_name} does not support comments on "
++                        f"columns (db_comment).",
++                        obj=self,
++                        id="fields.W163",
++                    )
++                )
++        return errors
++
+     def _check_null_allowed_for_primary_keys(self):
+         if (
+             self.primary_key
+@@ -487,6 +708,7 @@ class Field(RegisterLookupMixin):
+         """
+         return sql, params
+ 
++    @inspect_code
+     def deconstruct(self):
+         """
+         Return enough information to recreate the field as a 4-tuple:
+@@ -538,6 +760,7 @@ class Field(RegisterLookupMixin):
+             "choices": None,
+             "help_text": "",
+             "db_column": None,
++            "db_comment": None,
+             "db_tablespace": None,
+             "auto_created": False,
+             "validators": [],
+diff --git a/django/db/models/fields/related.py b/django/db/models/fields/related.py
+index 11074de..1161f60 100644
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/db/models/fields/related.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import functools
+ import inspect
+ from functools import partial
+@@ -1399,6 +1592,7 @@ class ManyToManyField(RelatedField):
+             ]
+         return []
+ 
++    @inspect_code
+     def _check_ignored_options(self, **kwargs):
+         warnings = []
+ 
+@@ -1428,6 +1622,14 @@ class ManyToManyField(RelatedField):
+                     id="fields.W345",
+                 )
+             )
++        if self.db_comment:
++            warnings.append(
++                checks.Warning(
++                    "db_comment has no effect on ManyToManyField.",
++                    obj=self,
++                    id="fields.W346",
++                )
++            )
+ 
+         return warnings
+ 
+diff --git a/django/db/models/options.py b/django/db/models/options.py
+index b6b8202..7570816 100644
+--- a/django/db/models/options.py
++++ b/django/db/models/options.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14463/django/db/models/options.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import bisect
+ import copy
+ import inspect
+@@ -30,6 +223,7 @@ DEFAULT_NAMES = (
+     "verbose_name",
+     "verbose_name_plural",
+     "db_table",
++    "db_table_comment",
+     "ordering",
+     "unique_together",
+     "permissions",
+@@ -100,6 +294,7 @@ class Options:
+ 
+     default_apps = apps
+ 
++    @inspect_code
+     def __init__(self, meta, app_label=None):
+         self._get_fields_cache = {}
+         self.local_fields = []
+@@ -112,6 +307,7 @@ class Options:
+         self.verbose_name = None
+         self.verbose_name_plural = None
+         self.db_table = ""
++        self.db_table_comment = ""
+         self.ordering = []
+         self._ordering_clash = False
+         self.indexes = []
+diff --git a/tests/inspectdb/models.py b/tests/inspectdb/models.py
+index c07cd4d..5db4d3b 100644
+--- a/tests/inspectdb/models.py
++++ b/tests/inspectdb/models.py
+@@ -132,3 +132,11 @@ class FuncUniqueConstraint(models.Model):
+             )
+         ]
+         required_db_features = {"supports_expression_indexes"}
++
++
++class DbComment(models.Model):
++    rank = models.IntegerField(db_comment="'Rank' column comment")
++
++    class Meta:
++        db_table_comment = "Custom table comment"
++        required_db_features = {"supports_comments"}
+diff --git a/tests/inspectdb/tests.py b/tests/inspectdb/tests.py
+index 7944e5f..2f26814 100644
+--- a/tests/inspectdb/tests.py
++++ b/tests/inspectdb/tests.py
+@@ -129,6 +129,24 @@ class InspectDBTestCase(TestCase):
+             "null_json_field = models.JSONField(blank=True, null=True)", output
+         )
+ 
++    @skipUnlessDBFeature("supports_comments")
++    def test_db_comments(self):
++        out = StringIO()
++        call_command("inspectdb", "inspectdb_dbcomment", stdout=out)
++        output = out.getvalue()
++        integer_field_type = connection.features.introspected_field_types[
++            "IntegerField"
++        ]
++        self.assertIn(
++            f"rank = models.{integer_field_type}("
++            f"db_comment=\"'Rank' column comment\")",
++            output,
++        )
++        self.assertIn(
++            "        db_table_comment = 'Custom table comment'",
++            output,
++        )
++
+     @skipUnlessDBFeature("supports_collation_on_charfield")
+     @skipUnless(test_collation, "Language collations are not supported.")
+     def test_char_field_db_collation(self):
+diff --git a/tests/introspection/models.py b/tests/introspection/models.py
+index 31c1b0d..d31eb0c 100644
+--- a/tests/introspection/models.py
++++ b/tests/introspection/models.py
+@@ -102,3 +102,11 @@ class UniqueConstraintConditionModel(models.Model):
+                 condition=models.Q(color__isnull=True),
+             ),
+         ]
++
++
++class DbCommentModel(models.Model):
++    name = models.CharField(max_length=15, db_comment="'Name' column comment")
++
++    class Meta:
++        db_table_comment = "Custom table comment"
++        required_db_features = {"supports_comments"}
+diff --git a/tests/introspection/tests.py b/tests/introspection/tests.py
+index 459a405..a283aa0 100644
+--- a/tests/introspection/tests.py
++++ b/tests/introspection/tests.py
+@@ -9,6 +9,7 @@ from .models import (
+     City,
+     Comment,
+     Country,
++    DbCommentModel,
+     District,
+     Reporter,
+     UniqueConstraintConditionModel,
+@@ -179,6 +180,26 @@ class IntrospectionTests(TransactionTestCase):
+             [connection.introspection.get_field_type(r[1], r) for r in desc],
+         )
+ 
++    @skipUnlessDBFeature("supports_comments")
++    def test_db_comments(self):
++        with connection.cursor() as cursor:
++            desc = connection.introspection.get_table_description(
++                cursor, DbCommentModel._meta.db_table
++            )
++            table_list = connection.introspection.get_table_list(cursor)
++        self.assertEqual(
++            ["'Name' column comment"],
++            [field.comment for field in desc if field.name == "name"],
++        )
++        self.assertEqual(
++            ["Custom table comment"],
++            [
++                table.comment
++                for table in table_list
++                if table.name == "introspection_dbcommentmodel"
++            ],
++        )
++
+     # Regression test for #9991 - 'real' types in postgres
+     @skipUnlessDBFeature("has_real_datatype")
+     def test_postgresql_real_type(self):
+diff --git a/tests/invalid_models_tests/test_models.py b/tests/invalid_models_tests/test_models.py
+index 5a5aecc..c07c83d 100644
+--- a/tests/invalid_models_tests/test_models.py
++++ b/tests/invalid_models_tests/test_models.py
+@@ -1872,6 +1872,37 @@ class OtherModelTests(SimpleTestCase):
+         )
+ 
+ 
++@isolate_apps("invalid_models_tests")
++class DbTableCommentTests(TestCase):
++    def test_db_table_comment(self):
++        class Model(models.Model):
++            class Meta:
++                db_table_comment = "Table comment"
++
++        errors = Model.check(databases=self.databases)
++        expected = (
++            []
++            if connection.features.supports_comments
++            else [
++                Warning(
++                    f"{connection.display_name} does not support comments on tables "
++                    f"(db_table_comment).",
++                    obj=Model,
++                    id="models.W046",
++                ),
++            ]
++        )
++        self.assertEqual(errors, expected)
++
++    def test_db_table_comment_required_db_features(self):
++        class Model(models.Model):
++            class Meta:
++                db_table_comment = "Table comment"
++                required_db_features = {"supports_comments"}
++
++        self.assertEqual(Model.check(databases=self.databases), [])
++
++
+ class MultipleAutoFieldsTests(TestCase):
+     def test_multiple_autofields(self):
+         msg = (
+diff --git a/tests/invalid_models_tests/test_ordinary_fields.py b/tests/invalid_models_tests/test_ordinary_fields.py
+index ef7f845..4e07c95 100644
+--- a/tests/invalid_models_tests/test_ordinary_fields.py
++++ b/tests/invalid_models_tests/test_ordinary_fields.py
+@@ -1023,3 +1023,35 @@ class JSONFieldTests(TestCase):
+             field = models.JSONField(default=callable_default)
+ 
+         self.assertEqual(Model._meta.get_field("field").check(), [])
++
++
++@isolate_apps("invalid_models_tests")
++class DbCommentTests(TestCase):
++    def test_db_comment(self):
++        class Model(models.Model):
++            field = models.IntegerField(db_comment="Column comment")
++
++        errors = Model._meta.get_field("field").check(databases=self.databases)
++        expected = (
++            []
++            if connection.features.supports_comments
++            else [
++                DjangoWarning(
++                    f"{connection.display_name} does not support comments on columns "
++                    f"(db_comment).",
++                    obj=Model._meta.get_field("field"),
++                    id="fields.W163",
++                ),
++            ]
++        )
++        self.assertEqual(errors, expected)
++
++    def test_db_comment_required_db_features(self):
++        class Model(models.Model):
++            field = models.IntegerField(db_comment="Column comment")
++
++            class Meta:
++                required_db_features = {"supports_comments"}
++
++        errors = Model._meta.get_field("field").check(databases=self.databases)
++        self.assertEqual(errors, [])
+diff --git a/tests/invalid_models_tests/test_relative_fields.py b/tests/invalid_models_tests/test_relative_fields.py
+index 5b4bb45..075bbae 100644
+--- a/tests/invalid_models_tests/test_relative_fields.py
++++ b/tests/invalid_models_tests/test_relative_fields.py
+@@ -94,7 +94,9 @@ class RelativeFieldTests(SimpleTestCase):
+             name = models.CharField(max_length=20)
+ 
+         class ModelM2M(models.Model):
+-            m2m = models.ManyToManyField(Model, null=True, validators=[lambda x: x])
++            m2m = models.ManyToManyField(
++                Model, null=True, validators=[lambda x: x], db_comment="Column comment"
++            )
+ 
+         field = ModelM2M._meta.get_field("m2m")
+         self.assertEqual(
+@@ -110,6 +112,11 @@ class RelativeFieldTests(SimpleTestCase):
+                     obj=field,
+                     id="fields.W341",
+                 ),
++                DjangoWarning(
++                    "db_comment has no effect on ManyToManyField.",
++                    obj=field,
++                    id="fields.W346",
++                ),
+             ],
+         )
+ 
+diff --git a/tests/migrations/test_autodetector.py b/tests/migrations/test_autodetector.py
+index d2f9be7..82ddb17 100644
+--- a/tests/migrations/test_autodetector.py
++++ b/tests/migrations/test_autodetector.py
+@@ -773,6 +773,14 @@ class AutodetectorTests(BaseAutodetectorTests):
+             "verbose_name": "Authi",
+         },
+     )
++    author_with_db_table_comment = ModelState(
++        "testapp",
++        "Author",
++        [
++            ("id", models.AutoField(primary_key=True)),
++        ],
++        {"db_table_comment": "Table comment"},
++    )
+     author_with_db_table_options = ModelState(
+         "testapp",
+         "Author",
+@@ -2349,6 +2357,58 @@ class AutodetectorTests(BaseAutodetectorTests):
+             changes, "testapp", 0, 1, name="newauthor", table="author_three"
+         )
+ 
++    def test_alter_db_table_comment_add(self):
++        changes = self.get_changes(
++            [self.author_empty], [self.author_with_db_table_comment]
++        )
++        self.assertNumberMigrations(changes, "testapp", 1)
++        self.assertOperationTypes(changes, "testapp", 0, ["AlterModelTableComment"])
++        self.assertOperationAttributes(
++            changes, "testapp", 0, 0, name="author", table_comment="Table comment"
++        )
++
++    def test_alter_db_table_comment_change(self):
++        author_with_new_db_table_comment = ModelState(
++            "testapp",
++            "Author",
++            [
++                ("id", models.AutoField(primary_key=True)),
++            ],
++            {"db_table_comment": "New table comment"},
++        )
++        changes = self.get_changes(
++            [self.author_with_db_table_comment],
++            [author_with_new_db_table_comment],
++        )
++        self.assertNumberMigrations(changes, "testapp", 1)
++        self.assertOperationTypes(changes, "testapp", 0, ["AlterModelTableComment"])
++        self.assertOperationAttributes(
++            changes,
++            "testapp",
++            0,
++            0,
++            name="author",
++            table_comment="New table comment",
++        )
++
++    def test_alter_db_table_comment_remove(self):
++        changes = self.get_changes(
++            [self.author_with_db_table_comment],
++            [self.author_empty],
++        )
++        self.assertNumberMigrations(changes, "testapp", 1)
++        self.assertOperationTypes(changes, "testapp", 0, ["AlterModelTableComment"])
++        self.assertOperationAttributes(
++            changes, "testapp", 0, 0, name="author", db_table_comment=None
++        )
++
++    def test_alter_db_table_comment_no_changes(self):
++        changes = self.get_changes(
++            [self.author_with_db_table_comment],
++            [self.author_with_db_table_comment],
++        )
++        self.assertNumberMigrations(changes, "testapp", 0)
++
+     def test_identical_regex_doesnt_alter(self):
+         from_state = ModelState(
+             "testapp",
+diff --git a/tests/migrations/test_base.py b/tests/migrations/test_base.py
+index 3f1559b..f038cd7 100644
+--- a/tests/migrations/test_base.py
++++ b/tests/migrations/test_base.py
+@@ -75,6 +75,20 @@ class MigrationTestBase(TransactionTestCase):
+     def assertColumnCollation(self, table, column, collation, using="default"):
+         self.assertEqual(self._get_column_collation(table, column, using), collation)
+ 
++    def _get_table_comment(self, table, using):
++        with connections[using].cursor() as cursor:
++            return next(
++                t.comment
++                for t in connections[using].introspection.get_table_list(cursor)
++                if t.name == table
++            )
++
++    def assertTableComment(self, table, comment, using="default"):
++        self.assertEqual(self._get_table_comment(table, using), comment)
++
++    def assertTableCommentNotExists(self, table, using="default"):
++        self.assertIn(self._get_table_comment(table, using), [None, ""])
++
+     def assertIndexExists(
+         self, table, columns, value=True, using="default", index_type=None
+     ):
+diff --git a/tests/migrations/test_operations.py b/tests/migrations/test_operations.py
+index 2bcb38f..1293606 100644
+--- a/tests/migrations/test_operations.py
++++ b/tests/migrations/test_operations.py
+@@ -1922,6 +1922,37 @@ class OperationTests(OperationTestBase):
+                 operation.database_forwards(app_label, editor, new_state, project_state)
+         self.assertColumnExists(rider_table, "pony_id")
+ 
++    @skipUnlessDBFeature("supports_comments")
++    def test_alter_model_table_comment(self):
++        app_label = "test_almotaco"
++        project_state = self.set_up_test_model(app_label)
++        pony_table = f"{app_label}_pony"
++        # Add table comment.
++        operation = migrations.AlterModelTableComment("Pony", "Custom pony comment")
++        self.assertEqual(operation.describe(), "Alter Pony table comment")
++        self.assertEqual(operation.migration_name_fragment, "alter_pony_table_comment")
++        new_state = project_state.clone()
++        operation.state_forwards(app_label, new_state)
++        self.assertEqual(
++            new_state.models[app_label, "pony"].options["db_table_comment"],
++            "Custom pony comment",
++        )
++        self.assertTableCommentNotExists(pony_table)
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++        self.assertTableComment(pony_table, "Custom pony comment")
++        # Reversal.
++        with connection.schema_editor() as editor:
++            operation.database_backwards(app_label, editor, new_state, project_state)
++        self.assertTableCommentNotExists(pony_table)
++        # Deconstruction.
++        definition = operation.deconstruct()
++        self.assertEqual(definition[0], "AlterModelTableComment")
++        self.assertEqual(definition[1], [])
++        self.assertEqual(
++            definition[2], {"name": "Pony", "table_comment": "Custom pony comment"}
++        )
++
+     def test_alter_field_pk(self):
+         """
+         The AlterField operation on primary keys (things like PostgreSQL's
+diff --git a/tests/schema/tests.py b/tests/schema/tests.py
+index 9b2b512..e325fa0 100644
+--- a/tests/schema/tests.py
++++ b/tests/schema/tests.py
+@@ -273,6 +273,27 @@ class SchemaTests(TransactionTestCase):
+                 if f.name == column
+             )
+ 
++    def get_column_comment(self, table, column):
++        with connection.cursor() as cursor:
++            return next(
++                f.comment
++                for f in connection.introspection.get_table_description(cursor, table)
++                if f.name == column
++            )
++
++    def get_table_comment(self, table):
++        with connection.cursor() as cursor:
++            return next(
++                t.comment
++                for t in connection.introspection.get_table_list(cursor)
++                if t.name == table
++            )
++
++    def assert_column_comment_not_exists(self, table, column):
++        with connection.cursor() as cursor:
++            columns = connection.introspection.get_table_description(cursor, table)
++        self.assertFalse(any([c.name == column and c.comment for c in columns]))
++
+     def assertIndexOrder(self, table, index, order):
+         constraints = self.get_constraints(table)
+         self.assertIn(index, constraints)
+@@ -4390,6 +4411,186 @@ class SchemaTests(TransactionTestCase):
+             ],
+         )
+ 
++    @skipUnlessDBFeature("supports_comments")
++    def test_add_db_comment_charfield(self):
++        comment = "Custom comment"
++        field = CharField(max_length=255, db_comment=comment)
++        field.set_attributes_from_name("name_with_comment")
++        with connection.schema_editor() as editor:
++            editor.create_model(Author)
++            editor.add_field(Author, field)
++        self.assertEqual(
++            self.get_column_comment(Author._meta.db_table, "name_with_comment"),
++            comment,
++        )
++
++    @skipUnlessDBFeature("supports_comments")
++    def test_add_db_comment_and_default_charfield(self):
++        comment = "Custom comment with default"
++        field = CharField(max_length=255, default="Joe Doe", db_comment=comment)
++        field.set_attributes_from_name("name_with_comment_default")
++        with connection.schema_editor() as editor:
++            editor.create_model(Author)
++            Author.objects.create(name="Before adding a new field")
++            editor.add_field(Author, field)
++
++        self.assertEqual(
++            self.get_column_comment(Author._meta.db_table, "name_with_comment_default"),
++            comment,
++        )
++        with connection.cursor() as cursor:
++            cursor.execute(
++                f"SELECT name_with_comment_default FROM {Author._meta.db_table};"
++            )
++            for row in cursor.fetchall():
++                self.assertEqual(row[0], "Joe Doe")
++
++    @skipUnlessDBFeature("supports_comments")
++    def test_alter_db_comment(self):
++        with connection.schema_editor() as editor:
++            editor.create_model(Author)
++        # Add comment.
++        old_field = Author._meta.get_field("name")
++        new_field = CharField(max_length=255, db_comment="Custom comment")
++        new_field.set_attributes_from_name("name")
++        with connection.schema_editor() as editor:
++            editor.alter_field(Author, old_field, new_field, strict=True)
++        self.assertEqual(
++            self.get_column_comment(Author._meta.db_table, "name"),
++            "Custom comment",
++        )
++        # Alter comment.
++        old_field = new_field
++        new_field = CharField(max_length=255, db_comment="New custom comment")
++        new_field.set_attributes_from_name("name")
++        with connection.schema_editor() as editor:
++            editor.alter_field(Author, old_field, new_field, strict=True)
++        self.assertEqual(
++            self.get_column_comment(Author._meta.db_table, "name"),
++            "New custom comment",
++        )
++        # Remove comment.
++        old_field = new_field
++        new_field = CharField(max_length=255)
++        new_field.set_attributes_from_name("name")
++        with connection.schema_editor() as editor:
++            editor.alter_field(Author, old_field, new_field, strict=True)
++        self.assertIn(
++            self.get_column_comment(Author._meta.db_table, "name"),
++            [None, ""],
++        )
++
++    @skipUnlessDBFeature("supports_comments", "supports_foreign_keys")
++    def test_alter_db_comment_foreign_key(self):
++        with connection.schema_editor() as editor:
++            editor.create_model(Author)
++            editor.create_model(Book)
++
++        comment = "FK custom comment"
++        old_field = Book._meta.get_field("author")
++        new_field = ForeignKey(Author, CASCADE, db_comment=comment)
++        new_field.set_attributes_from_name("author")
++        with connection.schema_editor() as editor:
++            editor.alter_field(Book, old_field, new_field, strict=True)
++        self.assertEqual(
++            self.get_column_comment(Book._meta.db_table, "author_id"),
++            comment,
++        )
++
++    @skipUnlessDBFeature("supports_comments")
++    def test_alter_field_type_preserve_comment(self):
++        with connection.schema_editor() as editor:
++            editor.create_model(Author)
++
++        comment = "This is the name."
++        old_field = Author._meta.get_field("name")
++        new_field = CharField(max_length=255, db_comment=comment)
++        new_field.set_attributes_from_name("name")
++        new_field.model = Author
++        with connection.schema_editor() as editor:
++            editor.alter_field(Author, old_field, new_field, strict=True)
++        self.assertEqual(
++            self.get_column_comment(Author._meta.db_table, "name"),
++            comment,
++        )
++        # Changing a field type should preserve the comment.
++        old_field = new_field
++        new_field = CharField(max_length=511, db_comment=comment)
++        new_field.set_attributes_from_name("name")
++        new_field.model = Author
++        with connection.schema_editor() as editor:
++            editor.alter_field(Author, new_field, old_field, strict=True)
++        # Comment is preserved.
++        self.assertEqual(
++            self.get_column_comment(Author._meta.db_table, "name"),
++            comment,
++        )
++
++    @isolate_apps("schema")
++    @skipUnlessDBFeature("supports_comments")
++    def test_db_comment_table(self):
++        class ModelWithDbTableComment(Model):
++            class Meta:
++                app_label = "schema"
++                db_table_comment = "Custom table comment"
++
++        with connection.schema_editor() as editor:
++            editor.create_model(ModelWithDbTableComment)
++        self.isolated_local_models = [ModelWithDbTableComment]
++        self.assertEqual(
++            self.get_table_comment(ModelWithDbTableComment._meta.db_table),
++            "Custom table comment",
++        )
++        # Alter table comment.
++        old_db_table_comment = ModelWithDbTableComment._meta.db_table_comment
++        with connection.schema_editor() as editor:
++            editor.alter_db_table_comment(
++                ModelWithDbTableComment, old_db_table_comment, "New table comment"
++            )
++        self.assertEqual(
++            self.get_table_comment(ModelWithDbTableComment._meta.db_table),
++            "New table comment",
++        )
++        # Remove table comment.
++        old_db_table_comment = ModelWithDbTableComment._meta.db_table_comment
++        with connection.schema_editor() as editor:
++            editor.alter_db_table_comment(
++                ModelWithDbTableComment, old_db_table_comment, None
++            )
++        self.assertIn(
++            self.get_table_comment(ModelWithDbTableComment._meta.db_table),
++            [None, ""],
++        )
++
++    @isolate_apps("schema")
++    @skipUnlessDBFeature("supports_comments", "supports_foreign_keys")
++    def test_db_comments_from_abstract_model(self):
++        class AbstractModelWithDbComments(Model):
++            name = CharField(
++                max_length=255, db_comment="Custom comment", null=True, blank=True
++            )
++
++            class Meta:
++                app_label = "schema"
++                abstract = True
++                db_table_comment = "Custom table comment"
++
++        class ModelWithDbComments(AbstractModelWithDbComments):
++            pass
++
++        with connection.schema_editor() as editor:
++            editor.create_model(ModelWithDbComments)
++        self.isolated_local_models = [ModelWithDbComments]
++
++        self.assertEqual(
++            self.get_column_comment(ModelWithDbComments._meta.db_table, "name"),
++            "Custom comment",
++        )
++        self.assertEqual(
++            self.get_table_comment(ModelWithDbComments._meta.db_table),
++            "Custom table comment",
++        )
++
+     @unittest.skipUnless(connection.vendor == "postgresql", "PostgreSQL specific")
+     def test_alter_field_add_index_to_charfield(self):
+         # Create the table and verify no initial indexes.

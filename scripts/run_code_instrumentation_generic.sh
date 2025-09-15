@@ -1,0 +1,5 @@
+python input_output_extraction/instrument_code.py --codeDir ../dataset/original_datasets/HumanEval/code --testDir ../dataset/original_datasets/HumanEval/tests --entryDir ../dataset/original_datasets/HumanEval/entry --instDir ../dataset/instrumented_code/HumanEval --resultDir ../dataset/re2-bench/input-output/HumanEval
+python input_output_extraction/instrument_code.py --codeDir ../dataset/original_datasets/cruxeval/code --testDir ../dataset/original_datasets/cruxeval/tests  --instDir ../dataset/instrumented_code/cruxeval --resultDir ../dataset/re2-bench/input-output/cruxeval
+python input_output_extraction/instrument_code.py --codeDir ../dataset/original_datasets/ClassEval/code --testDir ../dataset/original_datasets/ClassEval/tests --instDir ../dataset/instrumented_code/ClassEval --resultDir ../dataset/re2-bench/input-output/ClassEval
+python input_output_extraction/deduplicate_json.py ../dataset/re2-bench/input-output/ClassEval
+python input_output_extraction/process_avatar.py

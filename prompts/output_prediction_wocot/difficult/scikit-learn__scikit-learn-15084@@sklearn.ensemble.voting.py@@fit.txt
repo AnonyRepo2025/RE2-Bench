@@ -1,0 +1,214 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+from abc import abstractmethod
+import numpy as np
+from joblib import Parallel, delayed
+from ..base import ClassifierMixin
+from ..base import RegressorMixin
+from ..base import TransformerMixin
+from ..base import clone
+from .base import _parallel_fit_estimator
+from .base import _BaseHeterogeneousEnsemble
+from ..preprocessing import LabelEncoder
+from ..utils import Bunch
+from ..utils.validation import check_is_fitted
+from ..utils.multiclass import check_classification_targets
+from ..utils.validation import column_or_1d
+
+class _BaseVoting(TransformerMixin, _BaseHeterogeneousEnsemble):
+
+    @property
+    def _weights_not_none(self):
+        if self.weights is None:
+            return None
+        return [w for est, w in zip(self.estimators, self.weights) if est[1] not in (None, 'drop')]
+
+    def _predict(self, X):
+        return np.asarray([est.predict(X) for est in self.estimators_]).T
+
+    @abstractmethod
+    def fit(self, X, y, sample_weight=None):
+        names, clfs = self._validate_estimators()
+        if self.weights is not None and len(self.weights) != len(self.estimators):
+            raise ValueError('Number of `estimators` and weights must be equal; got %d weights, %d estimators' % (len(self.weights), len(self.estimators)))
+        self.estimators_ = Parallel(n_jobs=self.n_jobs)((delayed(_parallel_fit_estimator)(clone(clf), X, y, sample_weight=sample_weight) for clf in clfs if clf not in (None, 'drop')))
+        self.named_estimators_ = Bunch()
+        for k, e in zip(self.estimators, self.estimators_):
+            self.named_estimators_[k[0]] = e
+        return self
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.column_or_1d
+
+def column_or_1d(y, warn=False):
+    shape = np.shape(y)
+    if len(shape) == 1:
+        return np.ravel(y)
+    if len(shape) == 2 and shape[1] == 1:
+        if warn:
+            warnings.warn('A column-vector y was passed when a 1d array was expected. Please change the shape of y to (n_samples, ), for example using ravel().', DataConversionWarning, stacklevel=2)
+        return np.ravel(y)
+    raise ValueError('bad input shape {0}'.format(shape))
+
+.sklearn.utils.estimator_checks._NotAnArray.__array__
+
+def __array__(self, dtype=None):
+    return self.data
+
+
+[/PYTHON]
+What will be the output of `fit`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "estimators": null,
+        "weights": null,
+        "n_jobs": null
+    },
+    "args": {
+        "X": {
+            "_shape": [
+                40,
+                10
+            ],
+            "maxprint": 50,
+            "indices": "[7 8 3 7 9 0 7 8 2 6 8 0 2 9 8 3 9 1 4 6 8 2 0 3 4 7 9 1 5 6 3 4 5 7 4 3 9\n 0 9 1 5 8 0 1 4 8 3 0 1 3 5 6 9 1 6 2 7 8 9 0 8 9 9 1 4 8 7 0 2 4 5 6 3 5]",
+            "indptr": "[ 0  2  5  7  8  8  9 11 13 14 15 17 21 22 22 27 30 33 34 35 36 37 39 42\n 42 43 46 47 53 55 59 60 61 61 61 62 63 66 67 72 74]",
+            "data": "[[[0.891773  ]]\n\n [[0.96366276]]\n\n [[0.92559664]]\n\n [[0.83261985]]\n\n [[0.87001215]]\n\n [[0.97861834]]\n\n [[0.94466892]]\n\n [[0.94374808]]\n\n [[0.98837384]]\n\n [[0.82099323]]\n\n [[0.83794491]]\n\n [[0.97645947]]\n\n [[0.97676109]]\n\n [[0.9292962 ]]\n\n [[0.82894003]]\n\n [[0.96218855]]\n\n [[0.95274901]]\n\n [[0.84640867]]\n\n [[0.81379782]]\n\n [[0.8811032 ]]\n\n [[0.88173536]]\n\n [[0.95608363]]\n\n [[0.8965466 ]]\n\n [[0.89192336]]\n\n [[0.80619399]]\n\n [[0.91948261]]\n\n [[0.99884701]]\n\n [[0.86812606]]\n\n [[0.84800823]]\n\n [[0.80731896]]\n\n [[0.86638233]]\n\n [[0.97552151]]\n\n [[0.85580334]]\n\n [[0.92808129]]\n\n [[0.934214  ]]\n\n [[0.94437239]]\n\n [[0.89667129]]\n\n [[0.99033895]]\n\n [[0.83104846]]\n\n [[0.87265066]]\n\n [[0.95279166]]\n\n [[0.94737059]]\n\n [[0.86385561]]\n\n [[0.94043195]]\n\n [[0.90371974]]\n\n [[0.96193638]]\n\n [[0.92952932]]\n\n [[0.97749514]]\n\n [[0.87650525]]\n\n [[0.96157015]]\n\n [[0.94931882]]\n\n [[0.9413777 ]]\n\n [[0.87428797]]\n\n [[0.84894356]]\n\n [[0.98182939]]\n\n [[0.82211773]]\n\n [[0.86219152]]\n\n [[0.97291949]]\n\n [[0.96083466]]\n\n [[0.9065555 ]]\n\n [[0.86055117]]\n\n [[0.95943334]]\n\n [[0.95640572]]\n\n [[0.90398395]]\n\n [[0.88204141]]\n\n [[0.90404439]]\n\n [[0.9591666 ]]\n\n [[0.85772264]]\n\n [[0.95187448]]\n\n [[0.82076712]]\n\n [[0.90884372]]\n\n [[0.81552382]]\n\n [[0.84903831]]\n\n [[0.95898272]]]"
+        },
+        "y": "[1 3 0 3 3 1 1 0 2 0 0 1 0 1 0 1 0 0 0 2 3 3 1 0 2 1 3 0 3 1 0 2 0 2 2 1 2\n 1 2 1]",
+        "sample_weight": null
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "estimators": XXX,
+    "weights": XXX,
+    "n_jobs": XXX,
+    "estimators_": XXX,
+    "named_estimators_": {}
+}
+```
+[/STRUCTURE]

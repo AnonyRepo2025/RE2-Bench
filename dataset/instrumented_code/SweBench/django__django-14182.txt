@@ -1,0 +1,405 @@
+diff --git a/django/db/backends/sqlite3/features.py b/django/db/backends/sqlite3/features.py
+index 3348256..2ba1508 100644
+--- a/django/db/backends/sqlite3/features.py
++++ b/django/db/backends/sqlite3/features.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14182/django/db/backends/sqlite3/features.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import operator
+ import platform
+ 
+@@ -50,6 +243,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+         'non_default': 'nocase',
+     }
+ 
++    @inspect_code
+     @cached_property
+     def django_test_skips(self):
+         skips = {
+@@ -65,6 +259,12 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+             "SQLite doesn't have a constraint.": {
+                 'model_fields.test_integerfield.PositiveIntegerFieldTests.test_negative_values',
+             },
++            "SQLite doesn't support negative precision for ROUND().": {
++                'db_functions.math.test_round.RoundTests.test_null_with_negative_precision',
++                'db_functions.math.test_round.RoundTests.test_decimal_with_negative_precision',
++                'db_functions.math.test_round.RoundTests.test_float_with_negative_precision',
++                'db_functions.math.test_round.RoundTests.test_integer_with_negative_precision',
++            },
+         }
+         if Database.sqlite_version_info < (3, 27):
+             skips.update({
+diff --git a/django/db/models/functions/math.py b/django/db/models/functions/math.py
+index 15915f4..f939885 100644
+--- a/django/db/models/functions/math.py
++++ b/django/db/models/functions/math.py
+@@ -1,6 +1,6 @@
+ import math
+ 
+-from django.db.models.expressions import Func
++from django.db.models.expressions import Func, Value
+ from django.db.models.fields import FloatField, IntegerField
+ from django.db.models.functions import Cast
+ from django.db.models.functions.mixins import (
+@@ -158,9 +158,23 @@ class Random(NumericOutputFieldMixin, Func):
+         return []
+ 
+ 
+-class Round(Transform):
++class Round(FixDecimalInputMixin, Transform):
+     function = 'ROUND'
+     lookup_name = 'round'
++    arity = None  # Override Transform's arity=1 to enable passing precision.
++
++    def __init__(self, expression, precision=0, **extra):
++        super().__init__(expression, precision, **extra)
++
++    def as_sqlite(self, compiler, connection, **extra_context):
++        precision = self.get_source_expressions()[1]
++        if isinstance(precision, Value) and precision.value < 0:
++            raise ValueError('SQLite does not support negative precision.')
++        return super().as_sqlite(compiler, connection, **extra_context)
++
++    def _resolve_output_field(self):
++        source = self.get_source_expressions()[0]
++        return source.output_field
+ 
+ 
+ class Sign(Transform):
+diff --git a/tests/db_functions/math/test_round.py b/tests/db_functions/math/test_round.py
+index 50345d4..320d37f 100644
+--- a/tests/db_functions/math/test_round.py
++++ b/tests/db_functions/math/test_round.py
+@@ -1,7 +1,9 @@
++import unittest
+ from decimal import Decimal
+ 
++from django.db import connection
+ from django.db.models import DecimalField
+-from django.db.models.functions import Round
++from django.db.models.functions import Pi, Round
+ from django.test import TestCase
+ from django.test.utils import register_lookup
+ 
+@@ -15,6 +17,16 @@ class RoundTests(TestCase):
+         obj = IntegerModel.objects.annotate(null_round=Round('normal')).first()
+         self.assertIsNone(obj.null_round)
+ 
++    def test_null_with_precision(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_round=Round('normal', 5)).first()
++        self.assertIsNone(obj.null_round)
++
++    def test_null_with_negative_precision(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_round=Round('normal', -1)).first()
++        self.assertIsNone(obj.null_round)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_round=Round('n1'), n2_round=Round('n2')).first()
+@@ -23,6 +35,23 @@ class RoundTests(TestCase):
+         self.assertAlmostEqual(obj.n1_round, obj.n1, places=0)
+         self.assertAlmostEqual(obj.n2_round, obj.n2, places=0)
+ 
++    def test_decimal_with_precision(self):
++        DecimalModel.objects.create(n1=Decimal('-5.75'), n2=Pi())
++        obj = DecimalModel.objects.annotate(
++            n1_round=Round('n1', 1),
++            n2_round=Round('n2', 5),
++        ).first()
++        self.assertIsInstance(obj.n1_round, Decimal)
++        self.assertIsInstance(obj.n2_round, Decimal)
++        self.assertAlmostEqual(obj.n1_round, obj.n1, places=1)
++        self.assertAlmostEqual(obj.n2_round, obj.n2, places=5)
++
++    def test_decimal_with_negative_precision(self):
++        DecimalModel.objects.create(n1=Decimal('365.25'))
++        obj = DecimalModel.objects.annotate(n1_round=Round('n1', -1)).first()
++        self.assertIsInstance(obj.n1_round, Decimal)
++        self.assertEqual(obj.n1_round, 370)
++
+     def test_float(self):
+         FloatModel.objects.create(f1=-27.55, f2=0.55)
+         obj = FloatModel.objects.annotate(f1_round=Round('f1'), f2_round=Round('f2')).first()
+@@ -31,6 +60,23 @@ class RoundTests(TestCase):
+         self.assertAlmostEqual(obj.f1_round, obj.f1, places=0)
+         self.assertAlmostEqual(obj.f2_round, obj.f2, places=0)
+ 
++    def test_float_with_precision(self):
++        FloatModel.objects.create(f1=-5.75, f2=Pi())
++        obj = FloatModel.objects.annotate(
++            f1_round=Round('f1', 1),
++            f2_round=Round('f2', 5),
++        ).first()
++        self.assertIsInstance(obj.f1_round, float)
++        self.assertIsInstance(obj.f2_round, float)
++        self.assertAlmostEqual(obj.f1_round, obj.f1, places=1)
++        self.assertAlmostEqual(obj.f2_round, obj.f2, places=5)
++
++    def test_float_with_negative_precision(self):
++        FloatModel.objects.create(f1=365.25)
++        obj = FloatModel.objects.annotate(f1_round=Round('f1', -1)).first()
++        self.assertIsInstance(obj.f1_round, float)
++        self.assertEqual(obj.f1_round, 370)
++
+     def test_integer(self):
+         IntegerModel.objects.create(small=-20, normal=15, big=-1)
+         obj = IntegerModel.objects.annotate(
+@@ -45,9 +91,39 @@ class RoundTests(TestCase):
+         self.assertAlmostEqual(obj.normal_round, obj.normal, places=0)
+         self.assertAlmostEqual(obj.big_round, obj.big, places=0)
+ 
++    def test_integer_with_precision(self):
++        IntegerModel.objects.create(small=-5, normal=3, big=-100)
++        obj = IntegerModel.objects.annotate(
++            small_round=Round('small', 1),
++            normal_round=Round('normal', 5),
++            big_round=Round('big', 2),
++        ).first()
++        self.assertIsInstance(obj.small_round, int)
++        self.assertIsInstance(obj.normal_round, int)
++        self.assertIsInstance(obj.big_round, int)
++        self.assertAlmostEqual(obj.small_round, obj.small, places=1)
++        self.assertAlmostEqual(obj.normal_round, obj.normal, places=5)
++        self.assertAlmostEqual(obj.big_round, obj.big, places=2)
++
++    def test_integer_with_negative_precision(self):
++        IntegerModel.objects.create(normal=365)
++        obj = IntegerModel.objects.annotate(normal_round=Round('normal', -1)).first()
++        self.assertIsInstance(obj.normal_round, int)
++        self.assertEqual(obj.normal_round, 370)
++
+     def test_transform(self):
+         with register_lookup(DecimalField, Round):
+             DecimalModel.objects.create(n1=Decimal('2.0'), n2=Decimal('0'))
+             DecimalModel.objects.create(n1=Decimal('-1.0'), n2=Decimal('0'))
+             obj = DecimalModel.objects.filter(n1__round__gt=0).get()
+             self.assertEqual(obj.n1, Decimal('2.0'))
++
++    @unittest.skipUnless(
++        connection.vendor == 'sqlite',
++        "SQLite doesn't support negative precision.",
++    )
++    def test_unsupported_negative_precision(self):
++        FloatModel.objects.create(f1=123.45)
++        msg = 'SQLite does not support negative precision.'
++        with self.assertRaisesMessage(ValueError, msg):
++            FloatModel.objects.annotate(value=Round('f1', -1)).first()
+diff --git a/tests/db_functions/migrations/0002_create_test_models.py b/tests/db_functions/migrations/0002_create_test_models.py
+index aa3e247..3699d67 100644
+--- a/tests/db_functions/migrations/0002_create_test_models.py
++++ b/tests/db_functions/migrations/0002_create_test_models.py
+@@ -56,7 +56,7 @@ class Migration(migrations.Migration):
+             name='DecimalModel',
+             fields=[
+                 ('n1', models.DecimalField(decimal_places=2, max_digits=6)),
+-                ('n2', models.DecimalField(decimal_places=2, max_digits=6)),
++                ('n2', models.DecimalField(decimal_places=7, max_digits=9, null=True, blank=True)),
+             ],
+         ),
+         migrations.CreateModel(
+diff --git a/tests/db_functions/models.py b/tests/db_functions/models.py
+index 9758432..5c3379b 100644
+--- a/tests/db_functions/models.py
++++ b/tests/db_functions/models.py
+@@ -42,7 +42,7 @@ class DTModel(models.Model):
+ 
+ class DecimalModel(models.Model):
+     n1 = models.DecimalField(decimal_places=2, max_digits=6)
+-    n2 = models.DecimalField(decimal_places=2, max_digits=6)
++    n2 = models.DecimalField(decimal_places=7, max_digits=9, null=True, blank=True)
+ 
+ 
+ class IntegerModel(models.Model):

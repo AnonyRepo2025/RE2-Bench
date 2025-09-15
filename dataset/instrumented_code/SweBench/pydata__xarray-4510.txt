@@ -1,0 +1,946 @@
+diff --git a/xarray/core/common.py b/xarray/core/common.py
+index eda31a1..7078a4c 100644
+--- a/xarray/core/common.py
++++ b/xarray/core/common.py
+@@ -811,10 +811,6 @@ class DataWithCoords(SupportsArithmetic, AttrAccessMixin):
+             setting min_periods equal to the size of the window.
+         center : bool or mapping, default: False
+             Set the labels at the center of the window.
+-        keep_attrs : bool, optional
+-            If True, the object's attributes (`attrs`) will be copied from
+-            the original object to the new one.  If False (default), the new
+-            object will be returned without attributes.
+         **window_kwargs : optional
+             The keyword arguments form of ``dim``.
+             One of dim or window_kwargs must be provided.
+@@ -863,8 +859,6 @@ class DataWithCoords(SupportsArithmetic, AttrAccessMixin):
+         core.rolling.DataArrayRolling
+         core.rolling.DatasetRolling
+         """
+-        if keep_attrs is None:
+-            keep_attrs = _get_keep_attrs(default=False)
+ 
+         dim = either_dict_or_kwargs(dim, window_kwargs, "rolling")
+         return self._rolling_cls(
+diff --git a/xarray/core/rolling.py b/xarray/core/rolling.py
+index 0bffc21..41a65cb 100644
+--- a/xarray/core/rolling.py
++++ b/xarray/core/rolling.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-4510/xarray/core/rolling.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import functools
+ import warnings
+ from typing import Any, Callable, Dict
+@@ -22,6 +215,10 @@ Reduce this object's data windows by applying `{name}` along its dimension.
+ 
+ Parameters
+ ----------
++keep_attrs : bool, default: None
++    If True, the attributes (``attrs``) will be copied from the original
++    object to the new one. If False, the new object will be returned
++    without attributes. If None uses the global default.
+ **kwargs : dict
+     Additional keyword arguments passed on to `{name}`.
+ 
+@@ -46,6 +243,7 @@ class Rolling:
+     __slots__ = ("obj", "window", "min_periods", "center", "dim", "keep_attrs")
+     _attributes = ("window", "min_periods", "center", "dim", "keep_attrs")
+ 
++    @inspect_code
+     def __init__(self, obj, windows, min_periods=None, center=False, keep_attrs=None):
+         """
+         Moving window object.
+@@ -56,17 +254,13 @@ class Rolling:
+             Object to window.
+         windows : mapping of hashable to int
+             A mapping from the name of the dimension to create the rolling
+-            exponential window along (e.g. `time`) to the size of the moving window.
++            window along (e.g. `time`) to the size of the moving window.
+         min_periods : int, default: None
+             Minimum number of observations in window required to have a value
+             (otherwise result is NA). The default, None, is equivalent to
+             setting min_periods equal to the size of the window.
+         center : bool, default: False
+             Set the labels at the center of the window.
+-        keep_attrs : bool, optional
+-            If True, the object's attributes (`attrs`) will be copied from
+-            the original object to the new one.  If False (default), the new
+-            object will be returned without attributes.
+ 
+         Returns
+         -------
+@@ -88,8 +282,13 @@ class Rolling:
+ 
+         self.min_periods = np.prod(self.window) if min_periods is None else min_periods
+ 
+-        if keep_attrs is None:
+-            keep_attrs = _get_keep_attrs(default=False)
++        if keep_attrs is not None:
++            warnings.warn(
++                "Passing ``keep_attrs`` to ``rolling`` is deprecated and will raise an"
++                " error in xarray 0.18. Please pass ``keep_attrs`` directly to the"
++                " applied function. Note that keep_attrs is now True per default.",
++                FutureWarning,
++            )
+         self.keep_attrs = keep_attrs
+ 
+     def __repr__(self):
+@@ -106,13 +305,18 @@ class Rolling:
+     def __len__(self):
+         return self.obj.sizes[self.dim]
+ 
++    @inspect_code
+     def _reduce_method(name: str) -> Callable:  # type: ignore
+         array_agg_func = getattr(duck_array_ops, name)
+         bottleneck_move_func = getattr(bottleneck, "move_" + name, None)
+ 
+-        def method(self, **kwargs):
++        @inspect_code
++        def method(self, keep_attrs=None, **kwargs):
++
++            keep_attrs = self._get_keep_attrs(keep_attrs)
++
+             return self._numpy_or_bottleneck_reduce(
+-                array_agg_func, bottleneck_move_func, **kwargs
++                array_agg_func, bottleneck_move_func, keep_attrs=keep_attrs, **kwargs
+             )
+ 
+         method.__name__ = name
+@@ -130,8 +334,10 @@ class Rolling:
+     var = _reduce_method("var")
+     median = _reduce_method("median")
+ 
+-    def count(self):
+-        rolling_count = self._counts()
++    @inspect_code
++    def count(self, keep_attrs=None):
++        keep_attrs = self._get_keep_attrs(keep_attrs)
++        rolling_count = self._counts(keep_attrs=keep_attrs)
+         enough_periods = rolling_count >= self.min_periods
+         return rolling_count.where(enough_periods)
+ 
+@@ -157,6 +363,20 @@ class Rolling:
+                 "Mapping argument is necessary for {}d-rolling.".format(len(self.dim))
+             )
+ 
++    @inspect_code
++    def _get_keep_attrs(self, keep_attrs):
++
++        if keep_attrs is None:
++            # TODO: uncomment the next line and remove the others after the deprecation
++            # keep_attrs = _get_keep_attrs(default=True)
++
++            if self.keep_attrs is None:
++                keep_attrs = _get_keep_attrs(default=True)
++            else:
++                keep_attrs = self.keep_attrs
++
++        return keep_attrs
++
+ 
+ class DataArrayRolling(Rolling):
+     __slots__ = ("window_labels",)
+@@ -180,10 +400,6 @@ class DataArrayRolling(Rolling):
+             setting min_periods equal to the size of the window.
+         center : bool, default: False
+             Set the labels at the center of the window.
+-        keep_attrs : bool, optional
+-            If True, the object's attributes (`attrs`) will be copied from
+-            the original object to the new one.  If False (default), the new
+-            object will be returned without attributes.
+ 
+         Returns
+         -------
+@@ -196,8 +412,6 @@ class DataArrayRolling(Rolling):
+         Dataset.rolling
+         Dataset.groupby
+         """
+-        if keep_attrs is None:
+-            keep_attrs = _get_keep_attrs(default=False)
+         super().__init__(
+             obj, windows, min_periods=min_periods, center=center, keep_attrs=keep_attrs
+         )
+@@ -219,8 +433,14 @@ class DataArrayRolling(Rolling):
+ 
+             yield (label, window)
+ 
++    @inspect_code
+     def construct(
+-        self, window_dim=None, stride=1, fill_value=dtypes.NA, **window_dim_kwargs
++        self,
++        window_dim=None,
++        stride=1,
++        fill_value=dtypes.NA,
++        keep_attrs=None,
++        **window_dim_kwargs,
+     ):
+         """
+         Convert this rolling object to xr.DataArray,
+@@ -230,11 +450,14 @@ class DataArrayRolling(Rolling):
+         ----------
+         window_dim : str or mapping, optional
+             A mapping from dimension name to the new window dimension names.
+-            Just a string can be used for 1d-rolling.
+-        stride : int or mapping of int, optional
++        stride : int or mapping of int, default: 1
+             Size of stride for the rolling window.
+         fill_value : default: dtypes.NA
+             Filling value to match the dimension size.
++        keep_attrs : bool, default: None
++            If True, the attributes (``attrs``) will be copied from the original
++            object to the new one. If False, the new object will be returned
++            without attributes. If None uses the global default.
+         **window_dim_kwargs : {dim: new_name, ...}, optional
+             The keyword arguments form of ``window_dim``.
+ 
+@@ -279,6 +502,8 @@ class DataArrayRolling(Rolling):
+ 
+         from .dataarray import DataArray
+ 
++        keep_attrs = self._get_keep_attrs(keep_attrs)
++
+         if window_dim is None:
+             if len(window_dim_kwargs) == 0:
+                 raise ValueError(
+@@ -294,14 +519,21 @@ class DataArrayRolling(Rolling):
+         window = self.obj.variable.rolling_window(
+             self.dim, self.window, window_dim, self.center, fill_value=fill_value
+         )
++
++        attrs = self.obj.attrs if keep_attrs else {}
++
+         result = DataArray(
+-            window, dims=self.obj.dims + tuple(window_dim), coords=self.obj.coords
++            window,
++            dims=self.obj.dims + tuple(window_dim),
++            coords=self.obj.coords,
++            attrs=attrs,
++            name=self.obj.name,
+         )
+         return result.isel(
+             **{d: slice(None, None, s) for d, s in zip(self.dim, stride)}
+         )
+ 
+-    def reduce(self, func, **kwargs):
++    def reduce(self, func, keep_attrs=None, **kwargs):
+         """Reduce the items in this group by applying `func` along some
+         dimension(s).
+ 
+@@ -311,6 +543,10 @@ class DataArrayRolling(Rolling):
+             Function which can be called in the form
+             `func(x, **kwargs)` to return the result of collapsing an
+             np.ndarray over an the rolling dimension.
++        keep_attrs : bool, default: None
++            If True, the attributes (``attrs``) will be copied from the original
++            object to the new one. If False, the new object will be returned
++            without attributes. If None uses the global default.
+         **kwargs : dict
+             Additional keyword arguments passed on to `func`.
+ 
+@@ -349,19 +585,24 @@ class DataArrayRolling(Rolling):
+                [ 4.,  9., 15., 18.]])
+         Dimensions without coordinates: a, b
+         """
++
++        keep_attrs = self._get_keep_attrs(keep_attrs)
++
+         rolling_dim = {
+             d: utils.get_temp_dimname(self.obj.dims, f"_rolling_dim_{d}")
+             for d in self.dim
+         }
+-        windows = self.construct(rolling_dim)
+-        result = windows.reduce(func, dim=list(rolling_dim.values()), **kwargs)
++        windows = self.construct(rolling_dim, keep_attrs=keep_attrs)
++        result = windows.reduce(
++            func, dim=list(rolling_dim.values()), keep_attrs=keep_attrs, **kwargs
++        )
+ 
+         # Find valid windows based on count.
+-        counts = self._counts()
++        counts = self._counts(keep_attrs=False)
+         return result.where(counts >= self.min_periods)
+ 
+-    def _counts(self):
+-        """ Number of non-nan entries in each rolling window. """
++    def _counts(self, keep_attrs):
++        """Number of non-nan entries in each rolling window."""
+ 
+         rolling_dim = {
+             d: utils.get_temp_dimname(self.obj.dims, f"_rolling_dim_{d}")
+@@ -372,17 +613,18 @@ class DataArrayRolling(Rolling):
+         # The use of skipna==False is also faster since it does not need to
+         # copy the strided array.
+         counts = (
+-            self.obj.notnull()
++            self.obj.notnull(keep_attrs=keep_attrs)
+             .rolling(
+                 center={d: self.center[i] for i, d in enumerate(self.dim)},
+                 **{d: w for d, w in zip(self.dim, self.window)},
+             )
+-            .construct(rolling_dim, fill_value=False)
+-            .sum(dim=list(rolling_dim.values()), skipna=False)
++            .construct(rolling_dim, fill_value=False, keep_attrs=keep_attrs)
++            .sum(dim=list(rolling_dim.values()), skipna=False, keep_attrs=keep_attrs)
+         )
+         return counts
+ 
+-    def _bottleneck_reduce(self, func, **kwargs):
++    @inspect_code
++    def _bottleneck_reduce(self, func, keep_attrs, **kwargs):
+         from .dataarray import DataArray
+ 
+         # bottleneck doesn't allow min_count to be 0, although it should
+@@ -398,8 +640,8 @@ class DataArrayRolling(Rolling):
+         padded = self.obj.variable
+         if self.center[0]:
+             if is_duck_dask_array(padded.data):
+-                # Workaround to make the padded chunk size is larger than
+-                # self.window-1
++                # workaround to make the padded chunk size larger than
++                # self.window - 1
+                 shift = -(self.window[0] + 1) // 2
+                 offset = (self.window[0] - 1) // 2
+                 valid = (slice(None),) * axis + (
+@@ -422,16 +664,19 @@ class DataArrayRolling(Rolling):
+ 
+         if self.center[0]:
+             values = values[valid]
+-        result = DataArray(values, self.obj.coords)
+ 
+-        return result
++        attrs = self.obj.attrs if keep_attrs else {}
++
++        return DataArray(values, self.obj.coords, attrs=attrs, name=self.obj.name)
+ 
+     def _numpy_or_bottleneck_reduce(
+-        self, array_agg_func, bottleneck_move_func, **kwargs
++        self, array_agg_func, bottleneck_move_func, keep_attrs, **kwargs
+     ):
+         if "dim" in kwargs:
+             warnings.warn(
+-                f"Reductions will be applied along the rolling dimension '{self.dim}'. Passing the 'dim' kwarg to reduction operations has no effect and will raise an error in xarray 0.16.0.",
++                f"Reductions are applied along the rolling dimension(s) "
++                f"'{self.dim}'. Passing the 'dim' kwarg to reduction "
++                f"operations has no effect.",
+                 DeprecationWarning,
+                 stacklevel=3,
+             )
+@@ -445,14 +690,17 @@ class DataArrayRolling(Rolling):
+             # TODO: renable bottleneck with dask after the issues
+             # underlying https://github.com/pydata/xarray/issues/2940 are
+             # fixed.
+-            return self._bottleneck_reduce(bottleneck_move_func, **kwargs)
++            return self._bottleneck_reduce(
++                bottleneck_move_func, keep_attrs=keep_attrs, **kwargs
++            )
+         else:
+-            return self.reduce(array_agg_func, **kwargs)
++            return self.reduce(array_agg_func, keep_attrs=keep_attrs, **kwargs)
+ 
+ 
+ class DatasetRolling(Rolling):
+     __slots__ = ("rollings",)
+ 
++    @inspect_code
+     def __init__(self, obj, windows, min_periods=None, center=False, keep_attrs=None):
+         """
+         Moving window object for Dataset.
+@@ -472,10 +720,6 @@ class DatasetRolling(Rolling):
+             setting min_periods equal to the size of the window.
+         center : bool or mapping of hashable to bool, default: False
+             Set the labels at the center of the window.
+-        keep_attrs : bool, optional
+-            If True, the object's attributes (`attrs`) will be copied from
+-            the original object to the new one.  If False (default), the new
+-            object will be returned without attributes.
+ 
+         Returns
+         -------
+@@ -494,7 +738,7 @@ class DatasetRolling(Rolling):
+         # Keep each Rolling object as a dictionary
+         self.rollings = {}
+         for key, da in self.obj.data_vars.items():
+-            # keeps rollings only for the dataset depending on slf.dim
++            # keeps rollings only for the dataset depending on self.dim
+             dims, center = [], {}
+             for i, d in enumerate(self.dim):
+                 if d in da.dims:
+@@ -503,23 +747,28 @@ class DatasetRolling(Rolling):
+ 
+             if len(dims) > 0:
+                 w = {d: windows[d] for d in dims}
+-                self.rollings[key] = DataArrayRolling(
+-                    da, w, min_periods, center, keep_attrs
+-                )
++                self.rollings[key] = DataArrayRolling(da, w, min_periods, center)
+ 
+-    def _dataset_implementation(self, func, **kwargs):
++    def _dataset_implementation(self, func, keep_attrs, **kwargs):
+         from .dataset import Dataset
+ 
++        keep_attrs = self._get_keep_attrs(keep_attrs)
++
+         reduced = {}
+         for key, da in self.obj.data_vars.items():
+             if any(d in da.dims for d in self.dim):
+-                reduced[key] = func(self.rollings[key], **kwargs)
++                reduced[key] = func(self.rollings[key], keep_attrs=keep_attrs, **kwargs)
+             else:
+-                reduced[key] = self.obj[key]
+-        attrs = self.obj.attrs if self.keep_attrs else {}
++                reduced[key] = self.obj[key].copy()
++                # we need to delete the attrs of the copied DataArray
++                if not keep_attrs:
++                    reduced[key].attrs = {}
++
++        attrs = self.obj.attrs if keep_attrs else {}
+         return Dataset(reduced, coords=self.obj.coords, attrs=attrs)
+ 
+-    def reduce(self, func, **kwargs):
++    @inspect_code
++    def reduce(self, func, keep_attrs=None, **kwargs):
+         """Reduce the items in this group by applying `func` along some
+         dimension(s).
+ 
+@@ -529,6 +778,10 @@ class DatasetRolling(Rolling):
+             Function which can be called in the form
+             `func(x, **kwargs)` to return the result of collapsing an
+             np.ndarray over an the rolling dimension.
++        keep_attrs : bool, default: None
++            If True, the attributes (``attrs``) will be copied from the original
++            object to the new one. If False, the new object will be returned
++            without attributes. If None uses the global default.
+         **kwargs : dict
+             Additional keyword arguments passed on to `func`.
+ 
+@@ -538,14 +791,18 @@ class DatasetRolling(Rolling):
+             Array with summarized data.
+         """
+         return self._dataset_implementation(
+-            functools.partial(DataArrayRolling.reduce, func=func), **kwargs
++            functools.partial(DataArrayRolling.reduce, func=func),
++            keep_attrs=keep_attrs,
++            **kwargs,
+         )
+ 
+-    def _counts(self):
+-        return self._dataset_implementation(DataArrayRolling._counts)
++    def _counts(self, keep_attrs):
++        return self._dataset_implementation(
++            DataArrayRolling._counts, keep_attrs=keep_attrs
++        )
+ 
+     def _numpy_or_bottleneck_reduce(
+-        self, array_agg_func, bottleneck_move_func, **kwargs
++        self, array_agg_func, bottleneck_move_func, keep_attrs, **kwargs
+     ):
+         return self._dataset_implementation(
+             functools.partial(
+@@ -553,6 +810,7 @@ class DatasetRolling(Rolling):
+                 array_agg_func=array_agg_func,
+                 bottleneck_move_func=bottleneck_move_func,
+             ),
++            keep_attrs=keep_attrs,
+             **kwargs,
+         )
+ 
+@@ -587,6 +845,8 @@ class DatasetRolling(Rolling):
+ 
+         from .dataset import Dataset
+ 
++        keep_attrs = self._get_keep_attrs(keep_attrs)
++
+         if window_dim is None:
+             if len(window_dim_kwargs) == 0:
+                 raise ValueError(
+@@ -599,22 +859,30 @@ class DatasetRolling(Rolling):
+         )
+         stride = self._mapping_to_list(stride, default=1)
+ 
+-        if keep_attrs is None:
+-            keep_attrs = _get_keep_attrs(default=True)
+-
+         dataset = {}
+         for key, da in self.obj.data_vars.items():
+-            # keeps rollings only for the dataset depending on slf.dim
++            # keeps rollings only for the dataset depending on self.dim
+             dims = [d for d in self.dim if d in da.dims]
+             if len(dims) > 0:
+                 wi = {d: window_dim[i] for i, d in enumerate(self.dim) if d in da.dims}
+                 st = {d: stride[i] for i, d in enumerate(self.dim) if d in da.dims}
++
+                 dataset[key] = self.rollings[key].construct(
+-                    window_dim=wi, fill_value=fill_value, stride=st
++                    window_dim=wi,
++                    fill_value=fill_value,
++                    stride=st,
++                    keep_attrs=keep_attrs,
+                 )
+             else:
+-                dataset[key] = da
+-        return Dataset(dataset, coords=self.obj.coords).isel(
++                dataset[key] = da.copy()
++
++            # as the DataArrays can be copied we need to delete the attrs
++            if not keep_attrs:
++                dataset[key].attrs = {}
++
++        attrs = self.obj.attrs if keep_attrs else {}
++
++        return Dataset(dataset, coords=self.obj.coords, attrs=attrs).isel(
+             **{d: slice(None, None, s) for d, s in zip(self.dim, stride)}
+         )
+ 
+diff --git a/xarray/tests/test_dataarray.py b/xarray/tests/test_dataarray.py
+index 78b12dd..e944c02 100644
+--- a/xarray/tests/test_dataarray.py
++++ b/xarray/tests/test_dataarray.py
+@@ -6297,6 +6297,7 @@ def test_rolling_properties(da):
+     # catching invalid args
+     with pytest.raises(ValueError, match="window must be > 0"):
+         da.rolling(time=-2)
++
+     with pytest.raises(ValueError, match="min_periods must be greater than zero"):
+         da.rolling(time=2, min_periods=0)
+ 
+@@ -6317,7 +6318,7 @@ def test_rolling_wrapped_bottleneck(da, name, center, min_periods):
+     )
+     assert_array_equal(actual.values, expected)
+ 
+-    with pytest.warns(DeprecationWarning, match="Reductions will be applied"):
++    with pytest.warns(DeprecationWarning, match="Reductions are applied"):
+         getattr(rolling_obj, name)(dim="time")
+ 
+     # Test center
+@@ -6336,7 +6337,7 @@ def test_rolling_wrapped_dask(da_dask, name, center, min_periods, window):
+     rolling_obj = da_dask.rolling(time=window, min_periods=min_periods, center=center)
+     actual = getattr(rolling_obj, name)().load()
+     if name != "count":
+-        with pytest.warns(DeprecationWarning, match="Reductions will be applied"):
++        with pytest.warns(DeprecationWarning, match="Reductions are applied"):
+             getattr(rolling_obj, name)(dim="time")
+     # numpy version
+     rolling_obj = da_dask.load().rolling(
+@@ -6540,6 +6541,92 @@ def test_ndrolling_construct(center, fill_value):
+     assert_allclose(actual, expected)
+ 
+ 
++@pytest.mark.parametrize(
++    "funcname, argument",
++    [
++        ("reduce", (np.mean,)),
++        ("mean", ()),
++        ("construct", ("window_dim",)),
++        ("count", ()),
++    ],
++)
++def test_rolling_keep_attrs(funcname, argument):
++
++    attrs_da = {"da_attr": "test"}
++
++    data = np.linspace(10, 15, 100)
++    coords = np.linspace(1, 10, 100)
++
++    da = DataArray(
++        data, dims=("coord"), coords={"coord": coords}, attrs=attrs_da, name="name"
++    )
++
++    # attrs are now kept per default
++    func = getattr(da.rolling(dim={"coord": 5}), funcname)
++    result = func(*argument)
++    assert result.attrs == attrs_da
++    assert result.name == "name"
++
++    # discard attrs
++    func = getattr(da.rolling(dim={"coord": 5}), funcname)
++    result = func(*argument, keep_attrs=False)
++    assert result.attrs == {}
++    assert result.name == "name"
++
++    # test discard attrs using global option
++    func = getattr(da.rolling(dim={"coord": 5}), funcname)
++    with set_options(keep_attrs=False):
++        result = func(*argument)
++    assert result.attrs == {}
++    assert result.name == "name"
++
++    # keyword takes precedence over global option
++    func = getattr(da.rolling(dim={"coord": 5}), funcname)
++    with set_options(keep_attrs=False):
++        result = func(*argument, keep_attrs=True)
++    assert result.attrs == attrs_da
++    assert result.name == "name"
++
++    func = getattr(da.rolling(dim={"coord": 5}), funcname)
++    with set_options(keep_attrs=True):
++        result = func(*argument, keep_attrs=False)
++    assert result.attrs == {}
++    assert result.name == "name"
++
++
++def test_rolling_keep_attrs_deprecated():
++
++    attrs_da = {"da_attr": "test"}
++
++    data = np.linspace(10, 15, 100)
++    coords = np.linspace(1, 10, 100)
++
++    da = DataArray(
++        data,
++        dims=("coord"),
++        coords={"coord": coords},
++        attrs=attrs_da,
++    )
++
++    # deprecated option
++    with pytest.warns(
++        FutureWarning, match="Passing ``keep_attrs`` to ``rolling`` is deprecated"
++    ):
++        result = da.rolling(dim={"coord": 5}, keep_attrs=False).construct("window_dim")
++
++    assert result.attrs == {}
++
++    # the keep_attrs in the reduction function takes precedence
++    with pytest.warns(
++        FutureWarning, match="Passing ``keep_attrs`` to ``rolling`` is deprecated"
++    ):
++        result = da.rolling(dim={"coord": 5}, keep_attrs=True).construct(
++            "window_dim", keep_attrs=False
++        )
++
++    assert result.attrs == {}
++
++
+ def test_raise_no_warning_for_nan_in_binary_ops():
+     with pytest.warns(None) as record:
+         xr.DataArray([1, 2, np.NaN]) > 0
+diff --git a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py
+index 62cf3b8..61e8055 100644
+--- a/xarray/tests/test_dataset.py
++++ b/xarray/tests/test_dataset.py
+@@ -5989,33 +5989,115 @@ def test_coarsen_keep_attrs():
+     xr.testing.assert_identical(ds, ds2)
+ 
+ 
+-def test_rolling_keep_attrs():
+-    _attrs = {"units": "test", "long_name": "testing"}
++@pytest.mark.parametrize(
++    "funcname, argument",
++    [
++        ("reduce", (np.mean,)),
++        ("mean", ()),
++        ("construct", ("window_dim",)),
++        ("count", ()),
++    ],
++)
++def test_rolling_keep_attrs(funcname, argument):
++    global_attrs = {"units": "test", "long_name": "testing"}
++    da_attrs = {"da_attr": "test"}
++    da_not_rolled_attrs = {"da_not_rolled_attr": "test"}
+ 
+-    var1 = np.linspace(10, 15, 100)
+-    var2 = np.linspace(5, 10, 100)
++    data = np.linspace(10, 15, 100)
+     coords = np.linspace(1, 10, 100)
+ 
+     ds = Dataset(
+-        data_vars={"var1": ("coord", var1), "var2": ("coord", var2)},
++        data_vars={"da": ("coord", data), "da_not_rolled": ("no_coord", data)},
+         coords={"coord": coords},
+-        attrs=_attrs,
++        attrs=global_attrs,
+     )
++    ds.da.attrs = da_attrs
++    ds.da_not_rolled.attrs = da_not_rolled_attrs
++
++    # attrs are now kept per default
++    func = getattr(ds.rolling(dim={"coord": 5}), funcname)
++    result = func(*argument)
++    assert result.attrs == global_attrs
++    assert result.da.attrs == da_attrs
++    assert result.da_not_rolled.attrs == da_not_rolled_attrs
++    assert result.da.name == "da"
++    assert result.da_not_rolled.name == "da_not_rolled"
++
++    # discard attrs
++    func = getattr(ds.rolling(dim={"coord": 5}), funcname)
++    result = func(*argument, keep_attrs=False)
++    assert result.attrs == {}
++    assert result.da.attrs == {}
++    assert result.da_not_rolled.attrs == {}
++    assert result.da.name == "da"
++    assert result.da_not_rolled.name == "da_not_rolled"
++
++    # test discard attrs using global option
++    func = getattr(ds.rolling(dim={"coord": 5}), funcname)
++    with set_options(keep_attrs=False):
++        result = func(*argument)
++
++    assert result.attrs == {}
++    assert result.da.attrs == {}
++    assert result.da_not_rolled.attrs == {}
++    assert result.da.name == "da"
++    assert result.da_not_rolled.name == "da_not_rolled"
++
++    # keyword takes precedence over global option
++    func = getattr(ds.rolling(dim={"coord": 5}), funcname)
++    with set_options(keep_attrs=False):
++        result = func(*argument, keep_attrs=True)
++
++    assert result.attrs == global_attrs
++    assert result.da.attrs == da_attrs
++    assert result.da_not_rolled.attrs == da_not_rolled_attrs
++    assert result.da.name == "da"
++    assert result.da_not_rolled.name == "da_not_rolled"
++
++    func = getattr(ds.rolling(dim={"coord": 5}), funcname)
++    with set_options(keep_attrs=True):
++        result = func(*argument, keep_attrs=False)
+ 
+-    # Test dropped attrs
+-    dat = ds.rolling(dim={"coord": 5}, min_periods=None, center=False).mean()
+-    assert dat.attrs == {}
++    assert result.attrs == {}
++    assert result.da.attrs == {}
++    assert result.da_not_rolled.attrs == {}
++    assert result.da.name == "da"
++    assert result.da_not_rolled.name == "da_not_rolled"
+ 
+-    # Test kept attrs using dataset keyword
+-    dat = ds.rolling(
+-        dim={"coord": 5}, min_periods=None, center=False, keep_attrs=True
+-    ).mean()
+-    assert dat.attrs == _attrs
+ 
+-    # Test kept attrs using global option
+-    with set_options(keep_attrs=True):
+-        dat = ds.rolling(dim={"coord": 5}, min_periods=None, center=False).mean()
+-    assert dat.attrs == _attrs
++def test_rolling_keep_attrs_deprecated():
++    global_attrs = {"units": "test", "long_name": "testing"}
++    attrs_da = {"da_attr": "test"}
++
++    data = np.linspace(10, 15, 100)
++    coords = np.linspace(1, 10, 100)
++
++    ds = Dataset(
++        data_vars={"da": ("coord", data)},
++        coords={"coord": coords},
++        attrs=global_attrs,
++    )
++    ds.da.attrs = attrs_da
++
++    # deprecated option
++    with pytest.warns(
++        FutureWarning, match="Passing ``keep_attrs`` to ``rolling`` is deprecated"
++    ):
++        result = ds.rolling(dim={"coord": 5}, keep_attrs=False).construct("window_dim")
++
++    assert result.attrs == {}
++    assert result.da.attrs == {}
++
++    # the keep_attrs in the reduction function takes precedence
++    with pytest.warns(
++        FutureWarning, match="Passing ``keep_attrs`` to ``rolling`` is deprecated"
++    ):
++        result = ds.rolling(dim={"coord": 5}, keep_attrs=True).construct(
++            "window_dim", keep_attrs=False
++        )
++
++    assert result.attrs == {}
++    assert result.da.attrs == {}
+ 
+ 
+ def test_rolling_properties(ds):

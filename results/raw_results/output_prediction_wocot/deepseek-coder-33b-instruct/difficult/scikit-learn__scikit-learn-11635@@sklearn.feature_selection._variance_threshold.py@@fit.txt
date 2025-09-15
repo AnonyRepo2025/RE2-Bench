@@ -1,0 +1,127 @@
+
+[OUTPUT]
+```
+{
+    "threshold": 0.4,
+    "variances_": "[0.25 0.25 0.25 0.25 0.25]"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import numpy as np
+from ..base import BaseEstimator
+from ._base import SelectorMixin
+from ..utils import check_array
+from ..utils.sparsefuncs import mean_variance_axis, min_max_axis
+from ..utils.validation import check_is_fitted
+
+class VarianceThreshold(SelectorMixin, BaseEstimator):
+
+    def __init__(self, threshold=0.0):
+        self.threshold = threshold
+
+    def fit(self, X, y=None):
+        X = check_array(X, ('csr', 'csc'), dtype=np.float64, force_all_finite='allow-nan')
+        if hasattr(X, 'toarray'):
+            _, self.variances_ = mean_variance_axis(X, axis=0)
+            if self.threshold == 0:
+                mins, maxes = min_max_axis(X, axis=0)
+                peak_to_peaks = maxes - mins
+        else:
+            self.variances_ = np.nanvar(X, axis=0)
+            if self.threshold == 0:
+                peak_to_peaks = np.ptp(X, axis=0)
+        if self.threshold == 0:
+            compare_arr = np.array([self.variances_, peak_to_peaks])
+            self.variances_ = np.nanmin(compare_arr, axis=0)
+        if np.all(~np.isfinite(self.variances_) | (self.variances_ <= self.threshold)):
+            msg = 'No feature in X meets the variance threshold {0:.5f}'
+            if X.shape[0] == 1:
+                msg += ' (X contains only one sample)'
+            raise ValueError(msg.format(self.threshold))
+        return self
+
+    def _get_support_mask(self):
+        check_is_fitted(self)
+        return self.variances_ > self.threshold
+
+    def _more_tags(self):
+        return {'allow_nan': True}
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=None, estimator=None):
+    if warn_on_dtype is not None:
+        warnings.warn("'warn_on_dtype' is deprecated in version 0.21 and will be removed in 0.23. Don't set `warn_on_dtype` to remove this warning.", FutureWarning, stacklevel=2)
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+        if all((isinstance(dtype, np.dtype) for dtype in dtypes_orig)):
+            dtype_orig = np.result_type(*array.dtypes)
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {force_all_finite} instead'.format(force_all_finite=force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse, dtype=dtype, copy=copy, force_all_finite=force_all_finite, accept_large_sparse=accept_large_sparse)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                if dtype is not None and np.dtype(dtype).kind in 'iu':
+                    array = np.asarray(array, order=order)
+                    if array.dtype.kind == 'f':
+                        _assert_all_finite(array, allow_nan=False, msg_dtype=dtype)
+                    array = array.astype(dtype, casting='unsafe', copy=False)
+                else:
+                    array = np.asarray(array, order=order, dtype=dtype)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of bytes/strings will be converted to decimal numbers if dtype='numeric'. It is recommended that you convert the array to a float dtype before using it in scikit-learn, for example by using your_array = your_array.astype(np.float64).", FutureWarning, stacklevel=2)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, array.shape, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, array.shape, ensure_min_features,

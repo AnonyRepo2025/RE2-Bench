@@ -1,0 +1,727 @@
+diff --git a/sphinx/domains/c.py b/sphinx/domains/c.py
+index 8854d79..6e0dc2a 100644
+--- a/sphinx/domains/c.py
++++ b/sphinx/domains/c.py
+@@ -31,7 +31,8 @@ from sphinx.util.cfamily import (
+     NoOldIdError, ASTBaseBase, verify_description_mode, StringifyTransform,
+     BaseParser, DefinitionError, UnsupportedMultiCharacterCharLiteral,
+     identifier_re, anon_identifier_re, integer_literal_re, octal_literal_re,
+-    hex_literal_re, binary_literal_re, float_literal_re,
++    hex_literal_re, binary_literal_re, integers_literal_suffix_re,
++    float_literal_re, float_literal_suffix_re,
+     char_literal_re
+ )
+ from sphinx.util.docfields import Field, TypedField
+@@ -2076,12 +2077,14 @@ class DefinitionParser(BaseParser):
+             return ASTBooleanLiteral(True)
+         if self.skip_word('false'):
+             return ASTBooleanLiteral(False)
+-        for regex in [float_literal_re, binary_literal_re, hex_literal_re,
++        pos = self.pos
++        if self.match(float_literal_re):
++            self.match(float_literal_suffix_re)
++            return ASTNumberLiteral(self.definition[pos:self.pos])
++        for regex in [binary_literal_re, hex_literal_re,
+                       integer_literal_re, octal_literal_re]:
+-            pos = self.pos
+             if self.match(regex):
+-                while self.current_char in 'uUlLfF':
+-                    self.pos += 1
++                self.match(integers_literal_suffix_re)
+                 return ASTNumberLiteral(self.definition[pos:self.pos])
+ 
+         string = self._parse_string()
+diff --git a/sphinx/domains/cpp.py b/sphinx/domains/cpp.py
+index fe52d88..3dc2677 100644
+--- a/sphinx/domains/cpp.py
++++ b/sphinx/domains/cpp.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sphinx-doc__sphinx-7590/sphinx/domains/cpp.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+     sphinx.domains.cpp
+     ~~~~~~~~~~~~~~~~~~
+@@ -34,7 +227,8 @@ from sphinx.util.cfamily import (
+     NoOldIdError, ASTBaseBase, ASTAttribute, verify_description_mode, StringifyTransform,
+     BaseParser, DefinitionError, UnsupportedMultiCharacterCharLiteral,
+     identifier_re, anon_identifier_re, integer_literal_re, octal_literal_re,
+-    hex_literal_re, binary_literal_re, float_literal_re,
++    hex_literal_re, binary_literal_re, integers_literal_suffix_re,
++    float_literal_re, float_literal_suffix_re,
+     char_literal_re
+ )
+ from sphinx.util.docfields import Field, GroupedField
+@@ -296,6 +490,9 @@ T = TypeVar('T')
+             nested-name
+ """
+ 
++udl_identifier_re = re.compile(r'''(?x)
++    [a-zA-Z_][a-zA-Z0-9_]*\b   # note, no word boundary in the beginning
++''')
+ _string_re = re.compile(r"[LuU8]?('([^'\\]*(?:\\.[^'\\]*)*)'"
+                         r'|"([^"\\]*(?:\\.[^"\\]*)*)")', re.S)
+ _visibility_re = re.compile(r'\b(public|private|protected)\b')
+@@ -598,6 +795,7 @@ class ASTIdentifier(ASTBase):
+     def get_display_string(self) -> str:
+         return "[anonymous]" if self.is_anon() else self.identifier
+ 
++    @inspect_code
+     def describe_signature(self, signode: TextElement, mode: str, env: "BuildEnvironment",
+                            prefix: str, templateArgs: str, symbol: "Symbol") -> None:
+         verify_description_mode(mode)
+@@ -607,8 +805,7 @@ class ASTIdentifier(ASTBase):
+                                           reftype='identifier',
+                                           reftarget=targetText, modname=None,
+                                           classname=None)
+-            key = symbol.get_lookup_key()
+-            pnode['cpp:parent_key'] = key
++            pnode['cpp:parent_key'] = symbol.get_lookup_key()
+             if self.is_anon():
+                 pnode += nodes.strong(text="[anonymous]")
+             else:
+@@ -624,6 +821,19 @@ class ASTIdentifier(ASTBase):
+                 signode += nodes.strong(text="[anonymous]")
+             else:
+                 signode += nodes.Text(self.identifier)
++        elif mode == 'udl':
++            # the target is 'operator""id' instead of just 'id'
++            assert len(prefix) == 0
++            assert len(templateArgs) == 0
++            assert not self.is_anon()
++            targetText = 'operator""' + self.identifier
++            pnode = addnodes.pending_xref('', refdomain='cpp',
++                                          reftype='identifier',
++                                          reftarget=targetText, modname=None,
++                                          classname=None)
++            pnode['cpp:parent_key'] = symbol.get_lookup_key()
++            pnode += nodes.Text(self.identifier)
++            signode += pnode
+         else:
+             raise Exception('Unknown description mode: %s' % mode)
+ 
+@@ -829,7 +1039,9 @@ class ASTNumberLiteral(ASTLiteral):
+     def _stringify(self, transform: StringifyTransform) -> str:
+         return self.data
+ 
++    @inspect_code
+     def get_id(self, version: int) -> str:
++        # TODO: floats should be mangled by writing the hex of the binary representation
+         return "L%sE" % self.data
+ 
+     def describe_signature(self, signode: TextElement, mode: str,
+@@ -873,7 +1085,9 @@ class ASTCharLiteral(ASTLiteral):
+         else:
+             return self.prefix + "'" + self.data + "'"
+ 
++    @inspect_code
+     def get_id(self, version: int) -> str:
++        # TODO: the ID should be have L E around it
+         return self.type + str(self.value)
+ 
+     def describe_signature(self, signode: TextElement, mode: str,
+@@ -882,6 +1096,26 @@ class ASTCharLiteral(ASTLiteral):
+         signode.append(nodes.Text(txt, txt))
+ 
+ 
++class ASTUserDefinedLiteral(ASTLiteral):
++    def __init__(self, literal: ASTLiteral, ident: ASTIdentifier):
++        self.literal = literal
++        self.ident = ident
++
++    def _stringify(self, transform: StringifyTransform) -> str:
++        return transform(self.literal) + transform(self.ident)
++
++    def get_id(self, version: int) -> str:
++        # mangle as if it was a function call: ident(literal)
++        return 'clL_Zli{}E{}E'.format(self.ident.get_id(version), self.literal.get_id(version))
++
++    def describe_signature(self, signode: TextElement, mode: str,
++                           env: "BuildEnvironment", symbol: "Symbol") -> None:
++        self.literal.describe_signature(signode, mode, env, symbol)
++        self.ident.describe_signature(signode, "udl", env, "", "", symbol)
++
++
++################################################################################
++
+ class ASTThisLiteral(ASTExpression):
+     def _stringify(self, transform: StringifyTransform) -> str:
+         return "this"
+@@ -4643,6 +4877,7 @@ class DefinitionParser(BaseParser):
+             self.pos += 1
+         return self.definition[startPos:self.pos]
+ 
++    @inspect_code
+     def _parse_literal(self) -> ASTLiteral:
+         # -> integer-literal
+         #  | character-literal
+@@ -4651,6 +4886,15 @@ class DefinitionParser(BaseParser):
+         #  | boolean-literal -> "false" | "true"
+         #  | pointer-literal -> "nullptr"
+         #  | user-defined-literal
++
++        def _udl(literal: ASTLiteral) -> ASTLiteral:
++            if not self.match(udl_identifier_re):
++                return literal
++            # hmm, should we care if it's a keyword?
++            # it looks like GCC does not disallow keywords
++            ident = ASTIdentifier(self.matched_text)
++            return ASTUserDefinedLiteral(literal, ident)
++
+         self.skip_ws()
+         if self.skip_word('nullptr'):
+             return ASTPointerLiteral()
+@@ -4658,31 +4902,40 @@ class DefinitionParser(BaseParser):
+             return ASTBooleanLiteral(True)
+         if self.skip_word('false'):
+             return ASTBooleanLiteral(False)
+-        for regex in [float_literal_re, binary_literal_re, hex_literal_re,
++        pos = self.pos
++        if self.match(float_literal_re):
++            hasSuffix = self.match(float_literal_suffix_re)
++            floatLit = ASTNumberLiteral(self.definition[pos:self.pos])
++            if hasSuffix:
++                return floatLit
++            else:
++                return _udl(floatLit)
++        for regex in [binary_literal_re, hex_literal_re,
+                       integer_literal_re, octal_literal_re]:
+-            pos = self.pos
+             if self.match(regex):
+-                while self.current_char in 'uUlLfF':
+-                    self.pos += 1
+-                return ASTNumberLiteral(self.definition[pos:self.pos])
++                hasSuffix = self.match(integers_literal_suffix_re)
++                intLit = ASTNumberLiteral(self.definition[pos:self.pos])
++                if hasSuffix:
++                    return intLit
++                else:
++                    return _udl(intLit)
+ 
+         string = self._parse_string()
+         if string is not None:
+-            return ASTStringLiteral(string)
++            return _udl(ASTStringLiteral(string))
+ 
+         # character-literal
+         if self.match(char_literal_re):
+             prefix = self.last_match.group(1)  # may be None when no prefix
+             data = self.last_match.group(2)
+             try:
+-                return ASTCharLiteral(prefix, data)
++                charLit = ASTCharLiteral(prefix, data)
+             except UnicodeDecodeError as e:
+                 self.fail("Can not handle character literal. Internal error was: %s" % e)
+             except UnsupportedMultiCharacterCharLiteral:
+                 self.fail("Can not handle character literal"
+                           " resulting in multiple decoded characters.")
+-
+-        # TODO: user-defined lit
++            return _udl(charLit)
+         return None
+ 
+     def _parse_fold_or_paren_expression(self) -> ASTExpression:
+diff --git a/sphinx/util/cfamily.py b/sphinx/util/cfamily.py
+index 790a492..2f91b4e 100644
+--- a/sphinx/util/cfamily.py
++++ b/sphinx/util/cfamily.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sphinx-doc__sphinx-7590/sphinx/util/cfamily.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+     sphinx.util.cfamily
+     ~~~~~~~~~~~~~~~~~~~
+@@ -41,6 +234,16 @@ integer_literal_re = re.compile(r'[1-9][0-9]*')
+ octal_literal_re = re.compile(r'0[0-7]*')
+ hex_literal_re = re.compile(r'0[xX][0-9a-fA-F][0-9a-fA-F]*')
+ binary_literal_re = re.compile(r'0[bB][01][01]*')
++integers_literal_suffix_re = re.compile(r'''(?x)
++    # unsigned and/or (long) long, in any order, but at least one of them
++    (
++        ([uU]    ([lL]  |  (ll)  |  (LL))?)
++        |
++        (([lL]  |  (ll)  |  (LL))    [uU]?)
++    )\b
++    # the ending word boundary is important for distinguishing
++    # between suffixes and UDLs in C++
++''')
+ float_literal_re = re.compile(r'''(?x)
+     [+-]?(
+     # decimal
+@@ -53,6 +256,8 @@ float_literal_re = re.compile(r'''(?x)
+     | (0[xX][0-9a-fA-F]+\.([pP][+-]?[0-9a-fA-F]+)?)
+     )
+ ''')
++float_literal_suffix_re = re.compile(r'[fFlL]\b')
++# the ending word boundary is important for distinguishing between suffixes and UDLs in C++
+ char_literal_re = re.compile(r'''(?x)
+     ((?:u8)|u|U|L)?
+     '(
+@@ -68,8 +273,9 @@ char_literal_re = re.compile(r'''(?x)
+ ''')
+ 
+ 
++@inspect_code
+ def verify_description_mode(mode: str) -> None:
+-    if mode not in ('lastIsName', 'noneIsName', 'markType', 'markName', 'param'):
++    if mode not in ('lastIsName', 'noneIsName', 'markType', 'markName', 'param', 'udl'):
+         raise Exception("Description mode '%s' is invalid." % mode)
+ 
+ 
+diff --git a/tests/test_domain_cpp.py b/tests/test_domain_cpp.py
+index 9db741a..84bd457 100644
+--- a/tests/test_domain_cpp.py
++++ b/tests/test_domain_cpp.py
+@@ -146,37 +146,48 @@ def test_expressions():
+                 exprCheck(expr, 'L' + expr + 'E')
+                 expr = i + l + u
+                 exprCheck(expr, 'L' + expr + 'E')
++    decimalFloats = ['5e42', '5e+42', '5e-42',
++                  '5.', '5.e42', '5.e+42', '5.e-42',
++                  '.5', '.5e42', '.5e+42', '.5e-42',
++                  '5.0', '5.0e42', '5.0e+42', '5.0e-42']
++    hexFloats = ['ApF', 'Ap+F', 'Ap-F',
++                 'A.', 'A.pF', 'A.p+F', 'A.p-F',
++                 '.A', '.ApF', '.Ap+F', '.Ap-F',
++                 'A.B', 'A.BpF', 'A.Bp+F', 'A.Bp-F']
+     for suffix in ['', 'f', 'F', 'l', 'L']:
+-        for e in [
+-                '5e42', '5e+42', '5e-42',
+-                '5.', '5.e42', '5.e+42', '5.e-42',
+-                '.5', '.5e42', '.5e+42', '.5e-42',
+-                '5.0', '5.0e42', '5.0e+42', '5.0e-42']:
++        for e in decimalFloats:
+             expr = e + suffix
+             exprCheck(expr, 'L' + expr + 'E')
+-        for e in [
+-                'ApF', 'Ap+F', 'Ap-F',
+-                'A.', 'A.pF', 'A.p+F', 'A.p-F',
+-                '.A', '.ApF', '.Ap+F', '.Ap-F',
+-                'A.B', 'A.BpF', 'A.Bp+F', 'A.Bp-F']:
++        for e in hexFloats:
+             expr = "0x" + e + suffix
+             exprCheck(expr, 'L' + expr + 'E')
+     exprCheck('"abc\\"cba"', 'LA8_KcE')  # string
+     exprCheck('this', 'fpT')
+     # character literals
+-    for p, t in [('', 'c'), ('u8', 'c'), ('u', 'Ds'), ('U', 'Di'), ('L', 'w')]:
+-        exprCheck(p + "'a'", t + "97")
+-        exprCheck(p + "'\\n'", t + "10")
+-        exprCheck(p + "'\\012'", t + "10")
+-        exprCheck(p + "'\\0'", t + "0")
+-        exprCheck(p + "'\\x0a'", t + "10")
+-        exprCheck(p + "'\\x0A'", t + "10")
+-        exprCheck(p + "'\\u0a42'", t + "2626")
+-        exprCheck(p + "'\\u0A42'", t + "2626")
+-        exprCheck(p + "'\\U0001f34c'", t + "127820")
+-        exprCheck(p + "'\\U0001F34C'", t + "127820")
+-
+-    # TODO: user-defined lit
++    charPrefixAndIds = [('', 'c'), ('u8', 'c'), ('u', 'Ds'), ('U', 'Di'), ('L', 'w')]
++    chars = [('a', '97'), ('\\n', '10'), ('\\012', '10'), ('\\0', '0'),
++             ('\\x0a', '10'), ('\\x0A', '10'), ('\\u0a42', '2626'), ('\\u0A42', '2626'),
++             ('\\U0001f34c', '127820'), ('\\U0001F34C', '127820')]
++    for p, t in charPrefixAndIds:
++        for c, val in chars:
++            exprCheck("{}'{}'".format(p, c), t + val)
++    # user-defined literals
++    for i in ints:
++        exprCheck(i + '_udl', 'clL_Zli4_udlEL' + i + 'EE')
++        exprCheck(i + 'uludl', 'clL_Zli5uludlEL' + i + 'EE')
++    for f in decimalFloats:
++        exprCheck(f + '_udl', 'clL_Zli4_udlEL' + f + 'EE')
++        exprCheck(f + 'fudl', 'clL_Zli4fudlEL' + f + 'EE')
++    for f in hexFloats:
++        exprCheck('0x' + f + '_udl', 'clL_Zli4_udlEL0x' + f + 'EE')
++    for p, t in charPrefixAndIds:
++        for c, val in chars:
++            exprCheck("{}'{}'_udl".format(p, c), 'clL_Zli4_udlE' + t + val + 'E')
++    exprCheck('"abc"_udl', 'clL_Zli4_udlELA3_KcEE')
++    # from issue #7294
++    exprCheck('6.62607015e-34q_J', 'clL_Zli3q_JEL6.62607015e-34EE')
++
++    # fold expressions, paren, name
+     exprCheck('(... + Ns)', '(... + Ns)', id4='flpl2Ns')
+     exprCheck('(Ns + ...)', '(Ns + ...)', id4='frpl2Ns')
+     exprCheck('(Ns + ... + 0)', '(Ns + ... + 0)', id4='fLpl2NsL0E')

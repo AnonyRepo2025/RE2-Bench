@@ -1,0 +1,519 @@
+diff --git a/src/_pytest/assertion/rewrite.py b/src/_pytest/assertion/rewrite.py
+index 42664ad..ec145b8 100644
+--- a/src/_pytest/assertion/rewrite.py
++++ b/src/_pytest/assertion/rewrite.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pytest-dev__pytest-10758/src/_pytest/assertion/rewrite.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """Rewrite assertion AST to produce nice error messages."""
+ import ast
+ import errno
+@@ -44,9 +237,13 @@ from _pytest.stash import StashKey
+ if TYPE_CHECKING:
+     from _pytest.assertion import AssertionState
+ 
++if sys.version_info >= (3, 8):
++    namedExpr = ast.NamedExpr
++else:
++    namedExpr = ast.Expr
+ 
+-assertstate_key = StashKey["AssertionState"]()
+ 
++assertstate_key = StashKey["AssertionState"]()
+ 
+ # pytest caches rewritten pycs in pycache dirs
+ PYTEST_TAG = f"{sys.implementation.cache_tag}-pytest-{version}"
+@@ -635,10 +832,15 @@ class AssertionRewriter(ast.NodeVisitor):
+        .push_format_context() and .pop_format_context() which allows
+        to build another %-formatted string while already building one.
+ 
+-    This state is reset on every new assert statement visited and used
+-    by the other visitors.
++    :variables_overwrite: A dict filled with references to variables
++       that change value within an assert. This happens when a variable is
++       reassigned with the walrus operator
++
++    This state, except the variables_overwrite,  is reset on every new assert
++    statement visited and used by the other visitors.
+     """
+ 
++    @inspect_code
+     def __init__(
+         self, module_path: Optional[str], config: Optional[Config], source: bytes
+     ) -> None:
+@@ -652,7 +854,9 @@ class AssertionRewriter(ast.NodeVisitor):
+         else:
+             self.enable_assertion_pass_hook = False
+         self.source = source
++        self.variables_overwrite: Dict[str, str] = {}
+ 
++    @inspect_code
+     def run(self, mod: ast.Module) -> None:
+         """Find all assert statements in *mod* and rewrite them."""
+         if not mod.body:
+@@ -666,7 +870,7 @@ class AssertionRewriter(ast.NodeVisitor):
+         if doc is not None and self.is_rewrite_disabled(doc):
+             return
+         pos = 0
+-        lineno = 1
++        item = None
+         for item in mod.body:
+             if (
+                 expect_docstring
+@@ -937,6 +1141,19 @@ class AssertionRewriter(ast.NodeVisitor):
+                 ast.copy_location(node, assert_)
+         return self.statements
+ 
++    @inspect_code
++    def visit_NamedExpr(self, name: namedExpr) -> Tuple[namedExpr, str]:
++        # This method handles the 'walrus operator' repr of the target
++        # name if it's a local variable or _should_repr_global_name()
++        # thinks it's acceptable.
++        locs = ast.Call(self.builtin("locals"), [], [])
++        target_id = name.target.id  # type: ignore[attr-defined]
++        inlocs = ast.Compare(ast.Str(target_id), [ast.In()], [locs])
++        dorepr = self.helper("_should_repr_global_name", name)
++        test = ast.BoolOp(ast.Or(), [inlocs, dorepr])
++        expr = ast.IfExp(test, self.display(name), ast.Str(target_id))
++        return name, self.explanation_param(expr)
++
+     def visit_Name(self, name: ast.Name) -> Tuple[ast.Name, str]:
+         # Display the repr of the name if it's a local variable or
+         # _should_repr_global_name() thinks it's acceptable.
+@@ -947,6 +1164,7 @@ class AssertionRewriter(ast.NodeVisitor):
+         expr = ast.IfExp(test, self.display(name), ast.Str(name.id))
+         return name, self.explanation_param(expr)
+ 
++    @inspect_code
+     def visit_BoolOp(self, boolop: ast.BoolOp) -> Tuple[ast.Name, str]:
+         res_var = self.variable()
+         expl_list = self.assign(ast.List([], ast.Load()))
+@@ -963,6 +1181,20 @@ class AssertionRewriter(ast.NodeVisitor):
+                 # cond is set in a prior loop iteration below
+                 self.expl_stmts.append(ast.If(cond, fail_inner, []))  # noqa
+                 self.expl_stmts = fail_inner
++                # Check if the left operand is a namedExpr and the value has already been visited
++                if (
++                    isinstance(v, ast.Compare)
++                    and isinstance(v.left, namedExpr)
++                    and v.left.target.id
++                    in [
++                        ast_expr.id
++                        for ast_expr in boolop.values[:i]
++                        if hasattr(ast_expr, "id")
++                    ]
++                ):
++                    pytest_temp = self.variable()
++                    self.variables_overwrite[v.left.target.id] = pytest_temp
++                    v.left.target.id = pytest_temp
+             self.push_format_context()
+             res, expl = self.visit(v)
+             body.append(ast.Assign([ast.Name(res_var, ast.Store())], res))
+@@ -1036,8 +1268,12 @@ class AssertionRewriter(ast.NodeVisitor):
+         expl = pat % (res_expl, res_expl, value_expl, attr.attr)
+         return res, expl
+ 
++    @inspect_code
+     def visit_Compare(self, comp: ast.Compare) -> Tuple[ast.expr, str]:
+         self.push_format_context()
++        # We first check if we have overwritten a variable in the previous assert
++        if isinstance(comp.left, ast.Name) and comp.left.id in self.variables_overwrite:
++            comp.left.id = self.variables_overwrite[comp.left.id]
+         left_res, left_expl = self.visit(comp.left)
+         if isinstance(comp.left, (ast.Compare, ast.BoolOp)):
+             left_expl = f"({left_expl})"
+@@ -1049,6 +1285,13 @@ class AssertionRewriter(ast.NodeVisitor):
+         syms = []
+         results = [left_res]
+         for i, op, next_operand in it:
++            if (
++                isinstance(next_operand, namedExpr)
++                and isinstance(left_res, ast.Name)
++                and next_operand.target.id == left_res.id
++            ):
++                next_operand.target.id = self.variable()
++                self.variables_overwrite[left_res.id] = next_operand.target.id
+             next_res, next_expl = self.visit(next_operand)
+             if isinstance(next_operand, (ast.Compare, ast.BoolOp)):
+                 next_expl = f"({next_expl})"
+@@ -1072,6 +1315,7 @@ class AssertionRewriter(ast.NodeVisitor):
+             res: ast.expr = ast.BoolOp(ast.And(), load_names)
+         else:
+             res = load_names[0]
++
+         return res, self.explanation_param(self.pop_format_context(expl_call))
+ 
+ 
+diff --git a/testing/test_assertrewrite.py b/testing/test_assertrewrite.py
+index 3c98392..8d94414 100644
+--- a/testing/test_assertrewrite.py
++++ b/testing/test_assertrewrite.py
+@@ -1265,6 +1265,177 @@ class TestIssue2121:
+         result.stdout.fnmatch_lines(["*E*assert (1 + 1) == 3"])
+ 
+ 
++@pytest.mark.skipif(
++    sys.version_info < (3, 8), reason="walrus operator not available in py<38"
++)
++class TestIssue10743:
++    def test_assertion_walrus_operator(self, pytester: Pytester) -> None:
++        pytester.makepyfile(
++            """
++            def my_func(before, after):
++                return before == after
++
++            def change_value(value):
++                return value.lower()
++
++            def test_walrus_conversion():
++                a = "Hello"
++                assert not my_func(a, a := change_value(a))
++                assert a == "hello"
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 0
++
++    def test_assertion_walrus_operator_dont_rewrite(self, pytester: Pytester) -> None:
++        pytester.makepyfile(
++            """
++            'PYTEST_DONT_REWRITE'
++            def my_func(before, after):
++                return before == after
++
++            def change_value(value):
++                return value.lower()
++
++            def test_walrus_conversion_dont_rewrite():
++                a = "Hello"
++                assert not my_func(a, a := change_value(a))
++                assert a == "hello"
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 0
++
++    def test_assertion_inline_walrus_operator(self, pytester: Pytester) -> None:
++        pytester.makepyfile(
++            """
++            def my_func(before, after):
++                return before == after
++
++            def test_walrus_conversion_inline():
++                a = "Hello"
++                assert not my_func(a, a := a.lower())
++                assert a == "hello"
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 0
++
++    def test_assertion_inline_walrus_operator_reverse(self, pytester: Pytester) -> None:
++        pytester.makepyfile(
++            """
++            def my_func(before, after):
++                return before == after
++
++            def test_walrus_conversion_reverse():
++                a = "Hello"
++                assert my_func(a := a.lower(), a)
++                assert a == 'hello'
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 0
++
++    def test_assertion_walrus_no_variable_name_conflict(
++        self, pytester: Pytester
++    ) -> None:
++        pytester.makepyfile(
++            """
++            def test_walrus_conversion_no_conflict():
++                a = "Hello"
++                assert a == (b := a.lower())
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 1
++        result.stdout.fnmatch_lines(["*AssertionError: assert 'Hello' == 'hello'"])
++
++    def test_assertion_walrus_operator_true_assertion_and_changes_variable_value(
++        self, pytester: Pytester
++    ) -> None:
++        pytester.makepyfile(
++            """
++            def test_walrus_conversion_succeed():
++                a = "Hello"
++                assert a != (a := a.lower())
++                assert a == 'hello'
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 0
++
++    def test_assertion_walrus_operator_fail_assertion(self, pytester: Pytester) -> None:
++        pytester.makepyfile(
++            """
++            def test_walrus_conversion_fails():
++                a = "Hello"
++                assert a == (a := a.lower())
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 1
++        result.stdout.fnmatch_lines(["*AssertionError: assert 'Hello' == 'hello'"])
++
++    def test_assertion_walrus_operator_boolean_composite(
++        self, pytester: Pytester
++    ) -> None:
++        pytester.makepyfile(
++            """
++            def test_walrus_operator_change_boolean_value():
++                a = True
++                assert a and True and ((a := False) is False) and (a is False) and ((a := None) is None)
++                assert a is None
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 0
++
++    def test_assertion_walrus_operator_compare_boolean_fails(
++        self, pytester: Pytester
++    ) -> None:
++        pytester.makepyfile(
++            """
++            def test_walrus_operator_change_boolean_value():
++                a = True
++                assert not (a and ((a := False) is False))
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 1
++        result.stdout.fnmatch_lines(["*assert not (True and False is False)"])
++
++    def test_assertion_walrus_operator_boolean_none_fails(
++        self, pytester: Pytester
++    ) -> None:
++        pytester.makepyfile(
++            """
++            def test_walrus_operator_change_boolean_value():
++                a = True
++                assert not (a and ((a := None) is None))
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 1
++        result.stdout.fnmatch_lines(["*assert not (True and None is None)"])
++
++    def test_assertion_walrus_operator_value_changes_cleared_after_each_test(
++        self, pytester: Pytester
++    ) -> None:
++        pytester.makepyfile(
++            """
++            def test_walrus_operator_change_value():
++                a = True
++                assert (a := None) is None
++
++            def test_walrus_operator_not_override_value():
++                a = True
++                assert a is True
++        """
++        )
++        result = pytester.runpytest()
++        assert result.ret == 0
++
++
+ @pytest.mark.skipif(
+     sys.maxsize <= (2**31 - 1), reason="Causes OverflowError on 32bit systems"
+ )

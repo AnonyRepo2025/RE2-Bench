@@ -1,0 +1,1266 @@
+diff --git a/xarray/core/alignment.py b/xarray/core/alignment.py
+index cee83bd..c68b576 100644
+--- a/xarray/core/alignment.py
++++ b/xarray/core/alignment.py
+@@ -24,8 +24,15 @@ import pandas as pd
+ 
+ from . import dtypes
+ from .common import DataWithCoords
+-from .indexes import Index, Indexes, PandasIndex, PandasMultiIndex, indexes_all_equal
+-from .utils import is_dict_like, is_full_slice, safe_cast_to_index
++from .indexes import (
++    Index,
++    Indexes,
++    PandasIndex,
++    PandasMultiIndex,
++    indexes_all_equal,
++    safe_cast_to_index,
++)
++from .utils import is_dict_like, is_full_slice
+ from .variable import Variable, as_compatible_data, calculate_dimensions
+ 
+ if TYPE_CHECKING:
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index 2deeba3..d41c993 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -1,4 +1,197 @@
+ from __future__ import annotations
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-7105/xarray/core/dataarray.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ import datetime
+ import warnings
+@@ -757,6 +950,10 @@ class DataArray(
+     def _in_memory(self) -> bool:
+         return self.variable._in_memory
+ 
++    @inspect_code
++    def _to_index(self) -> pd.Index:
++        return self.variable._to_index()
++
+     def to_index(self) -> pd.Index:
+         """Convert this variable to a pandas.Index. Only possible for 1D
+         arrays.
+diff --git a/xarray/core/groupby.py b/xarray/core/groupby.py
+index 8a21406..5d8483f 100644
+--- a/xarray/core/groupby.py
++++ b/xarray/core/groupby.py
+@@ -27,20 +27,17 @@ from .arithmetic import DataArrayGroupbyArithmetic, DatasetGroupbyArithmetic
+ from .common import ImplementsArrayReduce, ImplementsDatasetReduce
+ from .concat import concat
+ from .formatting import format_array_flat
+-from .indexes import create_default_index_implicit, filter_indexes_from_coords
++from .indexes import (
++    create_default_index_implicit,
++    filter_indexes_from_coords,
++    safe_cast_to_index,
++)
+ from .npcompat import QUANTILE_METHODS, ArrayLike
+ from .ops import IncludeCumMethods
+ from .options import _get_keep_attrs
+ from .pycompat import integer_types
+ from .types import Dims, T_Xarray
+-from .utils import (
+-    either_dict_or_kwargs,
+-    hashable,
+-    is_scalar,
+-    maybe_wrap_array,
+-    peek_at,
+-    safe_cast_to_index,
+-)
++from .utils import either_dict_or_kwargs, hashable, is_scalar, maybe_wrap_array, peek_at
+ from .variable import IndexVariable, Variable
+ 
+ if TYPE_CHECKING:
+diff --git a/xarray/core/indexes.py b/xarray/core/indexes.py
+index afbae5f..d52e01a 100644
+--- a/xarray/core/indexes.py
++++ b/xarray/core/indexes.py
+@@ -1,4 +1,197 @@
+ from __future__ import annotations
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-7105/xarray/core/indexes.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ import collections.abc
+ import copy
+@@ -133,6 +326,49 @@ class Index:
+         raise NotImplementedError()
+ 
+ 
++@inspect_code
++def _maybe_cast_to_cftimeindex(index: pd.Index) -> pd.Index:
++    from ..coding.cftimeindex import CFTimeIndex
++
++    if len(index) > 0 and index.dtype == "O":
++        try:
++            return CFTimeIndex(index)
++        except (ImportError, TypeError):
++            return index
++    else:
++        return index
++
++
++def safe_cast_to_index(array: Any) -> pd.Index:
++    """Given an array, safely cast it to a pandas.Index.
++
++    If it is already a pandas.Index, return it unchanged.
++
++    Unlike pandas.Index, if the array has dtype=object or dtype=timedelta64,
++    this function will not attempt to do automatic type conversion but will
++    always return an index with dtype=object.
++    """
++    from .dataarray import DataArray
++    from .variable import Variable
++
++    if isinstance(array, pd.Index):
++        index = array
++    elif isinstance(array, (DataArray, Variable)):
++        # returns the original multi-index for pandas.MultiIndex level coordinates
++        index = array._to_index()
++    elif isinstance(array, Index):
++        index = array.to_pandas_index()
++    elif isinstance(array, PandasIndexingAdapter):
++        index = array.array
++    else:
++        kwargs = {}
++        if hasattr(array, "dtype") and array.dtype.kind == "O":
++            kwargs["dtype"] = object
++        index = pd.Index(np.asarray(array), **kwargs)
++
++    return _maybe_cast_to_cftimeindex(index)
++
++
+ def _sanitize_slice_element(x):
+     from .dataarray import DataArray
+     from .variable import Variable
+@@ -232,11 +468,12 @@ class PandasIndex(Index):
+ 
+     __slots__ = ("index", "dim", "coord_dtype")
+ 
++    @inspect_code
+     def __init__(self, array: Any, dim: Hashable, coord_dtype: Any = None):
+         # make a shallow copy: cheap and because the index name may be updated
+         # here or in other constructors (cannot use pd.Index.rename as this
+         # constructor is also called from PandasMultiIndex)
+-        index = utils.safe_cast_to_index(array).copy()
++        index = safe_cast_to_index(array).copy()
+ 
+         if index.name is None:
+             index.name = dim
+@@ -623,6 +860,7 @@ class PandasMultiIndex(PandasIndex):
+         return cls(new_pd_index, dim=dim, level_coords_dtype=level_coords_dtype)
+ 
+     @classmethod
++    @inspect_code
+     def stack(
+         cls, variables: Mapping[Any, Variable], dim: Hashable
+     ) -> PandasMultiIndex:
+@@ -637,7 +875,7 @@ class PandasMultiIndex(PandasIndex):
+         """
+         _check_dim_compat(variables, all_dims="different")
+ 
+-        level_indexes = [utils.safe_cast_to_index(var) for var in variables.values()]
++        level_indexes = [safe_cast_to_index(var) for var in variables.values()]
+         for name, idx in zip(variables, level_indexes):
+             if isinstance(idx, pd.MultiIndex):
+                 raise ValueError(
+diff --git a/xarray/core/indexing.py b/xarray/core/indexing.py
+index 72ca60d..107dd7f 100644
+--- a/xarray/core/indexing.py
++++ b/xarray/core/indexing.py
+@@ -1,4 +1,197 @@
+ from __future__ import annotations
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-7105/xarray/core/indexing.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ import enum
+ import functools
+@@ -24,7 +217,6 @@ from .utils import (
+     NDArrayMixin,
+     either_dict_or_kwargs,
+     get_valid_numpy_dtype,
+-    safe_cast_to_index,
+     to_0d_array,
+ )
+ 
+@@ -1414,7 +1606,10 @@ class PandasIndexingAdapter(ExplicitlyIndexedNDArrayMixin):
+ 
+     __slots__ = ("array", "_dtype")
+ 
++    @inspect_code
+     def __init__(self, array: pd.Index, dtype: DTypeLike = None):
++        from .indexes import safe_cast_to_index
++
+         self.array = safe_cast_to_index(array)
+ 
+         if dtype is None:
+diff --git a/xarray/core/utils.py b/xarray/core/utils.py
+index eac705f..fe10a75 100644
+--- a/xarray/core/utils.py
++++ b/xarray/core/utils.py
+@@ -62,18 +62,6 @@ def alias(obj: Callable[..., T], old_name: str) -> Callable[..., T]:
+     return wrapper
+ 
+ 
+-def _maybe_cast_to_cftimeindex(index: pd.Index) -> pd.Index:
+-    from ..coding.cftimeindex import CFTimeIndex
+-
+-    if len(index) > 0 and index.dtype == "O":
+-        try:
+-            return CFTimeIndex(index)
+-        except (ImportError, TypeError):
+-            return index
+-    else:
+-        return index
+-
+-
+ def get_valid_numpy_dtype(array: np.ndarray | pd.Index):
+     """Return a numpy compatible dtype from either
+     a numpy array or a pandas.Index.
+@@ -112,34 +100,6 @@ def maybe_coerce_to_str(index, original_coords):
+     return index
+ 
+ 
+-def safe_cast_to_index(array: Any) -> pd.Index:
+-    """Given an array, safely cast it to a pandas.Index.
+-
+-    If it is already a pandas.Index, return it unchanged.
+-
+-    Unlike pandas.Index, if the array has dtype=object or dtype=timedelta64,
+-    this function will not attempt to do automatic type conversion but will
+-    always return an index with dtype=object.
+-    """
+-    if isinstance(array, pd.Index):
+-        index = array
+-    elif hasattr(array, "to_index"):
+-        # xarray Variable
+-        index = array.to_index()
+-    elif hasattr(array, "to_pandas_index"):
+-        # xarray Index
+-        index = array.to_pandas_index()
+-    elif hasattr(array, "array") and isinstance(array.array, pd.Index):
+-        # xarray PandasIndexingAdapter
+-        index = array.array
+-    else:
+-        kwargs = {}
+-        if hasattr(array, "dtype") and array.dtype.kind == "O":
+-            kwargs["dtype"] = object
+-        index = pd.Index(np.asarray(array), **kwargs)
+-    return _maybe_cast_to_cftimeindex(index)
+-
+-
+ def maybe_wrap_array(original, new_array):
+     """Wrap a transformed array with __array_wrap__ if it can be done safely.
+ 
+diff --git a/xarray/core/variable.py b/xarray/core/variable.py
+index d99891a..1e76e40 100644
+--- a/xarray/core/variable.py
++++ b/xarray/core/variable.py
+@@ -1,4 +1,197 @@
+ from __future__ import annotations
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-7105/xarray/core/variable.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ import copy
+ import itertools
+@@ -577,6 +770,10 @@ class Variable(AbstractArray, NdimSizeLenMixin, VariableArithmetic):
+ 
+     to_coord = utils.alias(to_index_variable, "to_coord")
+ 
++    @inspect_code
++    def _to_index(self) -> pd.Index:
++        return self.to_index_variable()._to_index()
++
+     def to_index(self) -> pd.Index:
+         """Convert this variable to a pandas.Index"""
+         return self.to_index_variable().to_index()
+@@ -2942,8 +3139,9 @@ class IndexVariable(Variable):
+         except (TypeError, AttributeError):
+             return False
+ 
++    @inspect_code
+     def _data_equals(self, other):
+-        return self.to_index().equals(other.to_index())
++        return self._to_index().equals(other._to_index())
+ 
+     def to_index_variable(self) -> IndexVariable:
+         """Return this variable as an xarray.IndexVariable"""
+@@ -2951,10 +3149,11 @@ class IndexVariable(Variable):
+ 
+     to_coord = utils.alias(to_index_variable, "to_coord")
+ 
+-    def to_index(self) -> pd.Index:
+-        """Convert this variable to a pandas.Index"""
++    def _to_index(self) -> pd.Index:
+         # n.b. creating a new pandas.Index from an old pandas.Index is
+-        # basically free as pandas.Index objects are immutable
++        # basically free as pandas.Index objects are immutable.
++        # n.b.2. this method returns the multi-index instance for
++        # a pandas multi-index level variable.
+         assert self.ndim == 1
+         index = self._data.array
+         if isinstance(index, pd.MultiIndex):
+@@ -2969,6 +3168,17 @@ class IndexVariable(Variable):
+             index = index.set_names(self.name)
+         return index
+ 
++    @inspect_code
++    def to_index(self) -> pd.Index:
++        """Convert this variable to a pandas.Index"""
++        index = self._to_index()
++        level = getattr(self._data, "level", None)
++        if level is not None:
++            # return multi-index level converted to a single index
++            return index.get_level_values(level)
++        else:
++            return index
++
+     @property
+     def level_names(self) -> list[str] | None:
+         """Return MultiIndex level names or None if this IndexVariable has no
+diff --git a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py
+index 49090c2..6d9cea6 100644
+--- a/xarray/tests/test_dataset.py
++++ b/xarray/tests/test_dataset.py
+@@ -2737,7 +2737,7 @@ class TestDataset:
+             assert_identical(data, copied)
+             assert data.encoding == copied.encoding
+             # Note: IndexVariable objects with string dtype are always
+-            # copied because of xarray.core.util.safe_cast_to_index.
++            # copied because of xarray.core.indexes.safe_cast_to_index.
+             # Limiting the test to data variables.
+             for k in data.data_vars:
+                 v0 = data.variables[k]
+diff --git a/xarray/tests/test_indexes.py b/xarray/tests/test_indexes.py
+index 56267e7..f9ca1d1 100644
+--- a/xarray/tests/test_indexes.py
++++ b/xarray/tests/test_indexes.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import copy
++from datetime import datetime
+ from typing import Any
+ 
+ import numpy as np
+@@ -8,6 +9,7 @@ import pandas as pd
+ import pytest
+ 
+ import xarray as xr
++from xarray.coding.cftimeindex import CFTimeIndex
+ from xarray.core.indexes import (
+     Hashable,
+     Index,
+@@ -15,10 +17,12 @@ from xarray.core.indexes import (
+     PandasIndex,
+     PandasMultiIndex,
+     _asarray_tuplesafe,
++    safe_cast_to_index,
+ )
+ from xarray.core.variable import IndexVariable, Variable
+ 
+-from . import assert_identical
++from . import assert_array_equal, assert_identical, requires_cftime
++from .test_coding_times import _all_cftime_date_types
+ 
+ 
+ def test_asarray_tuplesafe() -> None:
+@@ -656,3 +660,41 @@ class TestIndexes:
+         assert index_vars.keys() == indexes.variables.keys()
+         for new, original in zip(index_vars.values(), indexes.variables.values()):
+             assert_identical(new, original)
++
++
++def test_safe_cast_to_index():
++    dates = pd.date_range("2000-01-01", periods=10)
++    x = np.arange(5)
++    td = x * np.timedelta64(1, "D")
++    for expected, array in [
++        (dates, dates.values),
++        (pd.Index(x, dtype=object), x.astype(object)),
++        (pd.Index(td), td),
++        (pd.Index(td, dtype=object), td.astype(object)),
++    ]:
++        actual = safe_cast_to_index(array)
++        assert_array_equal(expected, actual)
++        assert expected.dtype == actual.dtype
++
++
++@requires_cftime
++def test_safe_cast_to_index_cftimeindex():
++    date_types = _all_cftime_date_types()
++    for date_type in date_types.values():
++        dates = [date_type(1, 1, day) for day in range(1, 20)]
++        expected = CFTimeIndex(dates)
++        actual = safe_cast_to_index(np.array(dates))
++        assert_array_equal(expected, actual)
++        assert expected.dtype == actual.dtype
++        assert isinstance(actual, type(expected))
++
++
++# Test that datetime.datetime objects are never used in a CFTimeIndex
++@requires_cftime
++def test_safe_cast_to_index_datetime_datetime():
++    dates = [datetime(1, 1, day) for day in range(1, 20)]
++
++    expected = pd.Index(dates)
++    actual = safe_cast_to_index(np.array(dates))
++    assert_array_equal(expected, actual)
++    assert isinstance(actual, pd.Index)
+diff --git a/xarray/tests/test_utils.py b/xarray/tests/test_utils.py
+index 6a39c02..c4b6294 100644
+--- a/xarray/tests/test_utils.py
++++ b/xarray/tests/test_utils.py
+@@ -1,18 +1,15 @@
+ from __future__ import annotations
+ 
+-from datetime import datetime
+ from typing import Hashable
+ 
+ import numpy as np
+ import pandas as pd
+ import pytest
+ 
+-from xarray.coding.cftimeindex import CFTimeIndex
+ from xarray.core import duck_array_ops, utils
+ from xarray.core.utils import either_dict_or_kwargs, iterate_nested
+ 
+-from . import assert_array_equal, requires_cftime, requires_dask
+-from .test_coding_times import _all_cftime_date_types
++from . import assert_array_equal, requires_dask
+ 
+ 
+ class TestAlias:
+@@ -26,21 +23,6 @@ class TestAlias:
+             old_method()
+ 
+ 
+-def test_safe_cast_to_index():
+-    dates = pd.date_range("2000-01-01", periods=10)
+-    x = np.arange(5)
+-    td = x * np.timedelta64(1, "D")
+-    for expected, array in [
+-        (dates, dates.values),
+-        (pd.Index(x, dtype=object), x.astype(object)),
+-        (pd.Index(td), td),
+-        (pd.Index(td, dtype=object), td.astype(object)),
+-    ]:
+-        actual = utils.safe_cast_to_index(array)
+-        assert_array_equal(expected, actual)
+-        assert expected.dtype == actual.dtype
+-
+-
+ @pytest.mark.parametrize(
+     "a, b, expected", [["a", "b", np.array(["a", "b"])], [1, 2, pd.Index([1, 2])]]
+ )
+@@ -68,29 +50,6 @@ def test_maybe_coerce_to_str_minimal_str_dtype():
+     assert expected.dtype == actual.dtype
+ 
+ 
+-@requires_cftime
+-def test_safe_cast_to_index_cftimeindex():
+-    date_types = _all_cftime_date_types()
+-    for date_type in date_types.values():
+-        dates = [date_type(1, 1, day) for day in range(1, 20)]
+-        expected = CFTimeIndex(dates)
+-        actual = utils.safe_cast_to_index(np.array(dates))
+-        assert_array_equal(expected, actual)
+-        assert expected.dtype == actual.dtype
+-        assert isinstance(actual, type(expected))
+-
+-
+-# Test that datetime.datetime objects are never used in a CFTimeIndex
+-@requires_cftime
+-def test_safe_cast_to_index_datetime_datetime():
+-    dates = [datetime(1, 1, day) for day in range(1, 20)]
+-
+-    expected = pd.Index(dates)
+-    actual = utils.safe_cast_to_index(np.array(dates))
+-    assert_array_equal(expected, actual)
+-    assert isinstance(actual, pd.Index)
+-
+-
+ class TestArrayEquiv:
+     def test_0d(self):
+         # verify our work around for pd.isnull not working for 0-dimensional
+diff --git a/xarray/tests/test_variable.py b/xarray/tests/test_variable.py
+index 4e8fa4c..b8d2d91 100644
+--- a/xarray/tests/test_variable.py
++++ b/xarray/tests/test_variable.py
+@@ -2300,6 +2300,11 @@ class TestIndexVariable(VariableSubclassobjects):
+         v = IndexVariable(["time"], data, {"foo": "bar"})
+         assert pd.Index(data, name="time").identical(v.to_index())
+ 
++    def test_to_index_multiindex_level(self):
++        midx = pd.MultiIndex.from_product([["a", "b"], [1, 2]], names=("one", "two"))
++        ds = Dataset(coords={"x": midx})
++        assert ds.one.variable.to_index().equals(midx.get_level_values("one"))
++
+     def test_multiindex_default_level_names(self):
+         midx = pd.MultiIndex.from_product([["a", "b"], [1, 2]])
+         v = IndexVariable(["x"], midx, {"foo": "bar"})

@@ -1,0 +1,280 @@
+diff --git a/django/contrib/admindocs/utils.py b/django/contrib/admindocs/utils.py
+index d918153..e956913 100644
+--- a/django/contrib/admindocs/utils.py
++++ b/django/contrib/admindocs/utils.py
+@@ -137,9 +137,10 @@ if docutils_is_available:
+     for name, urlbase in ROLES.items():
+         create_reference_role(name, urlbase)
+ 
+-# Match the beginning of a named or unnamed group.
++# Match the beginning of a named, unnamed, or non-capturing groups.
+ named_group_matcher = _lazy_re_compile(r'\(\?P(<\w+>)')
+ unnamed_group_matcher = _lazy_re_compile(r'\(')
++non_capturing_group_matcher = _lazy_re_compile(r'\(\?\:')
+ 
+ 
+ def replace_metacharacters(pattern):
+@@ -210,3 +211,18 @@ def replace_unnamed_groups(pattern):
+         final_pattern += pattern[:start] + '<var>'
+         prev_end = end
+     return final_pattern + pattern[prev_end:]
++
++
++def remove_non_capturing_groups(pattern):
++    r"""
++    Find non-capturing groups in the given `pattern` and remove them, e.g.
++    1. (?P<a>\w+)/b/(?:\w+)c(?:\w+) => (?P<a>\\w+)/b/c
++    2. ^(?:\w+(?:\w+))a => ^a
++    3. ^a(?:\w+)/b(?:\w+) => ^a/b
++    """
++    group_start_end_indices = _find_groups(pattern, non_capturing_group_matcher)
++    final_pattern, prev_end = '', None
++    for start, end, _ in group_start_end_indices:
++        final_pattern += pattern[prev_end:start]
++        prev_end = end
++    return final_pattern + pattern[prev_end:]
+diff --git a/django/contrib/admindocs/views.py b/django/contrib/admindocs/views.py
+index ffe4e13..c03b662 100644
+--- a/django/contrib/admindocs/views.py
++++ b/django/contrib/admindocs/views.py
+@@ -1,4 +1,197 @@
+ import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-15316/django/contrib/admindocs/views.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
++import inspect
+ from importlib import import_module
+ from inspect import cleandoc
+ from pathlib import Path
+@@ -8,7 +201,8 @@ from django.contrib import admin
+ from django.contrib.admin.views.decorators import staff_member_required
+ from django.contrib.admindocs import utils
+ from django.contrib.admindocs.utils import (
+-    replace_metacharacters, replace_named_groups, replace_unnamed_groups,
++    remove_non_capturing_groups, replace_metacharacters, replace_named_groups,
++    replace_unnamed_groups,
+ )
+ from django.core.exceptions import ImproperlyConfigured, ViewDoesNotExist
+ from django.db import models
+@@ -404,12 +598,14 @@ def extract_views_from_urlpatterns(urlpatterns, base='', namespace=None):
+     return views
+ 
+ 
++@inspect_code
+ def simplify_regex(pattern):
+     r"""
+     Clean up urlpattern regexes into something more readable by humans. For
+     example, turn "^(?P<sport_slug>\w+)/athletes/(?P<athlete_slug>\w+)/$"
+     into "/<sport_slug>/athletes/<athlete_slug>/".
+     """
++    pattern = remove_non_capturing_groups(pattern)
+     pattern = replace_named_groups(pattern)
+     pattern = replace_unnamed_groups(pattern)
+     pattern = replace_metacharacters(pattern)
+diff --git a/tests/admin_docs/test_views.py b/tests/admin_docs/test_views.py
+index 5355382..b786fb1 100644
+--- a/tests/admin_docs/test_views.py
++++ b/tests/admin_docs/test_views.py
+@@ -397,6 +397,13 @@ class AdminDocViewFunctionsTests(SimpleTestCase):
+             (r'^(?P<a>(x|y))/b/(?P<c>\w+)', '/<a>/b/<c>'),
+             (r'^(?P<a>(x|y))/b/(?P<c>\w+)ab', '/<a>/b/<c>ab'),
+             (r'^(?P<a>(x|y)(\(|\)))/b/(?P<c>\w+)ab', '/<a>/b/<c>ab'),
++            # Non-capturing groups.
++            (r'^a(?:\w+)b', '/ab'),
++            (r'^a(?:(x|y))', '/a'),
++            (r'^(?:\w+(?:\w+))a', '/a'),
++            (r'^a(?:\w+)/b(?:\w+)', '/a/b'),
++            (r'(?P<a>\w+)/b/(?:\w+)c(?:\w+)', '/<a>/b/c'),
++            (r'(?P<a>\w+)/b/(\w+)/(?:\w+)c(?:\w+)', '/<a>/b/<var>/c'),
+             # Single and repeated metacharacters.
+             (r'^a', '/a'),
+             (r'^^a', '/a'),

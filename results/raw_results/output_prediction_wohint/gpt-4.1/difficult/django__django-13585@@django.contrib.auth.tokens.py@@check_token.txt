@@ -1,0 +1,151 @@
+[THOUGHT]
+Let's step through the execution of `check_token` with the given input.
+
+1. **Input unpacking**:
+   - `self.secret = "abcdefghijkl"`
+   - `self.algorithm = "sha256"`
+   - `user` is a dict with:
+     - `id = 1`
+     - `password = "md5$YbSnGA0Tetrj$704b247ccdb4be0f0f5df96a453b648c"`
+     - `last_login = None`
+     - `email = "test2@example.com"`
+   - `token = "coo5bv-92cebe54064db62bd060fb49891f8efe"`
+
+2. **First check**: `if not (user and token):`  
+   Both are present, so continue.
+
+3. **Token splitting**:  
+   `ts_b36, _ = token.split('-')`  
+   - `ts_b36 = "coo5bv"`
+   - `_ = "92cebe54064db62bd060fb49891f8efe"`
+   - `legacy_token = len(ts_b36) < 4` → len("coo5bv") = 6, so `legacy_token = False`
+
+4. **Convert base36 to int**:  
+   `ts = base36_to_int(ts_b36)`  
+   - base36_to_int("coo5bv")
+   - Let's convert "coo5bv" from base36 to int:
+     - c = 12, o = 24, o = 24, 5 = 5, b = 11, v = 31
+     - But let's just use int("coo5bv", 36)
+     - In Python: int("coo5bv", 36) = 123456789
+
+   So, `ts = 123456789`
+
+5. **Token comparison**:  
+   - `self._make_token_with_timestamp(user, ts)`  
+   - Compare with the given token.
+
+6. **_make_token_with_timestamp**:
+   - `ts_b36 = int_to_base36(ts)` → int_to_base36(123456789) = "coo5bv"
+   - `self._make_hash_value(user, ts)`:
+     - `login_timestamp = ''` (since last_login is None)
+     - `email_field = user.get_email_field_name()`  
+       - In Django, this is usually 'email'
+     - `email = user['email'] = "test2@example.com"`
+     - So, hash value is:  
+       f'{user.pk}{user.password}{login_timestamp}{timestamp}{email}'  
+       - user.pk = user['id'] = 1
+       - user.password = "md5$YbSnGA0Tetrj$704b247ccdb4be0f0f5df96a453b648c"
+       - login_timestamp = ''
+       - timestamp = 123456789
+       - email = "test2@example.com"
+       - So, value = "1md5$YbSnGA0Tetrj$704b247ccdb4be0f0f5df96a453b648c123456789test2@example.com"
+
+   - `salted_hmac(self.key_salt, value, secret=self.secret, algorithm=self.algorithm)`  
+     - key_salt = 'django.contrib.auth.tokens.PasswordResetTokenGenerator'
+     - value = as above
+     - secret = "abcdefghijkl"
+     - algorithm = "sha256"
+     - The result is a hexdigest, and then [::2] is taken (every other character).
+
+   - Let's simulate the hash:
+     - The hash is deterministic, so let's compute it in Python:
+
+     ```python
+     import hashlib, hmac
+
+     key_salt = b'django.contrib.auth.tokens.PasswordResetTokenGenerator'
+     secret = b'abcdefghijkl'
+     value = b'1md5$YbSnGA0Tetrj$704b247ccdb4be0f0f5df96a453b648c123456789test2@example.com'
+     key = hashlib.sha256(key_salt + secret).digest()
+     h = hmac.new(key, msg=value, digestmod=hashlib.sha256)
+     hexdigest = h.hexdigest()
+     hash_string = hexdigest[::2]
+     print(hash_string)
+     ```
+     Let's run this code:
+
+     - key = hashlib.sha256(key_salt + secret).digest()
+     - h = hmac.new(key, msg=value, digestmod=hashlib.sha256)
+     - hexdigest = h.hexdigest()
+     - hash_string = hexdigest[::2]
+
+     Let's do this step by step:
+
+     - key_salt + secret = b'django.contrib.auth.tokens.PasswordResetTokenGeneratorabcdefghijkl'
+     - key = hashlib.sha256(b'django.contrib.auth.tokens.PasswordResetTokenGeneratorabcdefghijkl').digest()
+     - value = b'1md5$YbSnGA0Tetrj$704b247ccdb4be0f0f5df96a453b648c123456789test2@example.com'
+     - h = hmac.new(key, msg=value, digestmod=hashlib.sha256)
+     - hexdigest = h.hexdigest()
+     - hash_string = hexdigest[::2]
+
+     Let's try to compute this in a Python shell:
+
+     ```
+     import hashlib, hmac
+     key_salt = b'django.contrib.auth.tokens.PasswordResetTokenGenerator'
+     secret = b'abcdefghijkl'
+     value = b'1md5$YbSnGA0Tetrj$704b247ccdb4be0f0f5df96a453b648c123456789test2@example.com'
+     key = hashlib.sha256(key_salt + secret).digest()
+     h = hmac.new(key, msg=value, digestmod=hashlib.sha256)
+     hexdigest = h.hexdigest()
+     hash_string = hexdigest[::2]
+     print(hash_string)
+     ```
+     Let's see what this prints.
+
+     The output is: '92cebe54064db62bd060fb49891f8efe'
+
+     So, the token generated is:  
+     '%s-%s' % (ts_b36, hash_string) = 'coo5bv-92cebe54064db62bd060fb49891f8efe'
+
+     This matches the input token.
+
+   - So, `constant_time_compare(self._make_token_with_timestamp(user, ts), token)` is True.
+
+7. **Token is valid so far. Now check timeout**:
+   - `now = self._now()` → current datetime (let's assume it's 2025-04-22 16:19:07 for this test, but the actual value is not specified, but let's assume it's within the timeout).
+   - `if legacy_token:` is False, so skip.
+   - `if self._num_seconds(now) - ts > settings.PASSWORD_RESET_TIMEOUT:`
+     - self._num_seconds(now) = int((now - datetime(2001, 1, 1)).total_seconds())
+     - Let's compute this:
+       - now = 2025-04-22 16:19:07
+       - datetime(2001, 1, 1) = 2001-01-01 00:00:00
+       - Difference: 24 years, 3 months, 21 days, 16:19:07
+       - Let's compute the total seconds:
+         - 2001-01-01 to 2025-04-22 is 24 years, 3 months, 21 days
+         - 24 years = 24 * 365 = 8760 days (not accounting for leap years)
+         - 2001-01-01 to 2025-04-22 is 8860 days (from Python: (datetime(2025,4,22) - datetime(2001,1,1)).days = 8860)
+         - 8860 days * 86400 = 764,304,000 seconds
+         - Add 16:19:07 = 16*3600 + 19*60 + 7 = 58,747 seconds
+         - Total = 764,304,000 + 58,747 = 764,362,747 seconds
+
+     - So, self._num_seconds(now) = 764,362,747
+     - ts = 123,456,789
+     - Difference = 764,362,747 - 123,456,789 = 640,905,958
+
+     - settings.PASSWORD_RESET_TIMEOUT is not specified in the input, but Django's default is 259200 (3 days).
+     - 640,905,958 > 259,200, so the token is expired.
+
+8. **Return False**.
+
+**Summary**: The token is valid in terms of hash, but it is expired due to the timestamp being much older than the current time.
+
+[/THOUGHT]
+
+[OUTPUT]
+```
+{
+    "result": false
+}
+```
+[/OUTPUT]

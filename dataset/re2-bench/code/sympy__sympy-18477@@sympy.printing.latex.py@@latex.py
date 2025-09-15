@@ -1,0 +1,341 @@
+from __future__ import print_function, division
+from typing import Any, Dict
+import itertools
+from sympy.core import S, Add, Symbol, Mod
+from sympy.core.alphabets import greeks
+from sympy.core.containers import Tuple
+from sympy.core.function import _coeff_isneg, AppliedUndef, Derivative
+from sympy.core.operations import AssocOp
+from sympy.core.sympify import SympifyError
+from sympy.logic.boolalg import true
+from sympy.printing.precedence import precedence_traditional
+from sympy.printing.printer import Printer
+from sympy.printing.conventions import split_super_sub, requires_partial
+from sympy.printing.precedence import precedence, PRECEDENCE
+import mpmath.libmp as mlib
+from mpmath.libmp import prec_to_dps
+from sympy.core.compatibility import default_sort_key
+from sympy.utilities.iterables import has_variety
+import re
+from sympy import Integral, Product, Sum
+from sympy.combinatorics.permutations import Permutation
+from sympy.combinatorics.permutations import Permutation
+from sympy.utilities.exceptions import SymPyDeprecationWarning
+from sympy.core.power import Pow
+from sympy.physics.units import Quantity
+from sympy.simplify import fraction
+from sympy.vector import Vector
+from sympy.functions.special.tensor_functions import KroneckerDelta
+from sympy.functions.special.gamma_functions import gamma, lowergamma
+from sympy.functions.special.beta_functions import beta
+from sympy.functions.special.delta_functions import DiracDelta
+from sympy.functions.special.error_functions import Chi
+from sympy import Equivalent, Implies
+from sympy.matrices import MatrixSymbol
+from sympy.matrices import MatrixSymbol
+from sympy import MatMul, Mul
+from sympy.matrices import MatrixSymbol
+from sympy.categories import NamedMorphism
+
+accepted_latex_functions = ['arcsin', 'arccos', 'arctan', 'sin', 'cos', 'tan',
+                            'sinh', 'cosh', 'tanh', 'sqrt', 'ln', 'log', 'sec',
+                            'csc', 'cot', 'coth', 're', 'im', 'frac', 'root',
+                            'arg',
+                            ]
+tex_greek_dictionary = {
+    'Alpha': 'A',
+    'Beta': 'B',
+    'Gamma': r'\Gamma',
+    'Delta': r'\Delta',
+    'Epsilon': 'E',
+    'Zeta': 'Z',
+    'Eta': 'H',
+    'Theta': r'\Theta',
+    'Iota': 'I',
+    'Kappa': 'K',
+    'Lambda': r'\Lambda',
+    'Mu': 'M',
+    'Nu': 'N',
+    'Xi': r'\Xi',
+    'omicron': 'o',
+    'Omicron': 'O',
+    'Pi': r'\Pi',
+    'Rho': 'P',
+    'Sigma': r'\Sigma',
+    'Tau': 'T',
+    'Upsilon': r'\Upsilon',
+    'Phi': r'\Phi',
+    'Chi': 'X',
+    'Psi': r'\Psi',
+    'Omega': r'\Omega',
+    'lamda': r'\lambda',
+    'Lamda': r'\Lambda',
+    'khi': r'\chi',
+    'Khi': r'X',
+    'varepsilon': r'\varepsilon',
+    'varkappa': r'\varkappa',
+    'varphi': r'\varphi',
+    'varpi': r'\varpi',
+    'varrho': r'\varrho',
+    'varsigma': r'\varsigma',
+    'vartheta': r'\vartheta',
+}
+other_symbols = set(['aleph', 'beth', 'daleth', 'gimel', 'ell', 'eth', 'hbar',
+                     'hslash', 'mho', 'wp', ])
+modifier_dict = {
+    # Accents
+    'mathring': lambda s: r'\mathring{'+s+r'}',
+    'ddddot': lambda s: r'\ddddot{'+s+r'}',
+    'dddot': lambda s: r'\dddot{'+s+r'}',
+    'ddot': lambda s: r'\ddot{'+s+r'}',
+    'dot': lambda s: r'\dot{'+s+r'}',
+    'check': lambda s: r'\check{'+s+r'}',
+    'breve': lambda s: r'\breve{'+s+r'}',
+    'acute': lambda s: r'\acute{'+s+r'}',
+    'grave': lambda s: r'\grave{'+s+r'}',
+    'tilde': lambda s: r'\tilde{'+s+r'}',
+    'hat': lambda s: r'\hat{'+s+r'}',
+    'bar': lambda s: r'\bar{'+s+r'}',
+    'vec': lambda s: r'\vec{'+s+r'}',
+    'prime': lambda s: "{"+s+"}'",
+    'prm': lambda s: "{"+s+"}'",
+    # Faces
+    'bold': lambda s: r'\boldsymbol{'+s+r'}',
+    'bm': lambda s: r'\boldsymbol{'+s+r'}',
+    'cal': lambda s: r'\mathcal{'+s+r'}',
+    'scr': lambda s: r'\mathscr{'+s+r'}',
+    'frak': lambda s: r'\mathfrak{'+s+r'}',
+    # Brackets
+    'norm': lambda s: r'\left\|{'+s+r'}\right\|',
+    'avg': lambda s: r'\left\langle{'+s+r'}\right\rangle',
+    'abs': lambda s: r'\left|{'+s+r'}\right|',
+    'mag': lambda s: r'\left|{'+s+r'}\right|',
+}
+greek_letters_set = frozenset(greeks)
+_between_two_numbers_p = (
+    re.compile(r'[0-9][} ]*$'),  # search
+    re.compile(r'[{ ]*[-+0-9]'),  # match
+)
+
+def latex(expr, full_prec=False, min=None, max=None, fold_frac_powers=False,
+          fold_func_brackets=False, fold_short_frac=None, inv_trig_style="abbreviated",
+          itex=False, ln_notation=False, long_frac_ratio=None,
+          mat_delim="[", mat_str=None, mode="plain", mul_symbol=None,
+          order=None, symbol_names=None, root_notation=True,
+          mat_symbol_style="plain", imaginary_unit="i", gothic_re_im=False,
+          decimal_separator="period", perm_cyclic=True):
+    r"""Convert the given expression to LaTeX string representation.
+
+    Parameters
+    ==========
+    full_prec: boolean, optional
+        If set to True, a floating point number is printed with full precision.
+    fold_frac_powers : boolean, optional
+        Emit ``^{p/q}`` instead of ``^{\frac{p}{q}}`` for fractional powers.
+    fold_func_brackets : boolean, optional
+        Fold function brackets where applicable.
+    fold_short_frac : boolean, optional
+        Emit ``p / q`` instead of ``\frac{p}{q}`` when the denominator is
+        simple enough (at most two terms and no powers). The default value is
+        ``True`` for inline mode, ``False`` otherwise.
+    inv_trig_style : string, optional
+        How inverse trig functions should be displayed. Can be one of
+        ``abbreviated``, ``full``, or ``power``. Defaults to ``abbreviated``.
+    itex : boolean, optional
+        Specifies if itex-specific syntax is used, including emitting
+        ``$$...$$``.
+    ln_notation : boolean, optional
+        If set to ``True``, ``\ln`` is used instead of default ``\log``.
+    long_frac_ratio : float or None, optional
+        The allowed ratio of the width of the numerator to the width of the
+        denominator before the printer breaks off long fractions. If ``None``
+        (the default value), long fractions are not broken up.
+    mat_delim : string, optional
+        The delimiter to wrap around matrices. Can be one of ``[``, ``(``, or
+        the empty string. Defaults to ``[``.
+    mat_str : string, optional
+        Which matrix environment string to emit. ``smallmatrix``, ``matrix``,
+        ``array``, etc. Defaults to ``smallmatrix`` for inline mode, ``matrix``
+        for matrices of no more than 10 columns, and ``array`` otherwise.
+    mode: string, optional
+        Specifies how the generated code will be delimited. ``mode`` can be one
+        of ``plain``, ``inline``, ``equation`` or ``equation*``.  If ``mode``
+        is set to ``plain``, then the resulting code will not be delimited at
+        all (this is the default). If ``mode`` is set to ``inline`` then inline
+        LaTeX ``$...$`` will be used. If ``mode`` is set to ``equation`` or
+        ``equation*``, the resulting code will be enclosed in the ``equation``
+        or ``equation*`` environment (remember to import ``amsmath`` for
+        ``equation*``), unless the ``itex`` option is set. In the latter case,
+        the ``$$...$$`` syntax is used.
+    mul_symbol : string or None, optional
+        The symbol to use for multiplication. Can be one of ``None``, ``ldot``,
+        ``dot``, or ``times``.
+    order: string, optional
+        Any of the supported monomial orderings (currently ``lex``, ``grlex``,
+        or ``grevlex``), ``old``, and ``none``. This parameter does nothing for
+        Mul objects. Setting order to ``old`` uses the compatibility ordering
+        for Add defined in Printer. For very large expressions, set the
+        ``order`` keyword to ``none`` if speed is a concern.
+    symbol_names : dictionary of strings mapped to symbols, optional
+        Dictionary of symbols and the custom strings they should be emitted as.
+    root_notation : boolean, optional
+        If set to ``False``, exponents of the form 1/n are printed in fractonal
+        form. Default is ``True``, to print exponent in root form.
+    mat_symbol_style : string, optional
+        Can be either ``plain`` (default) or ``bold``. If set to ``bold``,
+        a MatrixSymbol A will be printed as ``\mathbf{A}``, otherwise as ``A``.
+    imaginary_unit : string, optional
+        String to use for the imaginary unit. Defined options are "i" (default)
+        and "j". Adding "r" or "t" in front gives ``\mathrm`` or ``\text``, so
+        "ri" leads to ``\mathrm{i}`` which gives `\mathrm{i}`.
+    gothic_re_im : boolean, optional
+        If set to ``True``, `\Re` and `\Im` is used for ``re`` and ``im``, respectively.
+        The default is ``False`` leading to `\operatorname{re}` and `\operatorname{im}`.
+    decimal_separator : string, optional
+        Specifies what separator to use to separate the whole and fractional parts of a
+        floating point number as in `2.5` for the default, ``period`` or `2{,}5`
+        when ``comma`` is specified. Lists, sets, and tuple are printed with semicolon
+        separating the elements when ``comma`` is chosen. For example, [1; 2; 3] when
+        ``comma`` is chosen and [1,2,3] for when ``period`` is chosen.
+    min: Integer or None, optional
+        Sets the lower bound for the exponent to print floating point numbers in
+        fixed-point format.
+    max: Integer or None, optional
+        Sets the upper bound for the exponent to print floating point numbers in
+        fixed-point format.
+
+    Notes
+    =====
+
+    Not using a print statement for printing, results in double backslashes for
+    latex commands since that's the way Python escapes backslashes in strings.
+
+    >>> from sympy import latex, Rational
+    >>> from sympy.abc import tau
+    >>> latex((2*tau)**Rational(7,2))
+    '8 \\sqrt{2} \\tau^{\\frac{7}{2}}'
+    >>> print(latex((2*tau)**Rational(7,2)))
+    8 \sqrt{2} \tau^{\frac{7}{2}}
+
+    Examples
+    ========
+
+    >>> from sympy import latex, pi, sin, asin, Integral, Matrix, Rational, log
+    >>> from sympy.abc import x, y, mu, r, tau
+
+    Basic usage:
+
+    >>> print(latex((2*tau)**Rational(7,2)))
+    8 \sqrt{2} \tau^{\frac{7}{2}}
+
+    ``mode`` and ``itex`` options:
+
+    >>> print(latex((2*mu)**Rational(7,2), mode='plain'))
+    8 \sqrt{2} \mu^{\frac{7}{2}}
+    >>> print(latex((2*tau)**Rational(7,2), mode='inline'))
+    $8 \sqrt{2} \tau^{7 / 2}$
+    >>> print(latex((2*mu)**Rational(7,2), mode='equation*'))
+    \begin{equation*}8 \sqrt{2} \mu^{\frac{7}{2}}\end{equation*}
+    >>> print(latex((2*mu)**Rational(7,2), mode='equation'))
+    \begin{equation}8 \sqrt{2} \mu^{\frac{7}{2}}\end{equation}
+    >>> print(latex((2*mu)**Rational(7,2), mode='equation', itex=True))
+    $$8 \sqrt{2} \mu^{\frac{7}{2}}$$
+    >>> print(latex((2*mu)**Rational(7,2), mode='plain'))
+    8 \sqrt{2} \mu^{\frac{7}{2}}
+    >>> print(latex((2*tau)**Rational(7,2), mode='inline'))
+    $8 \sqrt{2} \tau^{7 / 2}$
+    >>> print(latex((2*mu)**Rational(7,2), mode='equation*'))
+    \begin{equation*}8 \sqrt{2} \mu^{\frac{7}{2}}\end{equation*}
+    >>> print(latex((2*mu)**Rational(7,2), mode='equation'))
+    \begin{equation}8 \sqrt{2} \mu^{\frac{7}{2}}\end{equation}
+    >>> print(latex((2*mu)**Rational(7,2), mode='equation', itex=True))
+    $$8 \sqrt{2} \mu^{\frac{7}{2}}$$
+
+    Fraction options:
+
+    >>> print(latex((2*tau)**Rational(7,2), fold_frac_powers=True))
+    8 \sqrt{2} \tau^{7/2}
+    >>> print(latex((2*tau)**sin(Rational(7,2))))
+    \left(2 \tau\right)^{\sin{\left(\frac{7}{2} \right)}}
+    >>> print(latex((2*tau)**sin(Rational(7,2)), fold_func_brackets=True))
+    \left(2 \tau\right)^{\sin {\frac{7}{2}}}
+    >>> print(latex(3*x**2/y))
+    \frac{3 x^{2}}{y}
+    >>> print(latex(3*x**2/y, fold_short_frac=True))
+    3 x^{2} / y
+    >>> print(latex(Integral(r, r)/2/pi, long_frac_ratio=2))
+    \frac{\int r\, dr}{2 \pi}
+    >>> print(latex(Integral(r, r)/2/pi, long_frac_ratio=0))
+    \frac{1}{2 \pi} \int r\, dr
+
+    Multiplication options:
+
+    >>> print(latex((2*tau)**sin(Rational(7,2)), mul_symbol="times"))
+    \left(2 \times \tau\right)^{\sin{\left(\frac{7}{2} \right)}}
+
+    Trig options:
+
+    >>> print(latex(asin(Rational(7,2))))
+    \operatorname{asin}{\left(\frac{7}{2} \right)}
+    >>> print(latex(asin(Rational(7,2)), inv_trig_style="full"))
+    \arcsin{\left(\frac{7}{2} \right)}
+    >>> print(latex(asin(Rational(7,2)), inv_trig_style="power"))
+    \sin^{-1}{\left(\frac{7}{2} \right)}
+
+    Matrix options:
+
+    >>> print(latex(Matrix(2, 1, [x, y])))
+    \left[\begin{matrix}x\\y\end{matrix}\right]
+    >>> print(latex(Matrix(2, 1, [x, y]), mat_str = "array"))
+    \left[\begin{array}{c}x\\y\end{array}\right]
+    >>> print(latex(Matrix(2, 1, [x, y]), mat_delim="("))
+    \left(\begin{matrix}x\\y\end{matrix}\right)
+
+    Custom printing of symbols:
+
+    >>> print(latex(x**2, symbol_names={x: 'x_i'}))
+    x_i^{2}
+
+    Logarithms:
+
+    >>> print(latex(log(10)))
+    \log{\left(10 \right)}
+    >>> print(latex(log(10), ln_notation=True))
+    \ln{\left(10 \right)}
+
+    ``latex()`` also supports the builtin container types list, tuple, and
+    dictionary.
+
+    >>> print(latex([2/x, y], mode='inline'))
+    $\left[ 2 / x, \  y\right]$
+
+    """
+    if symbol_names is None:
+        symbol_names = {}
+
+    settings = {
+        'full_prec': full_prec,
+        'fold_frac_powers': fold_frac_powers,
+        'fold_func_brackets': fold_func_brackets,
+        'fold_short_frac': fold_short_frac,
+        'inv_trig_style': inv_trig_style,
+        'itex': itex,
+        'ln_notation': ln_notation,
+        'long_frac_ratio': long_frac_ratio,
+        'mat_delim': mat_delim,
+        'mat_str': mat_str,
+        'mode': mode,
+        'mul_symbol': mul_symbol,
+        'order': order,
+        'symbol_names': symbol_names,
+        'root_notation': root_notation,
+        'mat_symbol_style': mat_symbol_style,
+        'imaginary_unit': imaginary_unit,
+        'gothic_re_im': gothic_re_im,
+        'decimal_separator': decimal_separator,
+        'perm_cyclic' : perm_cyclic,
+        'min': min,
+        'max': max,
+    }
+
+    return LatexPrinter(settings).doprint(expr)

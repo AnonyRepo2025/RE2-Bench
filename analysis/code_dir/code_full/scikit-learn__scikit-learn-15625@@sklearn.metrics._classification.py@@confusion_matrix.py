@@ -1,0 +1,188 @@
+def _check_targets(y_true, y_pred):
+    check_consistent_length(y_true, y_pred)
+    type_true = type_of_target(y_true)
+    type_pred = type_of_target(y_pred)
+    y_type = {type_true, type_pred}
+    if y_type == {'binary', 'multiclass'}:
+        y_type = {'multiclass'}
+    if len(y_type) > 1:
+        raise ValueError("Classification metrics can't handle a mix of {0} and {1} targets".format(type_true, type_pred))
+    y_type = y_type.pop()
+    if y_type not in ['binary', 'multiclass', 'multilabel-indicator']:
+        raise ValueError('{0} is not supported'.format(y_type))
+    if y_type in ['binary', 'multiclass']:
+        y_true = column_or_1d(y_true)
+        y_pred = column_or_1d(y_pred)
+        if y_type == 'binary':
+            unique_values = np.union1d(y_true, y_pred)
+            if len(unique_values) > 2:
+                y_type = 'multiclass'
+    if y_type.startswith('multilabel'):
+        y_true = csr_matrix(y_true)
+        y_pred = csr_matrix(y_pred)
+        y_type = 'multilabel-indicator'
+    return (y_type, y_true, y_pred)
+
+def check_consistent_length(*arrays):
+    lengths = [_num_samples(X) for X in arrays if X is not None]
+    uniques = np.unique(lengths)
+    if len(uniques) > 1:
+        raise ValueError('Found input variables with inconsistent numbers of samples: %r' % [int(l) for l in lengths])
+
+def _num_samples(x):
+    message = 'Expected sequence or array-like, got %s' % type(x)
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError(message)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError(message)
+    if hasattr(x, 'shape') and x.shape is not None:
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        if isinstance(x.shape[0], numbers.Integral):
+            return x.shape[0]
+    try:
+        return len(x)
+    except TypeError:
+        raise TypeError(message)
+
+def type_of_target(y):
+    valid = (isinstance(y, (Sequence, spmatrix)) or hasattr(y, '__array__')) and (not isinstance(y, str))
+    if not valid:
+        raise ValueError('Expected array-like (array or non-string sequence), got %r' % y)
+    sparse_pandas = y.__class__.__name__ in ['SparseSeries', 'SparseArray']
+    if sparse_pandas:
+        raise ValueError("y cannot be class 'SparseSeries' or 'SparseArray'")
+    if is_multilabel(y):
+        return 'multilabel-indicator'
+    try:
+        y = np.asarray(y)
+    except ValueError:
+        return 'unknown'
+    try:
+        if not hasattr(y[0], '__array__') and isinstance(y[0], Sequence) and (not isinstance(y[0], str)):
+            raise ValueError('You appear to be using a legacy multi-label data representation. Sequence of sequences are no longer supported; use a binary array or sparse matrix instead - the MultiLabelBinarizer transformer can convert to this format.')
+    except IndexError:
+        pass
+    if y.ndim > 2 or (y.dtype == object and len(y) and (not isinstance(y.flat[0], str))):
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] == 0:
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] > 1:
+        suffix = '-multioutput'
+    else:
+        suffix = ''
+    if y.dtype.kind == 'f' and np.any(y != y.astype(int)):
+        _assert_all_finite(y)
+        return 'continuous' + suffix
+    if len(np.unique(y)) > 2 or (y.ndim >= 2 and len(y[0]) > 1):
+        return 'multiclass' + suffix
+    else:
+        return 'binary'
+
+def is_multilabel(y):
+    if hasattr(y, '__array__') or isinstance(y, Sequence):
+        y = np.asarray(y)
+    if not (hasattr(y, 'shape') and y.ndim == 2 and (y.shape[1] > 1)):
+        return False
+    if issparse(y):
+        if isinstance(y, (dok_matrix, lil_matrix)):
+            y = y.tocsr()
+        return len(y.data) == 0 or (np.unique(y.data).size == 1 and (y.dtype.kind in 'biu' or _is_integral_float(np.unique(y.data))))
+    else:
+        labels = np.unique(y)
+        return len(labels) < 3 and (y.dtype.kind in 'biu' or _is_integral_float(labels))
+
+def column_or_1d(y, warn=False):
+    y = np.asarray(y)
+    shape = np.shape(y)
+    if len(shape) == 1:
+        return np.ravel(y)
+    if len(shape) == 2 and shape[1] == 1:
+        if warn:
+            warnings.warn('A column-vector y was passed when a 1d array was expected. Please change the shape of y to (n_samples, ), for example using ravel().', DataConversionWarning, stacklevel=2)
+        return np.ravel(y)
+    raise ValueError('bad input shape {0}'.format(shape))
+
+def unique_labels(*ys):
+    if not ys:
+        raise ValueError('No argument has been passed.')
+    ys_types = set((type_of_target(x) for x in ys))
+    if ys_types == {'binary', 'multiclass'}:
+        ys_types = {'multiclass'}
+    if len(ys_types) > 1:
+        raise ValueError('Mix type of y not allowed, got types %s' % ys_types)
+    label_type = ys_types.pop()
+    if label_type == 'multilabel-indicator' and len(set((check_array(y, ['csr', 'csc', 'coo']).shape[1] for y in ys))) > 1:
+        raise ValueError('Multi-label binary indicator input with different numbers of labels')
+    _unique_labels = _FN_UNIQUE_LABELS.get(label_type, None)
+    if not _unique_labels:
+        raise ValueError('Unknown label type: %s' % repr(ys))
+    ys_labels = set(chain.from_iterable((_unique_labels(y) for y in ys)))
+    if len(set((isinstance(label, str) for label in ys_labels))) > 1:
+        raise ValueError('Mix of label input types (string and number)')
+    return np.array(sorted(ys_labels))
+
+def _unique_multiclass(y):
+    if hasattr(y, '__array__'):
+        return np.unique(np.asarray(y))
+    else:
+        return set(y)
+
+
+
+import warnings
+import numpy as np
+from scipy.sparse import coo_matrix
+from scipy.sparse import csr_matrix
+from ..preprocessing import LabelBinarizer
+from ..preprocessing import LabelEncoder
+from ..utils import assert_all_finite
+from ..utils import check_array
+from ..utils import check_consistent_length
+from ..utils import column_or_1d
+from ..utils.multiclass import unique_labels
+from ..utils.multiclass import type_of_target
+from ..utils.validation import _num_samples
+from ..utils.sparsefuncs import count_nonzero
+from ..exceptions import UndefinedMetricWarning
+
+def confusion_matrix(y_true, y_pred, labels=None, sample_weight=None, normalize=None):
+    y_type, y_true, y_pred = _check_targets(y_true, y_pred)
+    if y_type not in ('binary', 'multiclass'):
+        raise ValueError('%s is not supported' % y_type)
+    if labels is None:
+        labels = unique_labels(y_true, y_pred)
+    else:
+        labels = np.asarray(labels)
+        if np.all([l not in y_true for l in labels]):
+            raise ValueError('At least one label specified must be in y_true')
+    if sample_weight is None:
+        sample_weight = np.ones(y_true.shape[0], dtype=np.int64)
+    else:
+        sample_weight = np.asarray(sample_weight)
+    check_consistent_length(y_true, y_pred, sample_weight)
+    n_labels = labels.size
+    label_to_ind = {y: x for x, y in enumerate(labels)}
+    y_pred = np.array([label_to_ind.get(x, n_labels + 1) for x in y_pred])
+    y_true = np.array([label_to_ind.get(x, n_labels + 1) for x in y_true])
+    ind = np.logical_and(y_pred < n_labels, y_true < n_labels)
+    y_pred = y_pred[ind]
+    y_true = y_true[ind]
+    sample_weight = sample_weight[ind]
+    if sample_weight.dtype.kind in {'i', 'u', 'b'}:
+        dtype = np.int64
+    else:
+        dtype = np.float64
+    cm = coo_matrix((sample_weight, (y_true, y_pred)), shape=(n_labels, n_labels), dtype=dtype).toarray()
+    with np.errstate(all='ignore'):
+        if normalize == 'true':
+            cm = cm / cm.sum(axis=1, keepdims=True)
+        elif normalize == 'pred':
+            cm = cm / cm.sum(axis=0, keepdims=True)
+        elif normalize == 'all':
+            cm = cm / cm.sum()
+        cm = np.nan_to_num(cm)
+    return cm

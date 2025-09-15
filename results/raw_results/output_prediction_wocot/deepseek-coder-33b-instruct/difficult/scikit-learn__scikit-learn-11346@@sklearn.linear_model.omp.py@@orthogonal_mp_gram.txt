@@ -1,0 +1,120 @@
+
+[OUTPUT]
+```
+{
+    "output": "[[0.1260535 ]\n [-0.4460294 ]\n [ 0.29305911]\n [-0.84156526]\n [ 2.15579371]\n [-1.60930398]\n [-0.25892627]\n [-1.34654783]\n [ 1.24704881]\n [ 0.66923821]\n [-0.16778773]\n [-0.09414498]]"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import warnings
+from math import sqrt
+import numpy as np
+from scipy import linalg
+from scipy.linalg.lapack import get_lapack_funcs
+from .base import LinearModel, _pre_fit
+from ..base import RegressorMixin
+from ..utils import as_float_array, check_array, check_X_y
+from ..model_selection import check_cv
+from ..externals.joblib import Parallel, delayed
+premature = ' Orthogonal matching pursuit ended prematurely due to linear\ndependence in the dictionary. The requested precision might not have been met.\n'
+
+def orthogonal_mp_gram(Gram, Xy, n_nonzero_coefs=None, tol=None, norms_squared=None, copy_Gram=True, copy_Xy=True, return_path=False, return_n_iter=False):
+    Gram = check_array(Gram, order='F', copy=copy_Gram)
+    Xy = np.asarray(Xy)
+    if Xy.ndim > 1 and Xy.shape[1] > 1:
+        copy_Gram = True
+    if Xy.ndim == 1:
+        Xy = Xy[:, np.newaxis]
+        if tol is not None:
+            norms_squared = [norms_squared]
+    if copy_Xy or not Xy.flags.writeable:
+        Xy = Xy.copy()
+    if n_nonzero_coefs is None and tol is None:
+        n_nonzero_coefs = int(0.1 * len(Gram))
+    if tol is not None and norms_squared is None:
+        raise ValueError('Gram OMP needs the precomputed norms in order to evaluate the error sum of squares.')
+    if tol is not None and tol < 0:
+        raise ValueError('Epsilon cannot be negative')
+    if tol is None and n_nonzero_coefs <= 0:
+        raise ValueError('The number of atoms must be positive')
+    if tol is None and n_nonzero_coefs > len(Gram):
+        raise ValueError('The number of atoms cannot be more than the number of features')
+    if return_path:
+        coef = np.zeros((len(Gram), Xy.shape[1], len(Gram)))
+    else:
+        coef = np.zeros((len(Gram), Xy.shape[1]))
+    n_iters = []
+    for k in range(Xy.shape[1]):
+        out = _gram_omp(Gram, Xy[:, k], n_nonzero_coefs, norms_squared[k] if tol is not None else None, tol, copy_Gram=copy_Gram, copy_Xy=False, return_path=return_path)
+        if return_path:
+            _, idx, coefs, n_iter = out
+            coef = coef[:, :, :len(idx)]
+            for n_active, x in enumerate(coefs.T):
+                coef[idx[:n_active + 1], k, n_active] = x[:n_active + 1]
+        else:
+            x, idx, n_iter = out
+            coef[idx, k] = x
+        n_iters.append(n_iter)
+    if Xy.shape[1] == 1:
+        n_iters = n_iters[0]
+    if return_n_iter:
+        return (np.squeeze(coef), n_iters)
+    else:
+        return np.squeeze(coef)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=False, estimator=None):
+    if accept_sparse is None:
+        warnings.warn("Passing 'None' to parameter 'accept_sparse' in methods check_array and check_X_y is deprecated in version 0.19 and will be removed in 0.21. Use 'accept_sparse=False'  instead.", DeprecationWarning)
+        accept_sparse = False
+    array_orig = array
+    dtype_numeric = isinstance(dtype, six.string_types) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {XXX} instead'.format(XXX=force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, six.string_types):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse, dtype, copy, force_all_finite)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                array = np.asarray(array, dtype=dtype, order=order)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of strings will be interpreted as decimal numbers if parameter 'dtype' is 'numeric'. It is recommended that you convert the array to type np.float64 before passing it to check_array.", FutureWarning)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64

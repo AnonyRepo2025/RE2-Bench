@@ -1,0 +1,300 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+from datetime import datetime, time
+from django.conf import settings
+from django.utils.crypto import constant_time_compare, salted_hmac
+from django.utils.http import base36_to_int, int_to_base36
+default_token_generator = PasswordResetTokenGenerator()
+
+class PasswordResetTokenGenerator:
+    key_salt = 'django.contrib.auth.tokens.PasswordResetTokenGenerator'
+    algorithm = None
+    secret = None
+
+    def check_token(self, user, token):
+        if not (user and token):
+            return False
+        try:
+            ts_b36, _ = token.split('-')
+            legacy_token = len(ts_b36) < 4
+        except ValueError:
+            return False
+        try:
+            ts = base36_to_int(ts_b36)
+        except ValueError:
+            return False
+        if not constant_time_compare(self._make_token_with_timestamp(user, ts), token):
+            if not constant_time_compare(self._make_token_with_timestamp(user, ts, legacy=True), token):
+                return False
+        now = self._now()
+        if legacy_token:
+            ts *= 24 * 60 * 60
+            ts += int((now - datetime.combine(now.date(), time.min)).total_seconds())
+        if self._num_seconds(now) - ts > settings.PASSWORD_RESET_TIMEOUT:
+            return False
+        return True
+
+    def _make_token_with_timestamp(self, user, timestamp, legacy=False):
+        ts_b36 = int_to_base36(timestamp)
+        hash_string = salted_hmac(self.key_salt, self._make_hash_value(user, timestamp), secret=self.secret, algorithm='sha1' if legacy else self.algorithm).hexdigest()[::2]
+        return '%s-%s' % (ts_b36, hash_string)
+
+    def _make_hash_value(self, user, timestamp):
+        login_timestamp = '' if user.last_login is None else user.last_login.replace(microsecond=0, tzinfo=None)
+        email_field = user.get_email_field_name()
+        email = getattr(user, email_field, '') or ''
+        return f'{user.pk}{user.password}{login_timestamp}{timestamp}{email}'
+
+    def _num_seconds(self, dt):
+        return int((dt - datetime(2001, 1, 1)).total_seconds())
+
+    def _now(self):
+        return datetime.now()
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.django.utils.http.base36_to_int
+
+def base36_to_int(s):
+    if len(s) > 13:
+        raise ValueError('Base36 input too large')
+    return int(s, 36)
+
+.django.utils.http.int_to_base36
+
+def int_to_base36(i):
+    char_set = '0123456789abcdefghijklmnopqrstuvwxyz'
+    if i < 0:
+        raise ValueError('Negative base36 conversion input.')
+    if i < 36:
+        return char_set[i]
+    b36 = ''
+    while i != 0:
+        i, n = divmod(i, 36)
+        b36 = char_set[n] + b36
+    return b36
+
+.django.contrib.auth.base_user.AbstractBaseUser.get_email_field_name
+
+def get_email_field_name(cls):
+    try:
+        return cls.EMAIL_FIELD
+    except AttributeError:
+        return 'email'
+
+.django.db.models.base.Model._get_pk_val
+
+def _get_pk_val(self, meta=None):
+    meta = meta or self._meta
+    return getattr(self, meta.pk.attname)
+
+.django.utils.crypto.salted_hmac
+
+def salted_hmac(key_salt, value, secret=None, *, algorithm='sha1'):
+    if secret is None:
+        secret = settings.SECRET_KEY
+    key_salt = force_bytes(key_salt)
+    secret = force_bytes(secret)
+    try:
+        hasher = getattr(hashlib, algorithm)
+    except AttributeError as e:
+        raise InvalidAlgorithm('%r is not an algorithm accepted by the hashlib module.' % algorithm) from e
+    key = hasher(key_salt + secret).digest()
+    return hmac.new(key, msg=force_bytes(value), digestmod=hasher)
+
+.django.utils.encoding.force_bytes
+
+def force_bytes(s, encoding='utf-8', strings_only=False, errors='strict'):
+    if isinstance(s, bytes):
+        if encoding == 'utf-8':
+            return s
+        else:
+            return s.decode('utf-8', errors).encode(encoding, errors)
+    if strings_only and is_protected_type(s):
+        return s
+    if isinstance(s, memoryview):
+        return bytes(s)
+    return str(s).encode(encoding, errors)
+
+.django.utils.crypto.constant_time_compare
+
+def constant_time_compare(val1, val2):
+    return secrets.compare_digest(force_bytes(val1), force_bytes(val2))
+
+.django.conf.__init__.LazySettings.__getattr__
+
+def __getattr__(self, name):
+    if self._wrapped is empty:
+        self._setup(name)
+    val = getattr(self._wrapped, name)
+    if name in {'MEDIA_URL', 'STATIC_URL'} and val is not None:
+        val = self._add_script_prefix(val)
+    elif name == 'SECRET_KEY' and (not val):
+        raise ImproperlyConfigured('The SECRET_KEY setting must not be empty.')
+    self.__dict__[name] = val
+    return val
+
+.django.conf.__init__.UserSettingsHolder.__getattr__
+
+def __getattr__(self, name):
+    if not name.isupper() or name in self._deleted:
+        raise AttributeError
+    return getattr(self.default_settings, name)
+
+
+[/PYTHON]
+What will be the output of `check_token`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "secret": "abcdefghijkl",
+        "algorithm": "sha256"
+    },
+    "args": {
+        "user": {
+            "_state": {
+                "db": "default",
+                "adding": false
+            },
+            "id": 1,
+            "password": "md5$YbSnGA0Tetrj$704b247ccdb4be0f0f5df96a453b648c",
+            "last_login": null,
+            "is_superuser": false,
+            "username": "tokentestuser",
+            "first_name": "",
+            "last_name": "",
+            "email": "test2@example.com",
+            "is_staff": false,
+            "is_active": true,
+            "date_joined": "2025-04-22 16:19:07.249701"
+        },
+        "token": "coo5bv-92cebe54064db62bd060fb49891f8efe"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "output": XXX        
+}
+```
+[/STRUCTURE]

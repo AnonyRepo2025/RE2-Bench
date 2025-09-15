@@ -1,0 +1,433 @@
+diff --git a/sympy/calculus/tests/test_util.py b/sympy/calculus/tests/test_util.py
+index baa6344..4160ab0 100644
+--- a/sympy/calculus/tests/test_util.py
++++ b/sympy/calculus/tests/test_util.py
+@@ -354,5 +354,8 @@ def test_comparison_AccumBounds():
+ def test_contains_AccumBounds():
+     assert (1 in AccumBounds(1, 2)) == S.true
+     raises(TypeError, lambda: a in AccumBounds(1, 2))
++    assert 0 in AccumBounds(-1, 0)
++    raises(TypeError, lambda:
++        (cos(1)**2 + sin(1)**2 - 1) in AccumBounds(-1, 0))
+     assert (-oo in AccumBounds(1, oo)) == S.true
+     assert (oo in AccumBounds(-oo, 0)) == S.true
+diff --git a/sympy/calculus/util.py b/sympy/calculus/util.py
+index b2fcb16..def8e47 100644
+--- a/sympy/calculus/util.py
++++ b/sympy/calculus/util.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-13619/sympy/calculus/util.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from sympy import Order, S, log, limit, lcm_list, pi, Abs
+ from sympy.core.basic import Basic
+ from sympy.core import Add, Mul, Pow
+@@ -1202,6 +1395,7 @@ def __ge__(self, other):
+                 return False
+         return super(AccumulationBounds, self).__ge__(other)
+ 
++    @inspect_code
+     def __contains__(self, other):
+         """
+         Returns True if other is contained in self, where other
+@@ -1225,15 +1419,16 @@ def __contains__(self, other):
+ 
+         """
+         other = _sympify(other)
+-        if not (other.is_Symbol or other.is_number):
+-            raise TypeError("Input of type real symbol or Number expected")
+ 
+         if other is S.Infinity or other is S.NegativeInfinity:
+             if self.min is S.NegativeInfinity or self.max is S.Infinity:
+                 return True
+             return False
+ 
+-        return And(self.min <= other and self.max >= other)
++        rv = And(self.min <= other, self.max >= other)
++        if rv not in (True, False):
++            raise TypeError("input failed to evaluate")
++        return rv
+ 
+     def intersection(self, other):
+         """
+diff --git a/sympy/core/basic.py b/sympy/core/basic.py
+index 11e1e85..d4ca323 100644
+--- a/sympy/core/basic.py
++++ b/sympy/core/basic.py
+@@ -600,12 +600,13 @@ def is_comparable(self):
+         is_real = self.is_real
+         if is_real is False:
+             return False
+-        is_number = self.is_number
+-        if is_number is False:
++        if not self.is_number:
+             return False
++        # don't re-eval numbers that are already evaluated since
++        # this will create spurious precision
+         n, i = [p.evalf(2) if not p.is_Number else p
+             for p in self.as_real_imag()]
+-        if not i.is_Number or not n.is_Number:
++        if not (i.is_Number and n.is_Number):
+             return False
+         if i:
+             # if _prec = 1 we can't decide and if not,
+diff --git a/sympy/core/expr.py b/sympy/core/expr.py
+index d2bc518..1a13650 100644
+--- a/sympy/core/expr.py
++++ b/sympy/core/expr.py
+@@ -359,27 +359,53 @@ def _from_mpmath(x, prec):
+ 
+     @property
+     def is_number(self):
+-        """Returns True if ``self`` has no free symbols.
+-        It will be faster than ``if not self.free_symbols``, however, since
+-        ``is_number`` will fail as soon as it hits a free symbol.
++        """Returns True if ``self`` has no free symbols and no
++        undefined functions (AppliedUndef, to be precise). It will be
++        faster than ``if not self.free_symbols``, however, since
++        ``is_number`` will fail as soon as it hits a free symbol
++        or undefined function.
+ 
+         Examples
+         ========
+ 
+-        >>> from sympy import log, Integral
++        >>> from sympy import log, Integral, cos, sin, pi
++        >>> from sympy.core.function import Function
+         >>> from sympy.abc import x
++        >>> f = Function('f')
+ 
+         >>> x.is_number
+         False
++        >>> f(1).is_number
++        False
+         >>> (2*x).is_number
+         False
+-        >>> (2 + log(2)).is_number
+-        True
+         >>> (2 + Integral(2, x)).is_number
+         False
+         >>> (2 + Integral(2, (x, 1, 2))).is_number
+         True
+ 
++        Not all numbers are Numbers in the SymPy sense:
++
++        >>> pi.is_number, pi.is_Number
++        (True, False)
++
++        If something is a number it should evaluate to a number with
++        real and imaginary parts that are Numbers; the result may not
++        be comparable, however, since the real and/or imaginary part
++        of the result may not have precision.
++
++        >>> cos(1).is_number and cos(1).is_comparable
++        True
++
++        >>> z = cos(1)**2 + sin(1)**2 - 1
++        >>> z.is_number
++        True
++        >>> z.is_comparable
++        False
++
++        See Also
++        ========
++        sympy.core.basic.is_comparable
+         """
+         return all(obj.is_number for obj in self.args)
+ 
+@@ -531,20 +557,11 @@ def is_constant(self, *wrt, **flags):
+ 
+         simplify = flags.get('simplify', True)
+ 
+-        # Except for expressions that contain units, only one of these should
+-        # be necessary since if something is
+-        # known to be a number it should also know that there are no
+-        # free symbols. But is_number quits as soon as it hits a non-number
+-        # whereas free_symbols goes until all free symbols have been collected,
+-        # thus is_number should be faster. But a double check on free symbols
+-        # is made just in case there is a discrepancy between the two.
+-        free = self.free_symbols
+-        if self.is_number or not free:
+-            # if the following assertion fails then that object's free_symbols
+-            # method needs attention: if an expression is a number it cannot
+-            # have free symbols
+-            assert not free
++        if self.is_number:
+             return True
++        free = self.free_symbols
++        if not free:
++            return True  # assume f(1) is some constant
+ 
+         # if we are only interested in some symbols and they are not in the
+         # free symbols then this expression is constant wrt those symbols
+@@ -3411,12 +3428,10 @@ def doit(self, *args, **kwargs):
+ 
+ 
+ def _n2(a, b):
+-    """Return (a - b).evalf(2) if it, a and b are comparable, else None.
++    """Return (a - b).evalf(2) if a and b are comparable, else None.
+     This should only be used when a and b are already sympified.
+     """
+-    if not all(i.is_number for i in (a, b)):
+-        return
+-    # /!\ if is very important (see issue 8245) not to
++    # /!\ it is very important (see issue 8245) not to
+     # use a re-evaluated number in the calculation of dif
+     if a.is_comparable and b.is_comparable:
+         dif = (a - b).evalf(2)
+diff --git a/sympy/core/function.py b/sympy/core/function.py
+index 0183ed7..b585fbc 100644
+--- a/sympy/core/function.py
++++ b/sympy/core/function.py
+@@ -778,6 +778,8 @@ class AppliedUndef(Function):
+     function.
+     """
+ 
++    is_number = False
++
+     def __new__(cls, *args, **options):
+         args = list(map(sympify, args))
+         obj = super(AppliedUndef, cls).__new__(cls, *args, **options)
+diff --git a/sympy/core/tests/test_basic.py b/sympy/core/tests/test_basic.py
+index 207a980..04cf2c3 100644
+--- a/sympy/core/tests/test_basic.py
++++ b/sympy/core/tests/test_basic.py
+@@ -245,11 +245,10 @@ def test_literal_evalf_is_number_is_zero_is_comparable():
+     x = symbols('x')
+     f = Function('f')
+ 
+-    # the following should not be changed without a lot of dicussion
+-    # `foo.is_number` should be equivalent to `not foo.free_symbols`
+-    # it should not attempt anything fancy; see is_zero, is_constant
+-    # and equals for more rigorous tests.
+-    assert f(1).is_number is True
++    # issue 5033
++    assert f.is_number is False
++    # issue 6646
++    assert f(1).is_number is False
+     i = Integral(0, (x, x, x))
+     # expressions that are symbolically 0 can be difficult to prove
+     # so in case there is some easy way to know if something is 0
+diff --git a/sympy/core/tests/test_expr.py b/sympy/core/tests/test_expr.py
+index 18621e0..b8b645e 100644
+--- a/sympy/core/tests/test_expr.py
++++ b/sympy/core/tests/test_expr.py
+@@ -1522,6 +1522,7 @@ def test_is_constant():
+     assert checksol(x, x, Sum(x, (x, 1, n))) is False
+     assert checksol(x, x, Sum(x, (x, 1, n))) is False
+     f = Function('f')
++    assert f(1).is_constant
+     assert checksol(x, x, f(x)) is False
+ 
+     p = symbols('p', positive=True)
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 1d161f9..5d0a283 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -5,7 +5,7 @@
+ from sympy.core.containers import Tuple
+ from sympy.core.operations import LatticeOp, ShortCircuit
+ from sympy.core.function import (Application, Lambda,
+-    ArgumentIndexError, AppliedUndef)
++    ArgumentIndexError)
+ from sympy.core.expr import Expr
+ from sympy.core.mul import Mul
+ from sympy.core.numbers import Rational
+@@ -516,7 +516,6 @@ def _new_args_filter(cls, arg_sequence):
+             # pre-filter, checking comparability of arguments
+             if not isinstance(arg, Expr) or arg.is_real is False or (
+                     arg.is_number and
+-                    not arg.has(AppliedUndef) and
+                     not arg.is_comparable):
+                 raise ValueError("The argument '%s' is not comparable." % arg)
+ 

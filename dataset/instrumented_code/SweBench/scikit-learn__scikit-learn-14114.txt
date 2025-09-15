@@ -1,0 +1,405 @@
+diff --git a/sklearn/ensemble/tests/test_weight_boosting.py b/sklearn/ensemble/tests/test_weight_boosting.py
+index 1cb1e9d..27d9e7f 100755
+--- a/sklearn/ensemble/tests/test_weight_boosting.py
++++ b/sklearn/ensemble/tests/test_weight_boosting.py
+@@ -1,6 +1,7 @@
+ """Testing for the boost module (sklearn.ensemble.boost)."""
+ 
+ import numpy as np
++import pytest
+ 
+ from sklearn.utils.testing import assert_array_equal, assert_array_less
+ from sklearn.utils.testing import assert_array_almost_equal
+@@ -83,15 +84,15 @@ def test_oneclass_adaboost_proba():
+     assert_array_almost_equal(clf.predict_proba(X), np.ones((len(X), 1)))
+ 
+ 
+-def test_classification_toy():
++@pytest.mark.parametrize("algorithm", ["SAMME", "SAMME.R"])
++def test_classification_toy(algorithm):
+     # Check classification on a toy dataset.
+-    for alg in ['SAMME', 'SAMME.R']:
+-        clf = AdaBoostClassifier(algorithm=alg, random_state=0)
+-        clf.fit(X, y_class)
+-        assert_array_equal(clf.predict(T), y_t_class)
+-        assert_array_equal(np.unique(np.asarray(y_t_class)), clf.classes_)
+-        assert clf.predict_proba(T).shape == (len(T), 2)
+-        assert clf.decision_function(T).shape == (len(T),)
++    clf = AdaBoostClassifier(algorithm=algorithm, random_state=0)
++    clf.fit(X, y_class)
++    assert_array_equal(clf.predict(T), y_t_class)
++    assert_array_equal(np.unique(np.asarray(y_t_class)), clf.classes_)
++    assert clf.predict_proba(T).shape == (len(T), 2)
++    assert clf.decision_function(T).shape == (len(T),)
+ 
+ 
+ def test_regression_toy():
+@@ -150,32 +151,31 @@ def test_boston():
+                  len(reg.estimators_))
+ 
+ 
+-def test_staged_predict():
++@pytest.mark.parametrize("algorithm", ["SAMME", "SAMME.R"])
++def test_staged_predict(algorithm):
+     # Check staged predictions.
+     rng = np.random.RandomState(0)
+     iris_weights = rng.randint(10, size=iris.target.shape)
+     boston_weights = rng.randint(10, size=boston.target.shape)
+ 
+-    # AdaBoost classification
+-    for alg in ['SAMME', 'SAMME.R']:
+-        clf = AdaBoostClassifier(algorithm=alg, n_estimators=10)
+-        clf.fit(iris.data, iris.target, sample_weight=iris_weights)
++    clf = AdaBoostClassifier(algorithm=algorithm, n_estimators=10)
++    clf.fit(iris.data, iris.target, sample_weight=iris_weights)
+ 
+-        predictions = clf.predict(iris.data)
+-        staged_predictions = [p for p in clf.staged_predict(iris.data)]
+-        proba = clf.predict_proba(iris.data)
+-        staged_probas = [p for p in clf.staged_predict_proba(iris.data)]
+-        score = clf.score(iris.data, iris.target, sample_weight=iris_weights)
+-        staged_scores = [
+-            s for s in clf.staged_score(
+-                iris.data, iris.target, sample_weight=iris_weights)]
+-
+-        assert len(staged_predictions) == 10
+-        assert_array_almost_equal(predictions, staged_predictions[-1])
+-        assert len(staged_probas) == 10
+-        assert_array_almost_equal(proba, staged_probas[-1])
+-        assert len(staged_scores) == 10
+-        assert_array_almost_equal(score, staged_scores[-1])
++    predictions = clf.predict(iris.data)
++    staged_predictions = [p for p in clf.staged_predict(iris.data)]
++    proba = clf.predict_proba(iris.data)
++    staged_probas = [p for p in clf.staged_predict_proba(iris.data)]
++    score = clf.score(iris.data, iris.target, sample_weight=iris_weights)
++    staged_scores = [
++        s for s in clf.staged_score(
++            iris.data, iris.target, sample_weight=iris_weights)]
++
++    assert len(staged_predictions) == 10
++    assert_array_almost_equal(predictions, staged_predictions[-1])
++    assert len(staged_probas) == 10
++    assert_array_almost_equal(proba, staged_probas[-1])
++    assert len(staged_scores) == 10
++    assert_array_almost_equal(score, staged_scores[-1])
+ 
+     # AdaBoost regression
+     clf = AdaBoostRegressor(n_estimators=10, random_state=0)
+@@ -503,3 +503,20 @@ def test_multidimensional_X():
+     boost = AdaBoostRegressor(DummyRegressor())
+     boost.fit(X, yr)
+     boost.predict(X)
++
++
++@pytest.mark.parametrize("algorithm", ["SAMME", "SAMME.R"])
++def test_adaboost_consistent_predict(algorithm):
++    # check that predict_proba and predict give consistent results
++    # regression test for:
++    # https://github.com/scikit-learn/scikit-learn/issues/14084
++    X_train, X_test, y_train, y_test = train_test_split(
++        *datasets.load_digits(return_X_y=True), random_state=42
++    )
++    model = AdaBoostClassifier(algorithm=algorithm, random_state=42)
++    model.fit(X_train, y_train)
++
++    assert_array_equal(
++        np.argmax(model.predict_proba(X_test), axis=1),
++        model.predict(X_test)
++    )
+diff --git a/sklearn/ensemble/weight_boosting.py b/sklearn/ensemble/weight_boosting.py
+index 3cb4baa..2e7ee89 100644
+--- a/sklearn/ensemble/weight_boosting.py
++++ b/sklearn/ensemble/weight_boosting.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-14114/sklearn/ensemble/weight_boosting.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """Weight Boosting
+ 
+ This module contains weight boosting estimators for both classification and
+@@ -34,6 +227,7 @@ from ..base import ClassifierMixin, RegressorMixin, is_classifier, is_regressor
+ 
+ from ..tree import DecisionTreeClassifier, DecisionTreeRegressor
+ from ..utils import check_array, check_random_state, check_X_y, safe_indexing
++from ..utils.extmath import softmax
+ from ..utils.extmath import stable_cumsum
+ from ..metrics import accuracy_score, r2_score
+ from ..utils.validation import check_is_fitted
+@@ -748,6 +942,26 @@ class AdaBoostClassifier(BaseWeightBoosting, ClassifierMixin):
+             else:
+                 yield pred / norm
+ 
++    @staticmethod
++    def _compute_proba_from_decision(decision, n_classes):
++        """Compute probabilities from the decision function.
++
++        This is based eq. (4) of [1] where:
++            p(y=c|X) = exp((1 / K-1) f_c(X)) / sum_k(exp((1 / K-1) f_k(X)))
++                     = softmax((1 / K-1) * f(X))
++
++        References
++        ----------
++        .. [1] J. Zhu, H. Zou, S. Rosset, T. Hastie, "Multi-class AdaBoost",
++               2009.
++        """
++        if n_classes == 2:
++            decision = np.vstack([-decision, decision]).T / 2
++        else:
++            decision /= (n_classes - 1)
++        return softmax(decision, copy=False)
++
++    @inspect_code
+     def predict_proba(self, X):
+         """Predict class probabilities for X.
+ 
+@@ -775,23 +989,10 @@ class AdaBoostClassifier(BaseWeightBoosting, ClassifierMixin):
+         if n_classes == 1:
+             return np.ones((_num_samples(X), 1))
+ 
+-        if self.algorithm == 'SAMME.R':
+-            # The weights are all 1. for SAMME.R
+-            proba = sum(_samme_proba(estimator, n_classes, X)
+-                        for estimator in self.estimators_)
+-        else:  # self.algorithm == "SAMME"
+-            proba = sum(estimator.predict_proba(X) * w
+-                        for estimator, w in zip(self.estimators_,
+-                                                self.estimator_weights_))
+-
+-        proba /= self.estimator_weights_.sum()
+-        proba = np.exp((1. / (n_classes - 1)) * proba)
+-        normalizer = proba.sum(axis=1)[:, np.newaxis]
+-        normalizer[normalizer == 0.0] = 1.0
+-        proba /= normalizer
+-
+-        return proba
++        decision = self.decision_function(X)
++        return self._compute_proba_from_decision(decision, n_classes)
+ 
++    @inspect_code
+     def staged_predict_proba(self, X):
+         """Predict class probabilities for X.
+ 
+@@ -819,30 +1020,9 @@ class AdaBoostClassifier(BaseWeightBoosting, ClassifierMixin):
+         X = self._validate_data(X)
+ 
+         n_classes = self.n_classes_
+-        proba = None
+-        norm = 0.
+-
+-        for weight, estimator in zip(self.estimator_weights_,
+-                                     self.estimators_):
+-            norm += weight
+-
+-            if self.algorithm == 'SAMME.R':
+-                # The weights are all 1. for SAMME.R
+-                current_proba = _samme_proba(estimator, n_classes, X)
+-            else:  # elif self.algorithm == "SAMME":
+-                current_proba = estimator.predict_proba(X) * weight
+-
+-            if proba is None:
+-                proba = current_proba
+-            else:
+-                proba += current_proba
+-
+-            real_proba = np.exp((1. / (n_classes - 1)) * (proba / norm))
+-            normalizer = real_proba.sum(axis=1)[:, np.newaxis]
+-            normalizer[normalizer == 0.0] = 1.0
+-            real_proba /= normalizer
+ 
+-            yield real_proba
++        for decision in self.staged_decision_function(X):
++            yield self._compute_proba_from_decision(decision, n_classes)
+ 
+     def predict_log_proba(self, X):
+         """Predict class log-probabilities for X.

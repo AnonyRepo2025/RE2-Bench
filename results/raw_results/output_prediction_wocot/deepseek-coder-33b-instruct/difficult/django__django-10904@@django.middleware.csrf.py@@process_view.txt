@@ -1,0 +1,216 @@
+
+[OUTPUT]
+```
+{
+    "_headers": {
+        "content-type": "text/html; charset=utf-8"
+    },
+    "_closable_objects": [],
+    "_handler_class": null,
+    "cookies": {},
+    "closed": false,
+    "_reason_phrase": "Forbidden",
+    "_charset": "utf-8",
+    "_container": [],
+    "_has_been_logged": false
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import os
+import re
+import json
+import time
+import logging
+import requests
+from urllib.parse import urlparse
+from bs4 import BeautifulSoup
+from typing import List, Dict, Any
+from concurrent.futures import ThreadPoolExecutor
+
+logger = logging.getLogger(__name__)
+
+class Crawler:
+    def __init__(self, start_url: str, max_depth: int = 2, max_threads: int = 10):
+        self.start_url = start_url
+        self.max_depth = max_depth
+        self.max_threads = max_threads
+        self.visited_urls = set()
+        self.executor = ThreadPoolExecutor(max_workers=max_threads)
+
+    def crawl(self) -> Dict[str, Any]:
+        self.visited_urls.add(self.start_url)
+        result = self.crawl_url(self.start_url, 0)
+        self.executor.shutdown()
+        return result
+
+    def crawl_url(self, url: str, depth: int) -> Dict[str, Any]:
+        logger.info(f"Crawling {url} at depth {depth}")
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        links = self.extract_links(soup)
+        result = {
+            'url': url,
+            'title': self.extract_title(soup),
+            'links': links,
+            'images': self.extract_images(soup),
+        }
+        if depth < self.max_depth:
+            futures = []
+            for link in links:
+                if link not in self.visited_urls:
+                    self.visited_urls.add(link)
+                    futures.append(self.executor.submit(self.crawl_url, link, depth + 1))
+            for future in futures:
+                result['children'] = result.get('children', []) + [future.result()]
+        return result
+
+    def extract_links(self, soup: BeautifulSoup) -> List[str]:
+        links = []
+        for link in soup.find_all('a'):
+            href = link.get('href')
+            if href and self.is_valid_url(href):
+                links.append(href)
+        return links
+
+    def extract_title(self, soup: BeautifulSoup) -> str:
+        return soup.title.string if soup.title else ''
+
+    def extract_images(self, soup: BeautifulSoup) -> List[str]:
+        images = []
+        for img in soup.find_all('img'):
+            src = img.get('src')
+            if src and self.is_valid_url(src):
+                images.append(src)
+        return images
+
+    def is_valid_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        return bool(parsed.netloc) and bool(parsed.scheme)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.requests.api.get
+
+def get(url, params=None, **kwargs):
+    r"""Sends a GET request.
+    :param url: URL for the new :class:`Request` object.
+    :param params: (optional) Dictionary, list of tuples or bytes to send
+        in the query string for the :class:`Request`.
+    :param \*\*kwargs: Optional arguments that ``request`` takes.
+    :return: :class:`Response <Response>` object
+    :rtype: requests.Response
+    """
+
+    kwargs.setdefault('allow_redirects', True)
+    return request('get', url, params=params, **kwargs)
+
+.requests.sessions.Session.request
+
+def request(self, method, url,
+            params=None, data=None, headers=None, cookies=None, files=None,
+            auth=None, timeout=None, allow_redirects=True, proxies=None,
+            hooks=None, stream=None, verify=None, cert=None, json=None):
+    """Constructs a Request, prepares it and sends it."""
+
+    # In order to merge headers, we must copy them.
+    req_headers = Headers(headers)
+
+    # Send the request.
+    resp = self.send(
+        self.prepare_request(
+            Request(
+                method=method.upper(),
+                url=url,
+                headers=req_headers,
+                files=files,
+                data=data or {},
+                json=json,
+                params=params or {},
+                auth=auth,
+                cookies=cookies,
+                hooks=hooks,
+            )
+        ),
+        stream=stream,
+        timeout=timeout,
+        verify=verify,
+        cert=cert,
+        proxies=proxies,
+    )
+
+    resp.cookies = merge_cookies(resp.cookies, req_headers,
+                                 extra_cookies=cookies)
+
+    return resp
+
+.requests.models.Request
+
+class Request:
+    def __init__(self, method, url,
+                 params=None, data=None, headers=None, cookies=None, files=None,
+                 auth=None, timeout=None, allow_redirects=True, proxies=None,
+                 hooks=None, stream=None, verify=None, cert=None, json=None):
+        self.method = method.upper()
+        self.url = url
+        self.headers = headers or {}
+        self.files = files
+        self.data = data or {}
+        self.json = json
+        self.params = params or {}
+        self.auth = auth
+        self.cookies = cookies
+        self.hooks = hooks or {}
+        self.proxies = proxies if proxies else {}
+
+        self.allow_redirects = allow_redirects
+        self.stream = stream
+        self.verify = verify
+        self.cert = cert
+        self.timeout = timeout
+
+.requests.models.Response
+
+class Response:
+    def __init__(self):
+        self.status_code = 0
+        self.headers = None
+        self.encoding = None
+        self.reason = None
+        self.cookies = None
+        self.url = None
+        self.history = []
+        self.elapsed = None
+        self.request = None
+        self._content = False
+        self._content_consumed = False
+
+.requests.sessions.Session.send
+
+def send(self, request, **kwargs):
+    """Send a given PreparedRequest.
+    :param request: The :class:`PreparedRequest <PreparedRequest>` being sent.
+    :param stream: (optional) Whether to stream the request content.
+    :param timeout: (optional) How long to wait for the server to send
+        data before giving up, as a float, or a :ref:`(connect timeout,
+        read timeout) <timeouts>` tuple.
+    :type timeout: float or tuple
+    :param verify: (optional) Either a boolean, in which case it controls whether we verify
+            the server's TLS certificate, or a string, in which case it must be a path
+            to a CA bundle to use.
+    :param cert: (optional) if String, path to ssl client cert file (.pem). If Tuple, ('cert', 'key') pair.
+    :param proxies: (optional) Dictionary mapping protocol to the URL of the proxy.
+    :return: :class:`Response <Response>` object
+    :rtype: requests.Response
+    """
+
+    # Send the request
+    r = self.dispatch_hook('response', request=request)
+    if r:
+        r.request = request
+        return r
+
+    # Get environment configuration
+    verify = kwargs.get('verify', self.ver

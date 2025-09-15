@@ -1,0 +1,529 @@
+diff --git a/sklearn/model_selection/_split.py b/sklearn/model_selection/_split.py
+index de8511f..17fb16a 100644
+--- a/sklearn/model_selection/_split.py
++++ b/sklearn/model_selection/_split.py
+@@ -20,6 +20,7 @@ from inspect import signature
+ import numpy as np
+ 
+ from ..utils import indexable, check_random_state, safe_indexing
++from ..utils import _approximate_mode
+ from ..utils.validation import _num_samples, column_or_1d
+ from ..utils.validation import check_array
+ from ..utils.multiclass import type_of_target
+@@ -1545,75 +1546,6 @@ class GroupShuffleSplit(ShuffleSplit):
+         return super().split(X, y, groups)
+ 
+ 
+-def _approximate_mode(class_counts, n_draws, rng):
+-    """Computes approximate mode of multivariate hypergeometric.
+-
+-    This is an approximation to the mode of the multivariate
+-    hypergeometric given by class_counts and n_draws.
+-    It shouldn't be off by more than one.
+-
+-    It is the mostly likely outcome of drawing n_draws many
+-    samples from the population given by class_counts.
+-
+-    Parameters
+-    ----------
+-    class_counts : ndarray of int
+-        Population per class.
+-    n_draws : int
+-        Number of draws (samples to draw) from the overall population.
+-    rng : random state
+-        Used to break ties.
+-
+-    Returns
+-    -------
+-    sampled_classes : ndarray of int
+-        Number of samples drawn from each class.
+-        np.sum(sampled_classes) == n_draws
+-
+-    Examples
+-    --------
+-    >>> import numpy as np
+-    >>> from sklearn.model_selection._split import _approximate_mode
+-    >>> _approximate_mode(class_counts=np.array([4, 2]), n_draws=3, rng=0)
+-    array([2, 1])
+-    >>> _approximate_mode(class_counts=np.array([5, 2]), n_draws=4, rng=0)
+-    array([3, 1])
+-    >>> _approximate_mode(class_counts=np.array([2, 2, 2, 1]),
+-    ...                   n_draws=2, rng=0)
+-    array([0, 1, 1, 0])
+-    >>> _approximate_mode(class_counts=np.array([2, 2, 2, 1]),
+-    ...                   n_draws=2, rng=42)
+-    array([1, 1, 0, 0])
+-    """
+-    rng = check_random_state(rng)
+-    # this computes a bad approximation to the mode of the
+-    # multivariate hypergeometric given by class_counts and n_draws
+-    continuous = n_draws * class_counts / class_counts.sum()
+-    # floored means we don't overshoot n_samples, but probably undershoot
+-    floored = np.floor(continuous)
+-    # we add samples according to how much "left over" probability
+-    # they had, until we arrive at n_samples
+-    need_to_add = int(n_draws - floored.sum())
+-    if need_to_add > 0:
+-        remainder = continuous - floored
+-        values = np.sort(np.unique(remainder))[::-1]
+-        # add according to remainder, but break ties
+-        # randomly to avoid biases
+-        for value in values:
+-            inds, = np.where(remainder == value)
+-            # if we need_to_add less than what's in inds
+-            # we draw randomly from them.
+-            # if we need to add more, we add them all and
+-            # go to the next value
+-            add_now = min(len(inds), need_to_add)
+-            inds = rng.choice(inds, size=add_now, replace=False)
+-            floored[inds] += 1
+-            need_to_add -= add_now
+-            if need_to_add == 0:
+-                break
+-    return floored.astype(np.int)
+-
+-
+ class StratifiedShuffleSplit(BaseShuffleSplit):
+     """Stratified ShuffleSplit cross-validator
+ 
+diff --git a/sklearn/utils/__init__.py b/sklearn/utils/__init__.py
+index 24d6264..3c05c55 100644
+--- a/sklearn/utils/__init__.py
++++ b/sklearn/utils/__init__.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-13549/sklearn/utils/__init__.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ The :mod:`sklearn.utils` module includes various utilities.
+ """
+@@ -223,6 +416,7 @@ def safe_indexing(X, indices):
+         return [X[idx] for idx in indices]
+ 
+ 
++@inspect_code
+ def resample(*arrays, **options):
+     """Resample arrays or sparse matrices in a consistent way
+ 
+@@ -254,6 +448,10 @@ def resample(*arrays, **options):
+         generator; If None, the random number generator is the RandomState
+         instance used by `np.random`.
+ 
++    stratify : array-like or None (default=None)
++        If not None, data is split in a stratified fashion, using this as
++        the class labels.
++
+     Returns
+     -------
+     resampled_arrays : sequence of indexable data-structures
+@@ -292,14 +490,23 @@ def resample(*arrays, **options):
+       >>> resample(y, n_samples=2, random_state=0)
+       array([0, 1])
+ 
++    Example using stratification::
++
++      >>> y = [0, 0, 1, 1, 1, 1, 1, 1, 1]
++      >>> resample(y, n_samples=5, replace=False, stratify=y,
++      ...          random_state=0)
++      [1, 1, 1, 0, 1]
++
+ 
+     See also
+     --------
+     :func:`sklearn.utils.shuffle`
+     """
++
+     random_state = check_random_state(options.pop('random_state', None))
+     replace = options.pop('replace', True)
+     max_n_samples = options.pop('n_samples', None)
++    stratify = options.pop('stratify', None)
+     if options:
+         raise ValueError("Unexpected kw arguments: %r" % options.keys())
+ 
+@@ -318,12 +525,42 @@ def resample(*arrays, **options):
+ 
+     check_consistent_length(*arrays)
+ 
+-    if replace:
+-        indices = random_state.randint(0, n_samples, size=(max_n_samples,))
++    if stratify is None:
++        if replace:
++            indices = random_state.randint(0, n_samples, size=(max_n_samples,))
++        else:
++            indices = np.arange(n_samples)
++            random_state.shuffle(indices)
++            indices = indices[:max_n_samples]
+     else:
+-        indices = np.arange(n_samples)
+-        random_state.shuffle(indices)
+-        indices = indices[:max_n_samples]
++        # Code adapted from StratifiedShuffleSplit()
++        y = check_array(stratify, ensure_2d=False, dtype=None)
++        if y.ndim == 2:
++            # for multi-label y, map each distinct row to a string repr
++            # using join because str(row) uses an ellipsis if len(row) > 1000
++            y = np.array([' '.join(row.astype('str')) for row in y])
++
++        classes, y_indices = np.unique(y, return_inverse=True)
++        n_classes = classes.shape[0]
++
++        class_counts = np.bincount(y_indices)
++
++        # Find the sorted list of instances for each class:
++        # (np.unique above performs a sort, so code is O(n logn) already)
++        class_indices = np.split(np.argsort(y_indices, kind='mergesort'),
++                                 np.cumsum(class_counts)[:-1])
++
++        n_i = _approximate_mode(class_counts, max_n_samples, random_state)
++
++        indices = []
++
++        for i in range(n_classes):
++            indices_i = random_state.choice(class_indices[i], n_i[i],
++                                            replace=replace)
++            indices.extend(indices_i)
++
++        indices = random_state.permutation(indices)
++
+ 
+     # convert sparse matrices to CSR for row-based indexing
+     arrays = [a.tocsr() if issparse(a) else a for a in arrays]
+@@ -694,6 +931,76 @@ def is_scalar_nan(x):
+     return bool(isinstance(x, numbers.Real) and np.isnan(x))
+ 
+ 
++@inspect_code
++def _approximate_mode(class_counts, n_draws, rng):
++    """Computes approximate mode of multivariate hypergeometric.
++
++    This is an approximation to the mode of the multivariate
++    hypergeometric given by class_counts and n_draws.
++    It shouldn't be off by more than one.
++
++    It is the mostly likely outcome of drawing n_draws many
++    samples from the population given by class_counts.
++
++    Parameters
++    ----------
++    class_counts : ndarray of int
++        Population per class.
++    n_draws : int
++        Number of draws (samples to draw) from the overall population.
++    rng : random state
++        Used to break ties.
++
++    Returns
++    -------
++    sampled_classes : ndarray of int
++        Number of samples drawn from each class.
++        np.sum(sampled_classes) == n_draws
++
++    Examples
++    --------
++    >>> import numpy as np
++    >>> from sklearn.utils import _approximate_mode
++    >>> _approximate_mode(class_counts=np.array([4, 2]), n_draws=3, rng=0)
++    array([2, 1])
++    >>> _approximate_mode(class_counts=np.array([5, 2]), n_draws=4, rng=0)
++    array([3, 1])
++    >>> _approximate_mode(class_counts=np.array([2, 2, 2, 1]),
++    ...                   n_draws=2, rng=0)
++    array([0, 1, 1, 0])
++    >>> _approximate_mode(class_counts=np.array([2, 2, 2, 1]),
++    ...                   n_draws=2, rng=42)
++    array([1, 1, 0, 0])
++    """
++    rng = check_random_state(rng)
++    # this computes a bad approximation to the mode of the
++    # multivariate hypergeometric given by class_counts and n_draws
++    continuous = n_draws * class_counts / class_counts.sum()
++    # floored means we don't overshoot n_samples, but probably undershoot
++    floored = np.floor(continuous)
++    # we add samples according to how much "left over" probability
++    # they had, until we arrive at n_samples
++    need_to_add = int(n_draws - floored.sum())
++    if need_to_add > 0:
++        remainder = continuous - floored
++        values = np.sort(np.unique(remainder))[::-1]
++        # add according to remainder, but break ties
++        # randomly to avoid biases
++        for value in values:
++            inds, = np.where(remainder == value)
++            # if we need_to_add less than what's in inds
++            # we draw randomly from them.
++            # if we need to add more, we add them all and
++            # go to the next value
++            add_now = min(len(inds), need_to_add)
++            inds = rng.choice(inds, size=add_now, replace=False)
++            floored[inds] += 1
++            need_to_add -= add_now
++            if need_to_add == 0:
++                break
++    return floored.astype(np.int)
++
++
+ def check_matplotlib_support(caller_name):
+     """Raise ImportError with detailed error message if mpl is not installed.
+ 
+diff --git a/sklearn/utils/tests/test_utils.py b/sklearn/utils/tests/test_utils.py
+index 233d3c8..f81a483 100644
+--- a/sklearn/utils/tests/test_utils.py
++++ b/sklearn/utils/tests/test_utils.py
+@@ -93,6 +93,67 @@ def test_resample():
+     assert_equal(len(resample([1, 2], n_samples=5)), 5)
+ 
+ 
++def test_resample_stratified():
++    # Make sure resample can stratify
++    rng = np.random.RandomState(0)
++    n_samples = 100
++    p = .9
++    X = rng.normal(size=(n_samples, 1))
++    y = rng.binomial(1, p, size=n_samples)
++
++    _, y_not_stratified = resample(X, y, n_samples=10, random_state=0,
++                                   stratify=None)
++    assert np.all(y_not_stratified == 1)
++
++    _, y_stratified = resample(X, y, n_samples=10, random_state=0, stratify=y)
++    assert not np.all(y_stratified == 1)
++    assert np.sum(y_stratified) == 9  # all 1s, one 0
++
++
++def test_resample_stratified_replace():
++    # Make sure stratified resampling supports the replace parameter
++    rng = np.random.RandomState(0)
++    n_samples = 100
++    X = rng.normal(size=(n_samples, 1))
++    y = rng.randint(0, 2, size=n_samples)
++
++    X_replace, _ = resample(X, y, replace=True, n_samples=50,
++                            random_state=rng, stratify=y)
++    X_no_replace, _ = resample(X, y, replace=False, n_samples=50,
++                               random_state=rng, stratify=y)
++    assert np.unique(X_replace).shape[0] < 50
++    assert np.unique(X_no_replace).shape[0] == 50
++
++    # make sure n_samples can be greater than X.shape[0] if we sample with
++    # replacement
++    X_replace, _ = resample(X, y, replace=True, n_samples=1000,
++                            random_state=rng, stratify=y)
++    assert X_replace.shape[0] == 1000
++    assert np.unique(X_replace).shape[0] == 100
++
++
++def test_resample_stratify_2dy():
++    # Make sure y can be 2d when stratifying
++    rng = np.random.RandomState(0)
++    n_samples = 100
++    X = rng.normal(size=(n_samples, 1))
++    y = rng.randint(0, 2, size=(n_samples, 2))
++    X, y = resample(X, y, n_samples=50, random_state=rng, stratify=y)
++    assert y.ndim == 2
++
++
++def test_resample_stratify_sparse_error():
++    # resample must be ndarray
++    rng = np.random.RandomState(0)
++    n_samples = 100
++    X = rng.normal(size=(n_samples, 2))
++    y = rng.randint(0, 2, size=n_samples)
++    stratify = sp.csr_matrix(y)
++    with pytest.raises(TypeError, match='A sparse matrix was passed'):
++        X, y = resample(X, y, n_samples=50, random_state=rng,
++                        stratify=stratify)
++
++
+ def test_safe_mask():
+     random_state = check_random_state(0)
+     X = random_state.rand(5, 4)

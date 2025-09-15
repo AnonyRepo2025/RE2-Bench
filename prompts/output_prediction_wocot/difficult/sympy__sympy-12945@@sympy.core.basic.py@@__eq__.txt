@@ -1,0 +1,413 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+from __future__ import print_function, division
+from collections import Mapping, defaultdict
+from .assumptions import BasicMeta, ManagedProperties
+from .cache import cacheit
+from .sympify import _sympify, sympify, SympifyError
+from .compatibility import iterable, Iterator, ordered, string_types, with_metaclass, zip_longest, range
+from .singleton import S
+from inspect import getmro
+from .function import AppliedUndef, UndefinedFunction as UndefFunc
+from sympy import Derivative, Function, Symbol
+from sympy.series.order import Order
+from sympy import Pow
+from sympy.printing import sstr
+from sympy.printing import sstr
+from sympy import Symbol
+from sympy import Symbol
+from sympy.simplify import hypersimp
+from sympy.polys import Poly, PolynomialError
+from sympy.core.containers import Dict
+from sympy.utilities import default_sort_key
+from sympy import Dummy, Symbol
+from sympy.core.function import UndefinedFunction, Function
+from sympy.core.symbol import Dummy
+from sympy.simplify.simplify import bottom_up
+from sympy import count_ops
+from sympy.core.symbol import Wild
+from sympy.utilities.misc import filldedent
+
+class Basic(with_metaclass(ManagedProperties)):
+    __slots__ = ['_mhash', '_args', '_assumptions']
+    is_number = False
+    is_Atom = False
+    is_Symbol = False
+    is_symbol = False
+    is_Indexed = False
+    is_Dummy = False
+    is_Wild = False
+    is_Function = False
+    is_Add = False
+    is_Mul = False
+    is_Pow = False
+    is_Number = False
+    is_Float = False
+    is_Rational = False
+    is_Integer = False
+    is_NumberSymbol = False
+    is_Order = False
+    is_Derivative = False
+    is_Piecewise = False
+    is_Poly = False
+    is_AlgebraicNumber = False
+    is_Relational = False
+    is_Equality = False
+    is_Boolean = False
+    is_Not = False
+    is_Matrix = False
+    is_Vector = False
+    is_Point = False
+    _constructor_postprocessor_mapping = {}
+
+    def __hash__(self):
+        h = self._mhash
+        if h is None:
+            h = hash((type(self).__name__,) + self._hashable_content())
+            self._mhash = h
+        return h
+
+    def _hashable_content(self):
+        return self._args
+
+    def __eq__(self, other):
+        from sympy import Pow
+        if self is other:
+            return True
+        if type(self) is not type(other):
+            if isinstance(self, Pow) and self.exp == 1:
+                return self.base == other
+            if isinstance(other, Pow) and other.exp == 1:
+                return self == other.base
+            try:
+                other = _sympify(other)
+            except SympifyError:
+                return False
+            if type(self) != type(other):
+                return False
+        return self._hashable_content() == other._hashable_content()
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.core.sympify._sympify
+
+def _sympify(a):
+    return sympify(a, strict=True)
+
+.sympy.core.sympify.sympify
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            if not isinstance(a, np.floating):
+                return sympify(np.asscalar(a))
+            else:
+                try:
+                    from sympy.core.numbers import Float
+                    prec = np.finfo(a).nmant
+                    a = str(list(np.reshape(np.asarray(a), (1, np.size(a)))[0]))[1:-1]
+                    return Float(a, precision=prec)
+                except NotImplementedError:
+                    raise SympifyError('Translation for numpy float : %s is not implemented' % a)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    try:
+        from ..tensor.array import Array
+        return Array(a.flat, a.shape)
+    except AttributeError:
+        pass
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+.sympy.core.numbers.NegativeInfinity.__hash__
+
+def __hash__(self):
+    return super(NegativeInfinity, self).__hash__()
+
+.sympy.core.numbers.Number.__hash__
+
+def __hash__(self):
+    return super(Number, self).__hash__()
+
+.sympy.core.numbers.Infinity.__hash__
+
+def __hash__(self):
+    return super(Infinity, self).__hash__()
+
+.sympy.logic.boolalg.BooleanTrue.__hash__
+
+def __hash__(self):
+    return hash(True)
+
+.sympy.core.sympify.SympifyError.__init__
+
+def __init__(self, expr, base_exc=None):
+    self.expr = expr
+    self.base_exc = base_exc
+
+.sympy.core.numbers.Integer.__new__
+
+def __new__(cls, i):
+    if isinstance(i, string_types):
+        i = i.replace(' ', '')
+    try:
+        ival = int(i)
+    except TypeError:
+        raise TypeError('Integer can only work with integer expressions.')
+    try:
+        return _intcache[ival]
+    except KeyError:
+        obj = Expr.__new__(cls)
+        obj.p = ival
+        _intcache[ival] = obj
+        return obj
+
+.sympy.core.function.UndefinedFunction.__hash__
+
+def __hash__(self):
+    return hash((self.class_key(), frozenset(self._extra_kwargs.items())))
+
+.sympy.core.function.Function.class_key
+
+def class_key(cls):
+    from sympy.sets.fancysets import Naturals0
+    funcs = {'exp': 10, 'log': 11, 'sin': 20, 'cos': 21, 'tan': 22, 'cot': 23, 'sinh': 30, 'cosh': 31, 'tanh': 32, 'coth': 33, 'conjugate': 40, 're': 41, 'im': 42, 'arg': 43}
+    name = cls.__name__
+    try:
+        i = funcs[name]
+    except KeyError:
+        i = 0 if isinstance(cls.nargs, Naturals0) else 10000
+    return (4, i, name)
+
+.sympy.core.function.FunctionClass.nargs
+
+def nargs(self):
+    from sympy.sets.sets import FiniteSet
+    return FiniteSet(*self._nargs) if self._nargs else S.Naturals0
+
+.sympy.core.function.UndefinedFunction.__ne__
+
+def __ne__(self, other):
+    return not self == other
+
+.sympy.core.function.UndefinedFunction.__eq__
+
+def __eq__(self, other):
+    return isinstance(other, self.__class__) and self.class_key() == other.class_key() and (self._extra_kwargs == other._extra_kwargs)
+
+.sympy.core.numbers.NaN.__hash__
+
+def __hash__(self):
+    return super(NaN, self).__hash__()
+
+.sympy.core.power.Pow.exp
+
+def exp(self):
+    return self._args[1]
+
+
+[/PYTHON]
+What will be the output of `__eq__`, given the following input:
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "other": "I*x"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "output": XXX        
+}
+```
+[/STRUCTURE]

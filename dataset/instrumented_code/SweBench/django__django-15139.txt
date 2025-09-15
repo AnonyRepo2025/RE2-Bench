@@ -1,0 +1,669 @@
+diff --git a/django/contrib/sessions/backends/base.py b/django/contrib/sessions/backends/base.py
+index 62ee1f0..61ea7b7 100644
+--- a/django/contrib/sessions/backends/base.py
++++ b/django/contrib/sessions/backends/base.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-15139/django/contrib/sessions/backends/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import logging
+ import string
+ from datetime import datetime, timedelta
+@@ -210,11 +403,14 @@ class SessionBase:
+ 
+         if not expiry:   # Checks both None and 0 cases
+             return self.get_session_cookie_age()
+-        if not isinstance(expiry, datetime):
++        if not isinstance(expiry, (datetime, str)):
+             return expiry
++        if isinstance(expiry, str):
++            expiry = datetime.fromisoformat(expiry)
+         delta = expiry - modification
+         return delta.days * 86400 + delta.seconds
+ 
++    @inspect_code
+     def get_expiry_date(self, **kwargs):
+         """Get session the expiry date (as a datetime object).
+ 
+@@ -233,9 +429,12 @@ class SessionBase:
+ 
+         if isinstance(expiry, datetime):
+             return expiry
++        elif isinstance(expiry, str):
++            return datetime.fromisoformat(expiry)
+         expiry = expiry or self.get_session_cookie_age()
+         return modification + timedelta(seconds=expiry)
+ 
++    @inspect_code
+     def set_expiry(self, value):
+         """
+         Set a custom expiration for the session. ``value`` can be an integer,
+@@ -260,6 +459,8 @@ class SessionBase:
+             return
+         if isinstance(value, timedelta):
+             value = timezone.now() + value
++        if isinstance(value, datetime):
++            value = value.isoformat()
+         self['_session_expiry'] = value
+ 
+     def get_expire_at_browser_close(self):
+@@ -269,9 +470,9 @@ class SessionBase:
+         ``get_expiry_date()`` or ``get_expiry_age()`` to find the actual expiry
+         date/age, if there is one.
+         """
+-        if self.get('_session_expiry') is None:
++        if (expiry := self.get('_session_expiry')) is None:
+             return settings.SESSION_EXPIRE_AT_BROWSER_CLOSE
+-        return self.get('_session_expiry') == 0
++        return expiry == 0
+ 
+     def flush(self):
+         """
+diff --git a/django/contrib/sessions/serializers.py b/django/contrib/sessions/serializers.py
+index 5b6c343..6a9452b 100644
+--- a/django/contrib/sessions/serializers.py
++++ b/django/contrib/sessions/serializers.py
+@@ -1,3 +1,4 @@
++# RemovedInDjango50Warning.
+ from django.core.serializers.base import (
+     PickleSerializer as BasePickleSerializer,
+ )
+diff --git a/django/core/cache/backends/redis.py b/django/core/cache/backends/redis.py
+index ec2fb06..f168e93 100644
+--- a/django/core/cache/backends/redis.py
++++ b/django/core/cache/backends/redis.py
+@@ -1,31 +1,30 @@
+ """Redis cache backend."""
+ 
++import pickle
+ import random
+ import re
+ 
+ from django.core.cache.backends.base import DEFAULT_TIMEOUT, BaseCache
+-from django.core.serializers.base import PickleSerializer
+ from django.utils.functional import cached_property
+ from django.utils.module_loading import import_string
+ 
+ 
+-class RedisSerializer(PickleSerializer):
+-    """
+-    Similar to PickSerializer, except integers are serialized as native Redis
+-    integers for better incr() and decr() atomicity.
+-    """
++class RedisSerializer:
++    def __init__(self, protocol=None):
++        self.protocol = pickle.HIGHEST_PROTOCOL if protocol is None else protocol
++
+     def dumps(self, obj):
+         # Only skip pickling for integers, a int subclasses as bool should be
+         # pickled.
+         if type(obj) is int:
+             return obj
+-        return super().dumps(obj)
++        return pickle.dumps(obj, self.protocol)
+ 
+     def loads(self, data):
+         try:
+             return int(data)
+         except ValueError:
+-            return super().loads(data)
++            return pickle.loads(data)
+ 
+ 
+ class RedisCacheClient:
+diff --git a/django/core/serializers/base.py b/django/core/serializers/base.py
+index 3bd492e..5b96e0c 100644
+--- a/django/core/serializers/base.py
++++ b/django/core/serializers/base.py
+@@ -1,11 +1,206 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-15139/django/core/serializers/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Module for abstract serializer/unserializer base classes.
+ """
+ import pickle
++import warnings
+ from io import StringIO
+ 
+ from django.core.exceptions import ObjectDoesNotExist
+ from django.db import models
++from django.utils.deprecation import RemovedInDjango50Warning
+ 
+ DEFER_FIELD = object()
+ 
+@@ -15,7 +210,13 @@ class PickleSerializer:
+     Simple wrapper around pickle to be used in signing.dumps()/loads() and
+     cache backends.
+     """
++    @inspect_code
+     def __init__(self, protocol=None):
++        warnings.warn(
++            'PickleSerializer is deprecated due to its security risk. Use '
++            'JSONSerializer instead.',
++            RemovedInDjango50Warning,
++        )
+         self.protocol = pickle.HIGHEST_PROTOCOL if protocol is None else protocol
+ 
+     def dumps(self, obj):
+diff --git a/tests/defer_regress/tests.py b/tests/defer_regress/tests.py
+index ccd6556..300524a 100644
+--- a/tests/defer_regress/tests.py
++++ b/tests/defer_regress/tests.py
+@@ -4,7 +4,8 @@ from django.contrib.contenttypes.models import ContentType
+ from django.contrib.sessions.backends.db import SessionStore
+ from django.db import models
+ from django.db.models import Count
+-from django.test import TestCase, override_settings
++from django.test import TestCase, ignore_warnings, override_settings
++from django.utils.deprecation import RemovedInDjango50Warning
+ 
+ from .models import (
+     Base, Child, Derived, Feature, Item, ItemAndSimpleItem, Leaf, Location,
+@@ -91,6 +92,7 @@ class DeferRegressionTest(TestCase):
+             list(SimpleItem.objects.annotate(Count('feature')).only('name')),
+             list)
+ 
++    @ignore_warnings(category=RemovedInDjango50Warning)
+     @override_settings(SESSION_SERIALIZER='django.contrib.sessions.serializers.PickleSerializer')
+     def test_ticket_12163(self):
+         # Test for #12163 - Pickling error saving session with unsaved model
+diff --git a/tests/serializers/tests.py b/tests/serializers/tests.py
+index 4bd6acd..1b375a4 100644
+--- a/tests/serializers/tests.py
++++ b/tests/serializers/tests.py
+@@ -10,7 +10,8 @@ from django.core.serializers.base import PickleSerializer, ProgressBar
+ from django.db import connection, transaction
+ from django.http import HttpResponse
+ from django.test import SimpleTestCase, override_settings, skipUnlessDBFeature
+-from django.test.utils import Approximate
++from django.test.utils import Approximate, ignore_warnings
++from django.utils.deprecation import RemovedInDjango50Warning
+ 
+ from .models import (
+     Actor, Article, Author, AuthorProfile, BaseModel, Category, Child,
+@@ -420,6 +421,7 @@ class SerializersTransactionTestBase:
+ 
+ 
+ class PickleSerializerTests(SimpleTestCase):
++    @ignore_warnings(category=RemovedInDjango50Warning)
+     def test_serializer_protocol(self):
+         serializer = PickleSerializer(protocol=3)
+         self.assertEqual(serializer.protocol, 3)
+@@ -427,12 +429,21 @@ class PickleSerializerTests(SimpleTestCase):
+         serializer = PickleSerializer()
+         self.assertEqual(serializer.protocol, pickle.HIGHEST_PROTOCOL)
+ 
++    @ignore_warnings(category=RemovedInDjango50Warning)
+     def test_serializer_loads_dumps(self):
+         serializer = PickleSerializer()
+         test_data = 'test data'
+         dump = serializer.dumps(test_data)
+         self.assertEqual(serializer.loads(dump), test_data)
+ 
++    def test_serializer_warning(self):
++        msg = (
++            'PickleSerializer is deprecated due to its security risk. Use '
++            'JSONSerializer instead.'
++        )
++        with self.assertRaisesMessage(RemovedInDjango50Warning, msg):
++            PickleSerializer()
++
+ 
+ def register_tests(test_class, method_name, test_func, exclude=()):
+     """
+diff --git a/tests/sessions_tests/tests.py b/tests/sessions_tests/tests.py
+index c2743ef..367c40f 100644
+--- a/tests/sessions_tests/tests.py
++++ b/tests/sessions_tests/tests.py
+@@ -7,6 +7,7 @@ import unittest
+ from datetime import timedelta
+ from http import cookies
+ from pathlib import Path
++from unittest import mock
+ 
+ from django.conf import settings
+ from django.contrib.sessions.backends.base import UpdateError
+@@ -24,9 +25,7 @@ from django.contrib.sessions.exceptions import (
+ )
+ from django.contrib.sessions.middleware import SessionMiddleware
+ from django.contrib.sessions.models import Session
+-from django.contrib.sessions.serializers import (
+-    JSONSerializer, PickleSerializer,
+-)
++from django.contrib.sessions.serializers import JSONSerializer
+ from django.core import management
+ from django.core.cache import caches
+ from django.core.cache.backends.base import InvalidCacheBackendError
+@@ -333,25 +332,20 @@ class SessionTestsMixin:
+         self.assertEqual(self.session.decode(encoded), {})
+ 
+     def test_actual_expiry(self):
+-        # this doesn't work with JSONSerializer (serializing timedelta)
+-        with override_settings(SESSION_SERIALIZER='django.contrib.sessions.serializers.PickleSerializer'):
+-            self.session = self.backend()  # reinitialize after overriding settings
+-
+-            # Regression test for #19200
+-            old_session_key = None
+-            new_session_key = None
+-            try:
+-                self.session['foo'] = 'bar'
+-                self.session.set_expiry(-timedelta(seconds=10))
+-                self.session.save()
+-                old_session_key = self.session.session_key
+-                # With an expiry date in the past, the session expires instantly.
+-                new_session = self.backend(self.session.session_key)
+-                new_session_key = new_session.session_key
+-                self.assertNotIn('foo', new_session)
+-            finally:
+-                self.session.delete(old_session_key)
+-                self.session.delete(new_session_key)
++        old_session_key = None
++        new_session_key = None
++        try:
++            self.session['foo'] = 'bar'
++            self.session.set_expiry(-timedelta(seconds=10))
++            self.session.save()
++            old_session_key = self.session.session_key
++            # With an expiry date in the past, the session expires instantly.
++            new_session = self.backend(self.session.session_key)
++            new_session_key = new_session.session_key
++            self.assertNotIn('foo', new_session)
++        finally:
++            self.session.delete(old_session_key)
++            self.session.delete(new_session_key)
+ 
+     def test_session_load_does_not_create_record(self):
+         """
+@@ -885,9 +879,8 @@ class CookieSessionTests(SessionTestsMixin, SimpleTestCase):
+         # by creating a new session
+         self.assertEqual(self.session.serializer, JSONSerializer)
+         self.session.save()
+-
+-        self.session.serializer = PickleSerializer
+-        self.session.load()
++        with mock.patch('django.core.signing.loads', side_effect=ValueError):
++            self.session.load()
+ 
+     @unittest.skip("Cookie backend doesn't have an external store to create records in.")
+     def test_session_load_does_not_create_record(self):

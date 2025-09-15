@@ -1,0 +1,321 @@
+diff --git a/django/db/models/fields/json.py b/django/db/models/fields/json.py
+index fdca700..dcfd21c 100644
+--- a/django/db/models/fields/json.py
++++ b/django/db/models/fields/json.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-15503/django/db/models/fields/json.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import json
+ 
+ from django import forms
+@@ -172,6 +365,12 @@ class ContainedBy(PostgresOperatorLookup):
+ class HasKeyLookup(PostgresOperatorLookup):
+     logical_operator = None
+ 
++    @inspect_code
++    def compile_json_path_final_key(self, key_transform):
++        # Compile the final key without interpreting ints as array elements.
++        return ".%s" % json.dumps(key_transform)
++
++    @inspect_code
+     def as_sql(self, compiler, connection, template=None):
+         # Process JSON path from the left-hand side.
+         if isinstance(self.lhs, KeyTransform):
+@@ -193,13 +392,10 @@ class HasKeyLookup(PostgresOperatorLookup):
+                 *_, rhs_key_transforms = key.preprocess_lhs(compiler, connection)
+             else:
+                 rhs_key_transforms = [key]
+-            rhs_params.append(
+-                "%s%s"
+-                % (
+-                    lhs_json_path,
+-                    compile_json_path(rhs_key_transforms, include_root=False),
+-                )
+-            )
++            *rhs_key_transforms, final_key = rhs_key_transforms
++            rhs_json_path = compile_json_path(rhs_key_transforms, include_root=False)
++            rhs_json_path += self.compile_json_path_final_key(final_key)
++            rhs_params.append(lhs_json_path + rhs_json_path)
+         # Add condition for each key.
+         if self.logical_operator:
+             sql = "(%s)" % self.logical_operator.join([sql] * len(rhs_params))
+@@ -253,6 +449,11 @@ class HasAnyKeys(HasKeys):
+     logical_operator = " OR "
+ 
+ 
++class HasKeyOrArrayIndex(HasKey):
++    def compile_json_path_final_key(self, key_transform):
++        return compile_json_path([key_transform], include_root=False)
++
++
+ class CaseInsensitiveMixin:
+     """
+     Mixin to allow case-insensitive comparison of JSON values on MySQL.
+@@ -386,8 +587,9 @@ class KeyTransformTextLookupMixin:
+ 
+ class KeyTransformIsNull(lookups.IsNull):
+     # key__isnull=False is the same as has_key='key'
++    @inspect_code
+     def as_oracle(self, compiler, connection):
+-        sql, params = HasKey(
++        sql, params = HasKeyOrArrayIndex(
+             self.lhs.lhs,
+             self.lhs.key_name,
+         ).as_oracle(compiler, connection)
+@@ -397,11 +599,12 @@ class KeyTransformIsNull(lookups.IsNull):
+         lhs, lhs_params, _ = self.lhs.preprocess_lhs(compiler, connection)
+         return "(NOT %s OR %s IS NULL)" % (sql, lhs), tuple(params) + tuple(lhs_params)
+ 
++    @inspect_code
+     def as_sqlite(self, compiler, connection):
+         template = "JSON_TYPE(%s, %%s) IS NULL"
+         if not self.rhs:
+             template = "JSON_TYPE(%s, %%s) IS NOT NULL"
+-        return HasKey(self.lhs.lhs, self.lhs.key_name).as_sql(
++        return HasKeyOrArrayIndex(self.lhs.lhs, self.lhs.key_name).as_sql(
+             compiler,
+             connection,
+             template=template,
+@@ -462,11 +665,12 @@ class KeyTransformExact(JSONExact):
+             rhs = rhs % tuple(func)
+         return rhs, rhs_params
+ 
++    @inspect_code
+     def as_oracle(self, compiler, connection):
+         rhs, rhs_params = super().process_rhs(compiler, connection)
+         if rhs_params == ["null"]:
+             # Field has key and it's NULL.
+-            has_key_expr = HasKey(self.lhs.lhs, self.lhs.key_name)
++            has_key_expr = HasKeyOrArrayIndex(self.lhs.lhs, self.lhs.key_name)
+             has_key_sql, has_key_params = has_key_expr.as_oracle(compiler, connection)
+             is_null_expr = self.lhs.get_lookup("isnull")(self.lhs, True)
+             is_null_sql, is_null_params = is_null_expr.as_sql(compiler, connection)
+diff --git a/tests/model_fields/test_jsonfield.py b/tests/model_fields/test_jsonfield.py
+index dfd00f4..38c92fc 100644
+--- a/tests/model_fields/test_jsonfield.py
++++ b/tests/model_fields/test_jsonfield.py
+@@ -576,6 +576,33 @@ class TestQuerying(TestCase):
+             [self.objs[3], self.objs[4], self.objs[6]],
+         )
+ 
++    def test_has_key_number(self):
++        obj = NullableJSONModel.objects.create(
++            value={
++                "123": "value",
++                "nested": {"456": "bar", "lorem": "abc", "999": True},
++                "array": [{"789": "baz", "777": "def", "ipsum": 200}],
++                "000": "val",
++            }
++        )
++        tests = [
++            Q(value__has_key="123"),
++            Q(value__nested__has_key="456"),
++            Q(value__array__0__has_key="789"),
++            Q(value__has_keys=["nested", "123", "array", "000"]),
++            Q(value__nested__has_keys=["lorem", "999", "456"]),
++            Q(value__array__0__has_keys=["789", "ipsum", "777"]),
++            Q(value__has_any_keys=["000", "nonexistent"]),
++            Q(value__nested__has_any_keys=["999", "nonexistent"]),
++            Q(value__array__0__has_any_keys=["777", "nonexistent"]),
++        ]
++        for condition in tests:
++            with self.subTest(condition=condition):
++                self.assertSequenceEqual(
++                    NullableJSONModel.objects.filter(condition),
++                    [obj],
++                )
++
+     @skipUnlessDBFeature("supports_json_field_contains")
+     def test_contains(self):
+         tests = [

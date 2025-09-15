@@ -1,0 +1,159 @@
+[THOUGHT]
+Let's step through the execution of `SelectDateWidget.get_context` with the given input.
+
+1. The method signature is: `get_context(self, name, value, attrs)`.
+   - self: a SelectDateWidget instance with:
+     - attrs: {}
+     - years: [2007]
+     - months: {1: ..., 2: ..., ..., 12: ...}
+     - year_none_value: ["", "---"]
+     - month_none_value: ["", "---"]
+     - day_none_value: ["", "---"]
+   - name: "mydate"
+   - value: ""
+   - attrs: null (so will be treated as None)
+
+2. The first line is: `context = super().get_context(name, value, attrs)`
+   - This calls Widget.get_context, which returns:
+     ```
+     {
+         'widget': {
+             'name': name,
+             'is_hidden': self.is_hidden,
+             'required': self.is_required,
+             'value': self.format_value(value),
+             'attrs': self.build_attrs(self.attrs, attrs),
+             'template_name': self.template_name
+         }
+     }
+     ```
+   - Let's fill these in:
+     - name: "mydate"
+     - is_hidden: self.input_type == 'hidden' if hasattr(self, 'input_type') else False
+       - self.input_type = 'select' (from class attribute)
+       - So is_hidden = False
+     - required: self.is_required
+       - Not given in input, but in Django, default is_required is True unless set otherwise. But let's check: in SelectDateWidget, is_required is not set in the input, so likely True.
+     - value: self.format_value(value)
+       - value = ""
+       - format_value: since value is a string, and it's "", it doesn't match the regex, and settings.USE_L10N is not specified, but let's assume it's False (default in Django unless set). So year, month, day = (None, None, None)
+     - attrs: self.build_attrs(self.attrs, attrs)
+       - self.attrs = {}
+       - attrs = None
+       - build_attrs({}, None) => {}
+     - template_name: self.template_name = 'django/forms/widgets/select_date.html'
+
+   So context is:
+   ```
+   {
+     'widget': {
+       'name': 'mydate',
+       'is_hidden': False,
+       'required': True,
+       'value': {'year': None, 'month': None, 'day': None},
+       'attrs': {},
+       'template_name': 'django/forms/widgets/select_date.html'
+     }
+   }
+   ```
+
+3. Next, `date_context = {}`
+
+4. year_choices = [(i, str(i)) for i in self.years] = [(2007, "2007")]
+   - if not self.is_required: (assume is_required is True, so skip)
+   - year_name = self.year_field % name = "%s_year" % "mydate" = "mydate_year"
+   - date_context['year'] = self.select_widget(attrs, choices=year_choices).get_context(
+         name=year_name,
+         value=context['widget']['value']['year'],  # None
+         attrs={**context['widget']['attrs'], 'id': 'id_%s' % year_name, 'placeholder': _('Year') if self.is_required else False}
+     )
+     - self.select_widget is Select
+     - So Select(attrs, choices=year_choices).get_context(...)
+     - The attrs passed are: {**{}, 'id': 'id_mydate_year', 'placeholder': _('Year')}
+     - Let's assume _('Year') returns "Year" (as a string, since it's a lazy translation proxy, but for output, just "Year")
+     - So attrs = {'id': 'id_mydate_year', 'placeholder': 'Year'}
+     - value = None
+
+5. month_choices = list(self.months.items())
+   - months is a dict with string keys "1" to "12", so month_choices = [("1", ...), ("2", ...), ..., ("12", ...)]
+   - if not self.is_required: skip
+   - month_name = self.month_field % name = "%s_month" % "mydate" = "mydate_month"
+   - date_context['month'] = self.select_widget(attrs, choices=month_choices).get_context(
+         name=month_name,
+         value=context['widget']['value']['month'],  # None
+         attrs={**context['widget']['attrs'], 'id': 'id_%s' % month_name, 'placeholder': _('Month') if self.is_required else False}
+     )
+     - attrs = {'id': 'id_mydate_month', 'placeholder': 'Month'}
+     - value = None
+
+6. day_choices = [(i, i) for i in range(1, 32)] = [(1,1), (2,2), ..., (31,31)]
+   - if not self.is_required: skip
+   - day_name = self.day_field % name = "%s_day" % "mydate" = "mydate_day"
+   - date_context['day'] = self.select_widget(attrs, choices=day_choices).get_context(
+         name=day_name,
+         value=context['widget']['value']['day'],  # None
+         attrs={**context['widget']['attrs'], 'id': 'id_%s' % day_name, 'placeholder': _('Day') if self.is_required else False}
+     )
+     - attrs = {'id': 'id_mydate_day', 'placeholder': 'Day'}
+     - value = None
+
+7. subwidgets = []
+   - for field in self._parse_date_fmt(): subwidgets.append(date_context[field]['widget'])
+   - _parse_date_fmt() is not shown, but in Django, it returns the order of fields, usually ['year', 'month', 'day'] (default order).
+   - So subwidgets = [date_context['year']['widget'], date_context['month']['widget'], date_context['day']['widget']]
+
+8. context['widget']['subwidgets'] = subwidgets
+
+9. Return context.
+
+Now, for the output structure, we need to fill in:
+- name: "mydate"
+- is_hidden: False
+- required: True
+- value: {"year": None, "month": None, "day": None}
+- attrs: {}
+- template_name: "django/forms/widgets/select_date.html"
+- subwidgets: [date_context['year']['widget'], date_context['month']['widget'], date_context['day']['widget']]
+
+But the structure only asks for the top-level context, not the full subwidget details.
+
+So, the output is:
+{
+    "widget": {
+        "name": "mydate",
+        "is_hidden": false,
+        "required": true,
+        "value": {
+            "year": null,
+            "month": null,
+            "day": null
+        },
+        "attrs": {},
+        "template_name": "django/forms/widgets/select_date.html",
+        "subwidgets": "see above"
+    }
+}
+But since the structure expects the subwidgets field to be filled, but we don't have the full widget dicts for the subwidgets, we can represent them as placeholders or as a list of three subwidget dicts (which would be the output of Select.get_context(...), which would be similar to the parent context but with different names and attrs).
+
+But since the structure says "XXX", and the main focus is on the top-level fields, let's fill in as much as possible.
+
+[/THOUGHT]
+[OUTPUT]
+```
+{
+    "widget": {
+        "name": "mydate",
+        "is_hidden": false,
+        "required": true,
+        "value": {
+            "year": null,
+            "month": null,
+            "day": null
+        },
+        "attrs": {},
+        "template_name": "django/forms/widgets/select_date.html",
+        "subwidgets": "..."
+    }
+}
+```
+[/OUTPUT]

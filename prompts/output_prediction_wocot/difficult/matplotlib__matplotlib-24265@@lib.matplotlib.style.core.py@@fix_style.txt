@@ -1,0 +1,222 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import contextlib
+import logging
+import os
+from pathlib import Path
+import re
+import warnings
+import matplotlib as mpl
+from matplotlib import _api, _docstring, rc_params_from_file, rcParamsDefault
+_log = logging.getLogger(__name__)
+__all__ = ['use', 'context', 'available', 'library', 'reload_library']
+BASE_LIBRARY_PATH = os.path.join(mpl.get_data_path(), 'stylelib')
+USER_LIBRARY_PATHS = [os.path.join(mpl.get_configdir(), 'stylelib')]
+STYLE_EXTENSION = 'mplstyle'
+STYLE_BLACKLIST = {'interactive', 'backend', 'webagg.port', 'webagg.address', 'webagg.port_retries', 'webagg.open_in_browser', 'backend_fallback', 'toolbar', 'timezone', 'figure.max_open_warning', 'figure.raise_window', 'savefig.directory', 'tk.window_focus', 'docstring.hardcopy', 'date.epoch'}
+_DEPRECATED_SEABORN_STYLES = {s: s.replace('seaborn', 'seaborn-v0_8') for s in ['seaborn', 'seaborn-bright', 'seaborn-colorblind', 'seaborn-dark', 'seaborn-darkgrid', 'seaborn-dark-palette', 'seaborn-deep', 'seaborn-muted', 'seaborn-notebook', 'seaborn-paper', 'seaborn-pastel', 'seaborn-poster', 'seaborn-talk', 'seaborn-ticks', 'seaborn-white', 'seaborn-whitegrid']}
+_DEPRECATED_SEABORN_MSG = "The seaborn styles shipped by Matplotlib are deprecated since %(since)s, as they no longer correspond to the styles shipped by seaborn. However, they will remain available as 'seaborn-v0_8-<style>'. Alternatively, directly use the seaborn API instead."
+_base_library = read_style_directory(BASE_LIBRARY_PATH)
+library = _StyleLibrary()
+available = []
+
+def use(style):
+    if isinstance(style, (str, Path)) or hasattr(style, 'keys'):
+        styles = [style]
+    else:
+        styles = style
+    style_alias = {'mpl20': 'default', 'mpl15': 'classic'}
+
+    def fix_style(s):
+        if isinstance(s, str):
+            s = style_alias.get(s, s)
+            if s in _DEPRECATED_SEABORN_STYLES:
+                _api.warn_deprecated('3.6', message=_DEPRECATED_SEABORN_MSG)
+                s = _DEPRECATED_SEABORN_STYLES[s]
+        return s
+    for style in map(fix_style, styles):
+        if not isinstance(style, (str, Path)):
+            _apply_style(style)
+        elif style == 'default':
+            with _api.suppress_matplotlib_deprecation_warning():
+                _apply_style(rcParamsDefault, warn=False)
+        elif style in library:
+            _apply_style(library[style])
+        else:
+            try:
+                rc = rc_params_from_file(style, use_default_template=False)
+                _apply_style(rc)
+            except IOError as err:
+                raise IOError('{!r} not found in the style library and input is not a valid URL or path; see `style.available` for list of available styles'.format(style)) from err
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.lib.matplotlib._api.deprecation.warn_deprecated
+
+def warn_deprecated(since, *, message='', name='', alternative='', pending=False, obj_type='', addendum='', removal=''):
+    warning = _generate_deprecation_warning(since, message, name, alternative, pending, obj_type, addendum, removal=removal)
+    from . import warn_external
+    warn_external(warning, category=MatplotlibDeprecationWarning)
+
+.lib.matplotlib._api.deprecation._generate_deprecation_warning
+
+def _generate_deprecation_warning(since, message='', name='', alternative='', pending=False, obj_type='', addendum='', *, removal=''):
+    if pending:
+        if removal:
+            raise ValueError('A pending deprecation cannot have a scheduled removal')
+    else:
+        removal = f'in {removal}' if removal else 'two minor releases later'
+    if not message:
+        message = ('The %(name)s %(obj_type)s' if obj_type else '%(name)s') + (' will be deprecated in a future version' if pending else ' was deprecated in Matplotlib %(since)s' + (' and will be removed %(removal)s' if removal else '')) + '.' + (' Use %(alternative)s instead.' if alternative else '') + (' %(addendum)s' if addendum else '')
+    warning_cls = PendingDeprecationWarning if pending else MatplotlibDeprecationWarning
+    return warning_cls(message % dict(func=name, name=name, obj_type=obj_type, since=since, removal=removal, alternative=alternative, addendum=addendum))
+
+.lib.matplotlib._api.__init__.warn_external
+
+def warn_external(message, category=None):
+    frame = sys._getframe()
+    for stacklevel in itertools.count(1):
+        if frame is None:
+            break
+        if not re.match('\\A(matplotlib|mpl_toolkits)(\\Z|\\.(?!tests\\.))', frame.f_globals.get('__name__', '')):
+            break
+        frame = frame.f_back
+    warnings.warn(message, category, stacklevel)
+
+
+[/PYTHON]
+What will be the output of `fix_style`, given the following input:
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "s": "default"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "output": XXX        
+}
+```
+[/STRUCTURE]

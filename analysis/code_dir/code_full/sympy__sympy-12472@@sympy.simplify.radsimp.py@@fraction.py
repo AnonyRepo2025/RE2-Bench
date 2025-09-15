@@ -1,0 +1,257 @@
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            if not isinstance(a, np.floating):
+                return sympify(np.asscalar(a))
+            else:
+                try:
+                    from sympy.core.numbers import Float
+                    prec = np.finfo(a).nmant
+                    a = str(list(np.reshape(np.asarray(a), (1, np.size(a)))[0]))[1:-1]
+                    return Float(a, precision=prec)
+                except NotImplementedError:
+                    raise SympifyError('Translation for numpy float : %s is not implemented' % a)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    try:
+        from ..tensor.array import Array
+        return Array(a.flat, a.shape)
+    except AttributeError:
+        pass
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+def __hash__(self):
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+def make_args(cls, expr):
+    if isinstance(expr, cls):
+        return expr.args
+    else:
+        return (sympify(expr),)
+
+def as_base_exp(self):
+    b, e = self.args
+    if b.is_Rational and b.p == 1 and (b.q != 1):
+        return (Integer(b.q), -e)
+    return (b, e)
+
+def args(self):
+    return self._args
+
+def getit(self):
+    try:
+        return self._assumptions[fact]
+    except KeyError:
+        if self._assumptions is self.default_assumptions:
+            self._assumptions = self.default_assumptions.copy()
+        return _ask(fact, self)
+
+def _hashable_content(self):
+    return self._args
+
+def __hash__(self):
+    return hash(self.p)
+
+def func(self):
+    return self.__class__
+
+def as_numer_denom(self):
+    return (self, S.One)
+
+def __neg__(self):
+    return Integer(-self.p)
+
+def __new__(cls, i):
+    if isinstance(i, string_types):
+        i = i.replace(' ', '')
+    try:
+        ival = int(i)
+    except TypeError:
+        raise TypeError('Integer can only work with integer expressions.')
+    try:
+        return _intcache[ival]
+    except KeyError:
+        obj = Expr.__new__(cls)
+        obj.p = ival
+        _intcache[ival] = obj
+        return obj
+
+def __new__(cls, b, e, evaluate=None):
+    if evaluate is None:
+        evaluate = global_evaluate[0]
+    from sympy.functions.elementary.exponential import exp_polar
+    b = _sympify(b)
+    e = _sympify(e)
+    if evaluate:
+        if e is S.Zero:
+            return S.One
+        elif e is S.One:
+            return b
+        elif (b.is_Symbol or b.is_number) and (e.is_Symbol or e.is_number) and e.is_integer and _coeff_isneg(b):
+            if e.is_even:
+                b = -b
+            elif e.is_odd:
+                return -Pow(-b, e)
+        if S.NaN in (b, e):
+            return S.NaN
+        elif b is S.One:
+            if abs(e).is_infinite:
+                return S.NaN
+            return S.One
+        else:
+            if not e.is_Atom and b is not S.Exp1 and (b.func is not exp_polar):
+                from sympy import numer, denom, log, sign, im, factor_terms
+                c, ex = factor_terms(e, sign=False).as_coeff_Mul()
+                den = denom(ex)
+                if den.func is log and den.args[0] == b:
+                    return S.Exp1 ** (c * numer(ex))
+                elif den.is_Add:
+                    s = sign(im(b))
+                    if s.is_Number and s and (den == log(-factor_terms(b, sign=False)) + s * S.ImaginaryUnit * S.Pi):
+                        return S.Exp1 ** (c * numer(ex))
+            obj = b._eval_power(e)
+            if obj is not None:
+                return obj
+    obj = Expr.__new__(cls, b, e)
+    obj.is_commutative = b.is_commutative and e.is_commutative
+    return obj
+
+def _sympify(a):
+    return sympify(a, strict=True)
+
+def _coeff_isneg(a):
+    if a.is_Mul:
+        a = a.args[0]
+    return a.is_Number and a.is_negative
+
+
+
+from __future__ import print_function, division
+from collections import defaultdict
+from sympy import SYMPY_DEBUG
+from sympy.core.evaluate import global_evaluate
+from sympy.core.compatibility import iterable, ordered, default_sort_key
+from sympy.core import expand_power_base, sympify, Add, S, Mul, Derivative, Pow, symbols, expand_mul
+from sympy.core.numbers import Rational
+from sympy.core.exprtools import Factors, gcd_terms
+from sympy.core.mul import _keep_coeff, _unevaluated_Mul
+from sympy.core.function import _mexpand
+from sympy.core.add import _unevaluated_Add
+from sympy.functions import exp, sqrt, log
+from sympy.polys import gcd
+from sympy.simplify.sqrtdenest import sqrtdenest
+from sympy.simplify.simplify import signsimp
+from sympy.simplify.simplify import nsimplify
+from sympy.simplify.powsimp import powsimp, powdenest
+expand_numer = numer_expand
+expand_denom = denom_expand
+expand_fraction = fraction_expand
+
+def fraction(expr, exact=False):
+    expr = sympify(expr)
+    numer, denom = ([], [])
+    for term in Mul.make_args(expr):
+        if term.is_commutative and (term.is_Pow or term.func is exp):
+            b, ex = term.as_base_exp()
+            if ex.is_negative:
+                if ex is S.NegativeOne:
+                    denom.append(b)
+                elif exact:
+                    if ex.is_constant():
+                        denom.append(Pow(b, -ex))
+                    else:
+                        numer.append(term)
+                else:
+                    denom.append(Pow(b, -ex))
+            elif ex.is_positive:
+                numer.append(term)
+            elif not exact and ex.is_Mul:
+                n, d = term.as_numer_denom()
+                numer.append(n)
+                denom.append(d)
+            else:
+                numer.append(term)
+        elif term.is_Rational:
+            n, d = term.as_numer_denom()
+            numer.append(n)
+            denom.append(d)
+        else:
+            numer.append(term)
+    if exact:
+        return (Mul(*numer, evaluate=False), Mul(*denom, evaluate=False))
+    else:
+        return (Mul(*numer), Mul(*denom))

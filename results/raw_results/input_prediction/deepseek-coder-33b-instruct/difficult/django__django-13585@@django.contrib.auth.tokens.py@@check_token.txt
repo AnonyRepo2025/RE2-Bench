@@ -1,0 +1,199 @@
+1. To get true, we need:
+`_make_token_with_timestamp(user, ts)` to be equal to token.
+2. `_make_token_with_timestamp(user, ts)` is a hash of `_make_hash_value(user, timestamp)`.
+3. `_make_hash_value(user, timestamp)` is a string concatenation of user's id, password, last_login, timestamp, and email.
+4. `timestamp` is the current time.
+5. `token` is a string concatenation of `ts_b36` and `hash_string`.
+6. `ts_b36` is a base36 representation of `timestamp`.
+7. `hash_string` is a hexadecimal representation of a hmac of `_make_hash_value(user, timestamp)`.
+8. `_make_hash_value(user, timestamp)` is a string concatenation of user's id, password, last_login, timestamp, and email.
+9. `user` is a user object with id, password, last_login, timestamp, and email.
+10. `secret` is a secret key.
+11. `algorithm` is a hashing algorithm.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "secret": "secret_key",
+        "algorithm": "sha1"
+    },
+    "args": {
+        "user": {
+            "_state": {
+                "db": "default",
+                "adding": false
+            },
+            "id": 1,
+            "password": "password",
+            "last_login": "2020-01-01T00:00:00Z",
+            "is_superuser": false,
+            "username": "username",
+            "first_name": "first_name",
+            "last_name": "last_name",
+            "email": "email",
+            "is_staff": false,
+            "is_active": true,
+            "date_joined": "2020-01-01T00:00:00Z"
+        },
+        "token": "1234567890-0123456789abcdef"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import os
+import json
+import attr
+import six
+from pathlib import Path
+import tempfile
+
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]
+1. To get "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+from datetime import datetime, time
+from django.conf import settings
+from django.utils.crypto import constant_time_compare, salted_hmac
+from django.utils.http import base36_to_int, int_to_base36
+default_token_generator = PasswordResetTokenGenerator()
+
+class PasswordResetTokenGenerator:
+    key_salt = 'django.contrib.auth.tokens.PasswordResetTokenGenerator'
+    algorithm = None
+    secret = None
+
+    def check_token(self, user, token):
+        if not (user and token):
+            return False
+        try:
+            ts_b36, _ = token.split('-')
+            legacy

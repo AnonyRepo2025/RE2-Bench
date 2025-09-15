@@ -1,0 +1,288 @@
+def check_array(array, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=None, estimator=None):
+    if warn_on_dtype is not None:
+        warnings.warn("'warn_on_dtype' is deprecated in version 0.21 and will be removed in 0.23. Don't set `warn_on_dtype` to remove this warning.", FutureWarning, stacklevel=2)
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+        if all((isinstance(dtype, np.dtype) for dtype in dtypes_orig)):
+            dtype_orig = np.result_type(*array.dtypes)
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse, dtype=dtype, copy=copy, force_all_finite=force_all_finite, accept_large_sparse=accept_large_sparse)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                if dtype is not None and np.dtype(dtype).kind in 'iu':
+                    array = np.asarray(array, order=order)
+                    if array.dtype.kind == 'f':
+                        _assert_all_finite(array, allow_nan=False, msg_dtype=dtype)
+                    array = array.astype(dtype, casting='unsafe', copy=False)
+                else:
+                    array = np.asarray(array, order=order, dtype=dtype)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of bytes/strings will be converted to decimal numbers if dtype='numeric'. It is recommended that you convert the array to a float dtype before using it in scikit-learn, for example by using your_array = your_array.astype(np.float64).", FutureWarning, stacklevel=2)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, array.shape, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, array.shape, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=2)
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+    if warn_on_dtype and dtypes_orig is not None and ({array.dtype} != set(dtypes_orig)):
+        msg = 'Data with input dtype %s were all converted to %s%s.' % (', '.join(map(str, sorted(set(dtypes_orig)))), array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=3)
+    return array
+
+def _ensure_no_complex_data(array):
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+def _assert_all_finite(X, allow_nan=False, msg_dtype=None):
+    from .extmath import _safe_accumulator_op
+    if _get_config()['assume_finite']:
+        return
+    X = np.asanyarray(X)
+    is_float = X.dtype.kind in 'fc'
+    if is_float and np.isfinite(_safe_accumulator_op(np.sum, X)):
+        pass
+    elif is_float:
+        msg_err = 'Input contains {} or a value too large for {!r}.'
+        if allow_nan and np.isinf(X).any() or (not allow_nan and (not np.isfinite(X).all())):
+            type_err = 'infinity' if allow_nan else 'NaN, infinity'
+            raise ValueError(msg_err.format(type_err, msg_dtype if msg_dtype is not None else X.dtype))
+    elif X.dtype == np.dtype('object') and (not allow_nan):
+        if _object_dtype_isnan(X).any():
+            raise ValueError('Input contains NaN')
+
+def get_config():
+    return _global_config.copy()
+
+def _safe_accumulator_op(op, x, *args, **kwargs):
+    if np.issubdtype(x.dtype, np.floating) and x.dtype.itemsize < 8:
+        result = op(x, *args, **kwargs, dtype=np.float64)
+    else:
+        result = op(x, *args, **kwargs)
+    return result
+
+def _num_samples(x):
+    message = 'Expected sequence or array-like, got %s' % type(x)
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError(message)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError(message)
+    if hasattr(x, 'shape') and x.shape is not None:
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        if isinstance(x.shape[0], numbers.Integral):
+            return x.shape[0]
+    try:
+        return len(x)
+    except TypeError:
+        raise TypeError(message)
+
+def _ensure_sparse_format(spmatrix, accept_sparse, dtype, copy, force_all_finite, accept_large_sparse):
+    if dtype is None:
+        dtype = spmatrix.dtype
+    changed_format = False
+    if isinstance(accept_sparse, str):
+        accept_sparse = [accept_sparse]
+    _check_large_sparse(spmatrix, accept_large_sparse)
+    if accept_sparse is False:
+        raise TypeError('A sparse matrix was passed, but dense data is required. Use X.toarray() to convert to a dense numpy array.')
+    elif isinstance(accept_sparse, (list, tuple)):
+        if len(accept_sparse) == 0:
+            raise ValueError("When providing 'accept_sparse' as a tuple or list, it must contain at least one string value.")
+        if spmatrix.format not in accept_sparse:
+            spmatrix = spmatrix.asformat(accept_sparse[0])
+            changed_format = True
+    elif accept_sparse is not True:
+        raise ValueError("Parameter 'accept_sparse' should be a string, boolean or list of strings. You provided 'accept_sparse={}'.".format(accept_sparse))
+    if dtype != spmatrix.dtype:
+        spmatrix = spmatrix.astype(dtype)
+    elif copy and (not changed_format):
+        spmatrix = spmatrix.copy()
+    if force_all_finite:
+        if not hasattr(spmatrix, 'data'):
+            warnings.warn("Can't check %s sparse matrix for nan or inf." % spmatrix.format, stacklevel=2)
+        else:
+            _assert_all_finite(spmatrix.data, allow_nan=force_all_finite == 'allow-nan')
+    return spmatrix
+
+def _check_large_sparse(X, accept_large_sparse=False):
+    if not accept_large_sparse:
+        supported_indices = ['int32']
+        if X.getformat() == 'coo':
+            index_keys = ['col', 'row']
+        elif X.getformat() in ['csr', 'csc', 'bsr']:
+            index_keys = ['indices', 'indptr']
+        else:
+            return
+        for key in index_keys:
+            indices_datatype = getattr(X, key).dtype
+            if indices_datatype not in supported_indices:
+                raise ValueError('Only sparse matrices with 32-bit integer indices are accepted. Got %s indices.' % indices_datatype)
+
+def mean_variance_axis(X, axis):
+    _raise_error_wrong_axis(axis)
+    if isinstance(X, sp.csr_matrix):
+        if axis == 0:
+            return _csr_mean_var_axis0(X)
+        else:
+            return _csc_mean_var_axis0(X.T)
+    elif isinstance(X, sp.csc_matrix):
+        if axis == 0:
+            return _csc_mean_var_axis0(X)
+        else:
+            return _csr_mean_var_axis0(X.T)
+    else:
+        _raise_typeerror(X)
+
+def _raise_error_wrong_axis(axis):
+    if axis not in (0, 1):
+        raise ValueError('Unknown axis value: %d. Use 0 for rows, or 1 for columns' % axis)
+
+def min_max_axis(X, axis, ignore_nan=False):
+    if isinstance(X, sp.csr_matrix) or isinstance(X, sp.csc_matrix):
+        if ignore_nan:
+            return _sparse_nan_min_max(X, axis=axis)
+        else:
+            return _sparse_min_max(X, axis=axis)
+    else:
+        _raise_typeerror(X)
+
+def _sparse_min_max(X, axis):
+    return (_sparse_min_or_max(X, axis, np.minimum), _sparse_min_or_max(X, axis, np.maximum))
+
+def _sparse_min_or_max(X, axis, min_or_max):
+    if axis is None:
+        if 0 in X.shape:
+            raise ValueError('zero-size array to reduction operation')
+        zero = X.dtype.type(0)
+        if X.nnz == 0:
+            return zero
+        m = min_or_max.reduce(X.data.ravel())
+        if X.nnz != np.product(X.shape):
+            m = min_or_max(zero, m)
+        return m
+    if axis < 0:
+        axis += 2
+    if axis == 0 or axis == 1:
+        return _min_or_max_axis(X, axis, min_or_max)
+    else:
+        raise ValueError('invalid axis, use 0 for rows, or 1 for columns')
+
+def _min_or_max_axis(X, axis, min_or_max):
+    N = X.shape[axis]
+    if N == 0:
+        raise ValueError('zero-size array to reduction operation')
+    M = X.shape[1 - axis]
+    mat = X.tocsc() if axis == 0 else X.tocsr()
+    mat.sum_duplicates()
+    major_index, value = _minor_reduce(mat, min_or_max)
+    not_full = np.diff(mat.indptr)[major_index] < N
+    value[not_full] = min_or_max(value[not_full], 0)
+    mask = value != 0
+    major_index = np.compress(mask, major_index)
+    value = np.compress(mask, value)
+    if axis == 0:
+        res = sp.coo_matrix((value, (np.zeros(len(value)), major_index)), dtype=X.dtype, shape=(1, M))
+    else:
+        res = sp.coo_matrix((value, (major_index, np.zeros(len(value)))), dtype=X.dtype, shape=(M, 1))
+    return res.A.ravel()
+
+def _minor_reduce(X, ufunc):
+    major_index = np.flatnonzero(np.diff(X.indptr))
+    X = type(X)((X.data, X.indices, X.indptr), shape=X.shape)
+    value = ufunc.reduceat(X.data, X.indptr[major_index])
+    return (major_index, value)
+
+
+
+import numpy as np
+from ..base import BaseEstimator
+from ._base import SelectorMixin
+from ..utils import check_array
+from ..utils.sparsefuncs import mean_variance_axis, min_max_axis
+from ..utils.validation import check_is_fitted
+
+class VarianceThreshold(SelectorMixin, BaseEstimator):
+
+    def __init__(self, threshold=0.0):
+        self.threshold = threshold
+
+    def fit(self, X, y=None):
+        X = check_array(X, ('csr', 'csc'), dtype=np.float64, force_all_finite='allow-nan')
+        if hasattr(X, 'toarray'):
+            _, self.variances_ = mean_variance_axis(X, axis=0)
+            if self.threshold == 0:
+                mins, maxes = min_max_axis(X, axis=0)
+                peak_to_peaks = maxes - mins
+        else:
+            self.variances_ = np.nanvar(X, axis=0)
+            if self.threshold == 0:
+                peak_to_peaks = np.ptp(X, axis=0)
+        if self.threshold == 0:
+            compare_arr = np.array([self.variances_, peak_to_peaks])
+            self.variances_ = np.nanmin(compare_arr, axis=0)
+        if np.all(~np.isfinite(self.variances_) | (self.variances_ <= self.threshold)):
+            msg = 'No feature in X meets the variance threshold {0:.5f}'
+            if X.shape[0] == 1:
+                msg += ' (X contains only one sample)'
+            raise ValueError(msg.format(self.threshold))
+        return self
+
+    def _get_support_mask(self):
+        check_is_fitted(self)
+        return self.variances_ > self.threshold
+
+    def _more_tags(self):
+        return {'allow_nan': True}

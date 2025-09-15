@@ -1,0 +1,491 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. You need to predict output variable values, and print output between [OUTPUT] and [\OUTPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT].
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[THOUGHT]
+1. Inside `mktemp`, since `numbered`=True (default), it calls: p = make_numbered_dir(root=self.getbasetemp(), prefix="world")
+2. Inside `getbasetemp`, since `_basetemp` is None, so basetemp = Path("/tmp/pytest-of-root/pytest-0/test_mktemp0"). Therefore, getbasetemp() returns "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+3. Inside `make_numbered_dir`:
+    root = /tmp/pytest-of-root/pytest-0/test_mktemp0
+    prefix = "world"
+    Since max_existing = -1, new_number = 0, so `new_path` = "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+[/THOUGHT]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[PYTHON]
+from math import log
+import numpy as np
+from scipy import linalg
+from scipy.linalg import pinvh
+from .base import LinearModel, _rescale_data
+from ..base import RegressorMixin
+from ..utils.extmath import fast_logdet
+from ..utils import check_X_y
+
+class BayesianRidge(LinearModel, RegressorMixin):
+
+    def __init__(self, n_iter=300, tol=0.001, alpha_1=1e-06, alpha_2=1e-06, lambda_1=1e-06, lambda_2=1e-06, alpha_init=None, lambda_init=None, compute_score=False, fit_intercept=True, normalize=False, copy_X=True, verbose=False):
+        self.n_iter = n_iter
+        self.tol = tol
+        self.alpha_1 = alpha_1
+        self.alpha_2 = alpha_2
+        self.lambda_1 = lambda_1
+        self.lambda_2 = lambda_2
+        self.alpha_init = alpha_init
+        self.lambda_init = lambda_init
+        self.compute_score = compute_score
+        self.fit_intercept = fit_intercept
+        self.normalize = normalize
+        self.copy_X = copy_X
+        self.verbose = verbose
+
+    def fit(self, X, y, sample_weight=None):
+        if self.n_iter < 1:
+            raise ValueError('n_iter should be greater than or equal to 1. Got {!r}.'.format(self.n_iter))
+        X, y = check_X_y(X, y, dtype=np.float64, y_numeric=True)
+        X, y, X_offset_, y_offset_, X_scale_ = self._preprocess_data(X, y, self.fit_intercept, self.normalize, self.copy_X, sample_weight=sample_weight)
+        if sample_weight is not None:
+            X, y = _rescale_data(X, y, sample_weight)
+        self.X_offset_ = X_offset_
+        self.X_scale_ = X_scale_
+        n_samples, n_features = X.shape
+        eps = np.finfo(np.float64).eps
+        alpha_ = self.alpha_init
+        lambda_ = self.lambda_init
+        if alpha_ is None:
+            alpha_ = 1.0 / (np.var(y) + eps)
+        if lambda_ is None:
+            lambda_ = 1.0
+        verbose = self.verbose
+        lambda_1 = self.lambda_1
+        lambda_2 = self.lambda_2
+        alpha_1 = self.alpha_1
+        alpha_2 = self.alpha_2
+        self.scores_ = list()
+        coef_old_ = None
+        XT_y = np.dot(X.T, y)
+        U, S, Vh = linalg.svd(X, full_matrices=False)
+        eigen_vals_ = S ** 2
+        for iter_ in range(self.n_iter):
+            coef_, rmse_ = self._update_coef_(X, y, n_samples, n_features, XT_y, U, Vh, eigen_vals_, alpha_, lambda_)
+            if self.compute_score:
+                s = self._log_marginal_likelihood(n_samples, n_features, eigen_vals_, alpha_, lambda_, coef_, rmse_)
+                self.scores_.append(s)
+            gamma_ = np.sum(alpha_ * eigen_vals_ / (lambda_ + alpha_ * eigen_vals_))
+            lambda_ = (gamma_ + 2 * lambda_1) / (np.sum(coef_ ** 2) + 2 * lambda_2)
+            alpha_ = (n_samples - gamma_ + 2 * alpha_1) / (rmse_ + 2 * alpha_2)
+            if iter_ != 0 and np.sum(np.abs(coef_old_ - coef_)) < self.tol:
+                if verbose:
+                    print('Convergence after ', str(iter_), ' iterations')
+                break
+            coef_old_ = np.copy(coef_)
+        self.n_iter_ = iter_ + 1
+        self.alpha_ = alpha_
+        self.lambda_ = lambda_
+        self.coef_, rmse_ = self._update_coef_(X, y, n_samples, n_features, XT_y, U, Vh, eigen_vals_, alpha_, lambda_)
+        if self.compute_score:
+            s = self._log_marginal_likelihood(n_samples, n_features, eigen_vals_, alpha_, lambda_, coef_, rmse_)
+            self.scores_.append(s)
+            self.scores_ = np.array(self.scores_)
+        scaled_sigma_ = np.dot(Vh.T, Vh / (eigen_vals_ + lambda_ / alpha_)[:, np.newaxis])
+        self.sigma_ = 1.0 / alpha_ * scaled_sigma_
+        self._set_intercept(X_offset_, y_offset_, X_scale_)
+        return self
+
+    def predict(self, X, return_std=False):
+        y_mean = self._decision_function(X)
+        if return_std is False:
+            return y_mean
+        else:
+            if self.normalize:
+                X = (X - self.X_offset_) / self.X_scale_
+            sigmas_squared_data = (np.dot(X, self.sigma_) * X).sum(axis=1)
+            y_std = np.sqrt(sigmas_squared_data + 1.0 / self.alpha_)
+            return (y_mean, y_std)
+
+    def _update_coef_(self, X, y, n_samples, n_features, XT_y, U, Vh, eigen_vals_, alpha_, lambda_):
+        if n_samples > n_features:
+            coef_ = np.dot(Vh.T, Vh / (eigen_vals_ + lambda_ / alpha_)[:, np.newaxis])
+            coef_ = np.dot(coef_, XT_y)
+        else:
+            coef_ = np.dot(X.T, np.dot(U / (eigen_vals_ + lambda_ / alpha_)[None, :], U.T))
+            coef_ = np.dot(coef_, y)
+        rmse_ = np.sum((y - np.dot(X, coef_)) ** 2)
+        return (coef_, rmse_)
+
+    def _log_marginal_likelihood(self, n_samples, n_features, eigen_vals, alpha_, lambda_, coef, rmse):
+        alpha_1 = self.alpha_1
+        alpha_2 = self.alpha_2
+        lambda_1 = self.lambda_1
+        lambda_2 = self.lambda_2
+        if n_samples > n_features:
+            logdet_sigma = -np.sum(np.log(lambda_ + alpha_ * eigen_vals))
+        else:
+            logdet_sigma = np.full(n_features, lambda_, dtype=np.array(lambda_).dtype)
+            logdet_sigma[:n_samples] += alpha_ * eigen_vals
+            logdet_sigma = -np.sum(np.log(logdet_sigma))
+        score = lambda_1 * log(lambda_) - lambda_2 * lambda_
+        score += alpha_1 * log(alpha_) - alpha_2 * alpha_
+        score += 0.5 * (n_features * log(lambda_) + n_samples * log(alpha_) - alpha_ * rmse - lambda_ * np.sum(coef ** 2) + logdet_sigma - n_samples * log(2 * np.pi))
+        return score
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_X_y
+
+def check_X_y(X, y, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, multi_output=False, ensure_min_samples=1, ensure_min_features=1, y_numeric=False, warn_on_dtype=None, estimator=None):
+    if y is None:
+        raise ValueError('y cannot be None')
+    X = check_array(X, accept_sparse=accept_sparse, accept_large_sparse=accept_large_sparse, dtype=dtype, order=order, copy=copy, force_all_finite=force_all_finite, ensure_2d=ensure_2d, allow_nd=allow_nd, ensure_min_samples=ensure_min_samples, ensure_min_features=ensure_min_features, warn_on_dtype=warn_on_dtype, estimator=estimator)
+    if multi_output:
+        y = check_array(y, 'csr', force_all_finite=True, ensure_2d=False, dtype=None)
+    else:
+        y = column_or_1d(y, warn=True)
+        _assert_all_finite(y)
+    if y_numeric and y.dtype.kind == 'O':
+        y = y.astype(np.float64)
+    check_consistent_length(X, y)
+    return (X, y)
+
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=None, estimator=None):
+    if warn_on_dtype is not None:
+        warnings.warn("'warn_on_dtype' is deprecated in version 0.21 and will be removed in 0.23. Don't set `warn_on_dtype` to remove this warning.", DeprecationWarning)
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse, dtype=dtype, copy=copy, force_all_finite=force_all_finite, accept_large_sparse=accept_large_sparse)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                array = np.asarray(array, dtype=dtype, order=order)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of bytes/strings will be converted to decimal numbers if dtype='numeric'. It is recommended that you convert the array to a float dtype before using it in scikit-learn, for example by using your_array = your_array.astype(np.float64).", FutureWarning)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, array.shape, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, array.shape, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning)
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+    if warn_on_dtype and dtypes_orig is not None and ({array.dtype} != set(dtypes_orig)):
+        msg = 'Data with input dtype %s were all converted to %s%s.' % (', '.join(map(str, sorted(set(dtypes_orig)))), array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=3)
+    return array
+
+.sklearn.utils.validation._ensure_no_complex_data
+
+def _ensure_no_complex_data(array):
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+.sklearn.utils.validation._assert_all_finite
+
+def _assert_all_finite(X, allow_nan=False):
+    from .extmath import _safe_accumulator_op
+    if _get_config()['assume_finite']:
+        return
+    X = np.asanyarray(X)
+    is_float = X.dtype.kind in 'fc'
+    if is_float and np.isfinite(_safe_accumulator_op(np.sum, X)):
+        pass
+    elif is_float:
+        msg_err = 'Input contains {} or a value too large for {!r}.'
+        if allow_nan and np.isinf(X).any() or (not allow_nan and (not np.isfinite(X).all())):
+            type_err = 'infinity' if allow_nan else 'NaN, infinity'
+            raise ValueError(msg_err.format(type_err, X.dtype))
+    elif X.dtype == np.dtype('object') and (not allow_nan):
+        if _object_dtype_isnan(X).any():
+            raise ValueError('Input contains NaN')
+
+.sklearn._config.get_config
+
+def get_config():
+    return _global_config.copy()
+
+.sklearn.utils.extmath._safe_accumulator_op
+
+def _safe_accumulator_op(op, x, *args, **kwargs):
+    if np.issubdtype(x.dtype, np.floating) and x.dtype.itemsize < 8:
+        result = op(x, *args, **kwargs, dtype=np.float64)
+    else:
+        result = op(x, *args, **kwargs)
+    return result
+
+.sklearn.utils.validation._num_samples
+
+def _num_samples(x):
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError('Expected sequence or array-like, got estimator %s' % x)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError('Expected sequence or array-like, got %s' % type(x))
+    if hasattr(x, 'shape'):
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        if isinstance(x.shape[0], numbers.Integral):
+            return x.shape[0]
+        else:
+            return len(x)
+    else:
+        return len(x)
+
+.sklearn.utils.validation.column_or_1d
+
+def column_or_1d(y, warn=False):
+    shape = np.shape(y)
+    if len(shape) == 1:
+        return np.ravel(y)
+    if len(shape) == 2 and shape[1] == 1:
+        if warn:
+            warnings.warn('A column-vector y was passed when a 1d array was expected. Please change the shape of y to (n_samples, ), for example using ravel().', DataConversionWarning, stacklevel=2)
+        return np.ravel(y)
+    raise ValueError('bad input shape {0}'.format(shape))
+
+.sklearn.utils.validation.check_consistent_length
+
+def check_consistent_length(*arrays):
+    lengths = [_num_samples(X) for X in arrays if X is not None]
+    uniques = np.unique(lengths)
+    if len(uniques) > 1:
+        raise ValueError('Found input variables with inconsistent numbers of samples: %r' % [int(l) for l in lengths])
+
+.sklearn.linear_model.base._preprocess_data
+
+def _preprocess_data(X, y, fit_intercept, normalize=False, copy=True, sample_weight=None, return_mean=False, check_input=True):
+    if isinstance(sample_weight, numbers.Number):
+        sample_weight = None
+    if check_input:
+        X = check_array(X, copy=copy, accept_sparse=['csr', 'csc'], dtype=FLOAT_DTYPES)
+    elif copy:
+        if sp.issparse(X):
+            X = X.copy()
+        else:
+            X = X.copy(order='K')
+    y = np.asarray(y, dtype=X.dtype)
+    if fit_intercept:
+        if sp.issparse(X):
+            X_offset, X_var = mean_variance_axis(X, axis=0)
+            if not return_mean:
+                X_offset[:] = X.dtype.type(0)
+            if normalize:
+                X_var *= X.shape[0]
+                X_scale = np.sqrt(X_var, X_var)
+                del X_var
+                X_scale[X_scale == 0] = 1
+                inplace_column_scale(X, 1.0 / X_scale)
+            else:
+                X_scale = np.ones(X.shape[1], dtype=X.dtype)
+        else:
+            X_offset = np.average(X, axis=0, weights=sample_weight)
+            X -= X_offset
+            if normalize:
+                X, X_scale = f_normalize(X, axis=0, copy=False, return_norm=True)
+            else:
+                X_scale = np.ones(X.shape[1], dtype=X.dtype)
+        y_offset = np.average(y, axis=0, weights=sample_weight)
+        y = y - y_offset
+    else:
+        X_offset = np.zeros(X.shape[1], dtype=X.dtype)
+        X_scale = np.ones(X.shape[1], dtype=X.dtype)
+        if y.ndim == 1:
+            y_offset = X.dtype.type(0)
+        else:
+            y_offset = np.zeros(y.shape[1], dtype=X.dtype)
+    return (X, y, X_offset, y_offset, X_scale)
+
+.sklearn.linear_model.bayes.ARDRegression.update_sigma
+
+def update_sigma(X, alpha_, lambda_, keep_lambda, n_samples):
+    sigma_ = pinvh(np.eye(n_samples) / alpha_ + np.dot(X[:, keep_lambda] * np.reshape(1.0 / lambda_[keep_lambda], [1, -1]), X[:, keep_lambda].T))
+    sigma_ = np.dot(sigma_, X[:, keep_lambda] * np.reshape(1.0 / lambda_[keep_lambda], [1, -1]))
+    sigma_ = -np.dot(np.reshape(1.0 / lambda_[keep_lambda], [-1, 1]) * X[:, keep_lambda].T, sigma_)
+    sigma_.flat[::sigma_.shape[1] + 1] += 1.0 / lambda_[keep_lambda]
+    return sigma_
+
+
+[/PYTHON]
+What will be the output of `fit`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "n_iter": 300,
+        "tol": 0.001,
+        "alpha_1": 1e-06,
+        "alpha_2": 1e-06,
+        "lambda_1": 1e-06,
+        "lambda_2": 1e-06,
+        "alpha_init": null,
+        "lambda_init": null,
+        "compute_score": false,
+        "fit_intercept": true,
+        "normalize": false,
+        "copy_X": true,
+        "verbose": false
+    },
+    "args": {
+        "X": "[[2.92774798e-01 2.98488317e-01 7.92756398e-01 5.48708798e-01\n  9.97556379e-01]\n [9.00916079e-01 5.31096494e-01 3.49690957e-01 7.17320134e-01\n  3.72239118e-02]\n [6.76976308e-01 1.61881544e-01 1.16796566e-01 3.61475091e-01\n  9.47310890e-01]\n [5.52716902e-01 6.69927990e-01 5.72002254e-01 3.80750653e-01\n  9.00281268e-01]\n [5.92063093e-01 1.66177307e-01 1.96740563e-01 8.36583508e-01\n  3.67024378e-01]\n [2.40289612e-01 2.20944652e-02 3.25933815e-01 2.08141899e-01\n  8.21176377e-02]\n [8.72516007e-01 6.78911983e-01 8.72217370e-01 2.84996983e-01\n  4.09016895e-02]\n [9.16318996e-01 4.45582621e-01 3.93594072e-02 4.07805959e-01\n  7.05717731e-01]\n [2.58244940e-01 9.36192485e-01 9.45175962e-01 6.95559142e-01\n  5.38724506e-01]\n [9.15333494e-01 6.74960365e-01 2.41175793e-01 5.03152137e-01\n  2.67377636e-01]\n [3.04706874e-01 4.37456964e-01 8.67675747e-01 4.10837874e-03\n  6.06282521e-01]\n [3.80384330e-01 7.30571838e-01 6.43354129e-01 5.73973325e-02\n  8.32727496e-01]\n [1.41454573e-01 6.75489613e-01 4.19306983e-01 2.42497980e-03\n  8.13250587e-01]\n [4.58113972e-02 2.87892447e-01 3.84747556e-01 7.31045407e-02\n  4.61175103e-01]\n [2.69800481e-01 1.69781515e-04 8.20607731e-01 8.35075811e-01\n  5.94843424e-01]\n [8.03209264e-01 2.66983023e-01 9.14784311e-01 1.94909835e-01\n  9.18705306e-01]\n [6.30392658e-01 1.70599699e-01 7.72373721e-01 7.64169385e-01\n  9.38734241e-01]\n [6.60638942e-01 1.85691685e-01 9.01519525e-01 4.00164472e-01\n  1.95456616e-01]\n [9.86681262e-01 9.70983643e-01 7.64234701e-01 4.79409490e-01\n  2.03021296e-01]\n [1.71973702e-01 9.06110211e-01 8.67724092e-02 3.11713975e-01\n  8.02265004e-01]\n [6.32817205e-01 7.89347078e-01 7.20973513e-01 6.09048035e-01\n  2.57887253e-01]\n [9.62803256e-01 8.01504354e-01 7.40855385e-01 3.96804048e-01\n  4.76728673e-01]\n [7.69869611e-01 2.32758474e-01 1.66781726e-02 1.70748978e-01\n  9.26419408e-02]\n [3.25593286e-01 2.56124886e-01 4.12852685e-01 8.68420023e-01\n  1.48907593e-04]\n [6.78120073e-01 9.50624010e-01 9.32086481e-01 3.05437945e-01\n  3.38954508e-01]\n [6.52672451e-01 8.36406611e-01 7.42741489e-01 6.52052442e-01\n  9.84348795e-01]\n [3.94000857e-01 9.38411017e-02 6.40621729e-01 5.99050842e-01\n  8.09609431e-01]\n [9.11803062e-01 2.43865083e-01 4.43159518e-01 2.38331138e-01\n  3.56519432e-01]\n [7.82587380e-01 2.17748748e-01 9.23861760e-01 1.17051633e-01\n  7.38258535e-01]\n [1.46290069e-02 2.34886658e-01 9.18568352e-01 8.64511405e-02\n  8.65683516e-01]\n [4.72542093e-01 7.09180918e-01 9.00111641e-02 1.94689446e-01\n  5.56655463e-02]\n [6.76938626e-01 5.29177783e-01 8.73486844e-01 6.43299137e-01\n  9.24139236e-01]\n [1.31986439e-01 3.39990424e-01 1.66761031e-01 7.39354353e-02\n  6.63413086e-03]\n [9.76482446e-01 6.74547700e-01 7.99101533e-01 5.64686758e-01\n  7.08714836e-01]\n [8.15713213e-01 8.25975543e-03 2.03402258e-01 7.65593491e-01\n  7.31736139e-01]\n [8.39371985e-01 4.82765216e-01 6.57123351e-01 9.04462676e-01\n  6.17570156e-01]\n [9.81685846e-01 9.39447869e-02 5.59159772e-01 9.87478568e-01\n  4.33240090e-01]\n [2.68452827e-01 3.90767558e-01 4.20887719e-01 6.40693547e-01\n  4.56408527e-02]\n [3.62430882e-01 8.88565181e-01 6.82838495e-01 1.00006724e-01\n  1.47319331e-01]\n [8.42498025e-01 8.91839730e-01 4.06722853e-01 5.09202730e-01\n  8.93829214e-01]\n [1.72936784e-01 4.00419784e-01 7.40003215e-01 7.08725823e-01\n  6.01009616e-01]\n [7.52707224e-01 9.08750519e-02 5.67253882e-01 4.72727895e-01\n  9.02501887e-02]\n [8.54518159e-01 2.15337777e-01 9.14815381e-02 3.21081432e-03\n  3.30190151e-01]\n [2.92114597e-02 6.68741181e-01 2.37109165e-01 9.66186279e-01\n  4.22980090e-01]\n [7.94408500e-01 6.35871742e-01 4.88369068e-01 4.57106555e-02\n  4.73796150e-01]\n [4.57208358e-02 4.09804077e-02 5.92221618e-01 8.90416385e-01\n  4.17801321e-01]\n [9.50915338e-01 2.72006480e-01 9.86616066e-01 2.89094834e-01\n  6.84120485e-01]\n [4.92362269e-01 6.13695081e-01 2.97715517e-01 3.38513105e-01\n  7.40846468e-01]\n [8.31956828e-01 8.89750386e-01 2.32575760e-01 5.99112485e-01\n  1.10767541e-01]\n [5.96969046e-01 1.11061487e-01 3.78628057e-01 2.69806157e-01\n  6.09137018e-01]]",
+        "y": "[1.55094532 1.51509015 1.42814667 1.74350836 0.94729789 1.35154317\n 2.45384959 1.53830407 1.50565374 1.64696167 2.14884298 1.96971268\n 1.55901974 1.3585489  1.2635737  2.52615134 1.65505817 2.18185729\n 2.28846163 0.95575337 1.7540585  2.31865585 1.62417011 0.88243095\n 2.31143356 1.74500702 1.43752218 2.12337741 2.59504948 1.8706125\n 1.35748357 1.91275504 1.20960501 2.21688903 1.25505121 1.59440065\n 1.54690166 1.05291564 1.93702111 1.72756455 1.20901153 1.86256265\n 1.93124492 0.27557396 2.25358653 0.76042709 2.67001225 1.45777423\n 1.47363787 1.68618406]"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[THOUGHT]

@@ -1,0 +1,781 @@
+diff --git a/django/db/models/query_utils.py b/django/db/models/query_utils.py
+index a82ed23..78148f7 100644
+--- a/django/db/models/query_utils.py
++++ b/django/db/models/query_utils.py
+@@ -403,8 +403,11 @@ class FilteredRelation:
+         self.alias = None
+         if not isinstance(condition, Q):
+             raise ValueError("condition argument must be a Q() instance.")
++        # .condition and .resolved_condition have to be stored independently
++        # as the former must remain unchanged for Join.__eq__ to remain stable
++        # and reusable even once their .filtered_relation are resolved.
+         self.condition = condition
+-        self.path = []
++        self.resolved_condition = None
+ 
+     def __eq__(self, other):
+         if not isinstance(other, self.__class__):
+@@ -418,18 +421,26 @@ class FilteredRelation:
+     def clone(self):
+         clone = FilteredRelation(self.relation_name, condition=self.condition)
+         clone.alias = self.alias
+-        clone.path = self.path[:]
++        if (resolved_condition := self.resolved_condition) is not None:
++            clone.resolved_condition = resolved_condition.clone()
+         return clone
+ 
+-    def resolve_expression(self, *args, **kwargs):
+-        """
+-        QuerySet.annotate() only accepts expression-like arguments
+-        (with a resolve_expression() method).
+-        """
+-        raise NotImplementedError("FilteredRelation.resolve_expression() is unused.")
++    def relabeled_clone(self, change_map):
++        clone = self.clone()
++        if resolved_condition := clone.resolved_condition:
++            clone.resolved_condition = resolved_condition.relabeled_clone(change_map)
++        return clone
++
++    def resolve_expression(self, query, reuse, *args, **kwargs):
++        clone = self.clone()
++        clone.resolved_condition = query.build_filter(
++            self.condition,
++            can_reuse=reuse,
++            allow_joins=True,
++            split_subq=False,
++            update_join_types=False,
++        )[0]
++        return clone
+ 
+     def as_sql(self, compiler, connection):
+-        # Resolve the condition in Join.filtered_relation.
+-        query = compiler.query
+-        where = query.build_filtered_relation_q(self.condition, reuse=set(self.path))
+-        return compiler.compile(where)
++        return compiler.compile(self.resolved_condition)
+diff --git a/django/db/models/sql/datastructures.py b/django/db/models/sql/datastructures.py
+index dadd7c0..57aa946 100644
+--- a/django/db/models/sql/datastructures.py
++++ b/django/db/models/sql/datastructures.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-16786/django/db/models/sql/datastructures.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Useful auxiliary data structures for query construction. Not useful outside
+ the SQL domain.
+@@ -150,14 +343,12 @@ class Join:
+         )
+         return sql, params
+ 
++    @inspect_code
+     def relabeled_clone(self, change_map):
+         new_parent_alias = change_map.get(self.parent_alias, self.parent_alias)
+         new_table_alias = change_map.get(self.table_alias, self.table_alias)
+         if self.filtered_relation is not None:
+-            filtered_relation = self.filtered_relation.clone()
+-            filtered_relation.path = [
+-                change_map.get(p, p) for p in self.filtered_relation.path
+-            ]
++            filtered_relation = self.filtered_relation.relabeled_clone(change_map)
+         else:
+             filtered_relation = None
+         return self.__class__(
+@@ -188,10 +379,6 @@ class Join:
+     def __hash__(self):
+         return hash(self.identity)
+ 
+-    def equals(self, other):
+-        # Ignore filtered_relation in equality check.
+-        return self.identity[:-1] == other.identity[:-1]
+-
+     def demote(self):
+         new = self.relabeled_clone({})
+         new.join_type = INNER
+@@ -242,6 +429,3 @@ class BaseTable:
+ 
+     def __hash__(self):
+         return hash(self.identity)
+-
+-    def equals(self, other):
+-        return self.identity == other.identity
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 2ffcfaa..9271278 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-16786/django/db/models/sql/query.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Create SQL statements for QuerySets.
+ 
+@@ -73,6 +266,20 @@ def get_children_from_q(q):
+             yield child
+ 
+ 
++@inspect_code
++def rename_prefix_from_q(prefix, replacement, q):
++    return Q.create(
++        [
++            rename_prefix_from_q(prefix, replacement, c)
++            if isinstance(c, Node)
++            else (c[0].replace(prefix, replacement, 1), c[1])
++            for c in q.children
++        ],
++        q.connector,
++        q.negated,
++    )
++
++
+ JoinInfo = namedtuple(
+     "JoinInfo",
+     ("final_field", "targets", "opts", "joins", "path", "transform_function"),
+@@ -994,7 +1201,8 @@ class Query(BaseExpression):
+         """
+         return len([1 for count in self.alias_refcount.values() if count])
+ 
+-    def join(self, join, reuse=None, reuse_with_filtered_relation=False):
++    @inspect_code
++    def join(self, join, reuse=None):
+         """
+         Return an alias for the 'join', either reusing an existing alias for
+         that join or creating a new one. 'join' is either a base_table_class or
+@@ -1003,23 +1211,15 @@ class Query(BaseExpression):
+         The 'reuse' parameter can be either None which means all joins are
+         reusable, or it can be a set containing the aliases that can be reused.
+ 
+-        The 'reuse_with_filtered_relation' parameter is used when computing
+-        FilteredRelation instances.
+-
+         A join is always created as LOUTER if the lhs alias is LOUTER to make
+         sure chains like t1 LOUTER t2 INNER t3 aren't generated. All new
+         joins are created as LOUTER if the join is nullable.
+         """
+-        if reuse_with_filtered_relation and reuse:
+-            reuse_aliases = [
+-                a for a, j in self.alias_map.items() if a in reuse and j.equals(join)
+-            ]
+-        else:
+-            reuse_aliases = [
+-                a
+-                for a, j in self.alias_map.items()
+-                if (reuse is None or a in reuse) and j == join
+-            ]
++        reuse_aliases = [
++            a
++            for a, j in self.alias_map.items()
++            if (reuse is None or a in reuse) and j == join
++        ]
+         if reuse_aliases:
+             if join.table_alias in reuse_aliases:
+                 reuse_alias = join.table_alias
+@@ -1042,6 +1242,18 @@ class Query(BaseExpression):
+             join.join_type = join_type
+         join.table_alias = alias
+         self.alias_map[alias] = join
++        if filtered_relation := join.filtered_relation:
++            resolve_reuse = reuse
++            if resolve_reuse is not None:
++                resolve_reuse = set(reuse) | {alias}
++            joins_len = len(self.alias_map)
++            join.filtered_relation = filtered_relation.resolve_expression(
++                self, reuse=resolve_reuse
++            )
++            # Some joins were during expression resolving, they must be present
++            # before the one we just added.
++            if joins_len < len(self.alias_map):
++                self.alias_map[alias] = self.alias_map.pop(alias)
+         return alias
+ 
+     def join_parent_model(self, opts, model, alias, seen):
+@@ -1320,6 +1532,7 @@ class Query(BaseExpression):
+                 "permitted%s" % (name, output_field.__name__, suggestion)
+             )
+ 
++    @inspect_code
+     def build_filter(
+         self,
+         filter_expr,
+@@ -1328,9 +1541,9 @@ class Query(BaseExpression):
+         can_reuse=None,
+         allow_joins=True,
+         split_subq=True,
+-        reuse_with_filtered_relation=False,
+         check_filterable=True,
+         summarize=False,
++        update_join_types=True,
+     ):
+         """
+         Build a WhereNode for a single filter clause but don't add it
+@@ -1353,9 +1566,6 @@ class Query(BaseExpression):
+ 
+         The 'can_reuse' is a set of reusable joins for multijoins.
+ 
+-        If 'reuse_with_filtered_relation' is True, then only joins in can_reuse
+-        will be reused.
+-
+         The method will create a filter clause that can be added to the current
+         query. However, if the filter isn't added to the query then the caller
+         is responsible for unreffing the joins used.
+@@ -1372,6 +1582,7 @@ class Query(BaseExpression):
+                 split_subq=split_subq,
+                 check_filterable=check_filterable,
+                 summarize=summarize,
++                update_join_types=update_join_types,
+             )
+         if hasattr(filter_expr, "resolve_expression"):
+             if not getattr(filter_expr, "conditional", False):
+@@ -1417,7 +1628,6 @@ class Query(BaseExpression):
+                 alias,
+                 can_reuse=can_reuse,
+                 allow_many=allow_many,
+-                reuse_with_filtered_relation=reuse_with_filtered_relation,
+             )
+ 
+             # Prevent iterator from being consumed by check_related_objects()
+@@ -1525,6 +1735,7 @@ class Query(BaseExpression):
+         split_subq=True,
+         check_filterable=True,
+         summarize=False,
++        update_join_types=True,
+     ):
+         """Add a Q-object to the current filter."""
+         connector = q_object.connector
+@@ -1544,42 +1755,18 @@ class Query(BaseExpression):
+                 split_subq=split_subq,
+                 check_filterable=check_filterable,
+                 summarize=summarize,
++                update_join_types=update_join_types,
+             )
+             joinpromoter.add_votes(needed_inner)
+             if child_clause:
+                 target_clause.add(child_clause, connector)
+-        needed_inner = joinpromoter.update_join_types(self)
++        if update_join_types:
++            needed_inner = joinpromoter.update_join_types(self)
++        else:
++            needed_inner = []
+         return target_clause, needed_inner
+ 
+-    def build_filtered_relation_q(
+-        self, q_object, reuse, branch_negated=False, current_negated=False
+-    ):
+-        """Add a FilteredRelation object to the current filter."""
+-        connector = q_object.connector
+-        current_negated ^= q_object.negated
+-        branch_negated = branch_negated or q_object.negated
+-        target_clause = WhereNode(connector=connector, negated=q_object.negated)
+-        for child in q_object.children:
+-            if isinstance(child, Node):
+-                child_clause = self.build_filtered_relation_q(
+-                    child,
+-                    reuse=reuse,
+-                    branch_negated=branch_negated,
+-                    current_negated=current_negated,
+-                )
+-            else:
+-                child_clause, _ = self.build_filter(
+-                    child,
+-                    can_reuse=reuse,
+-                    branch_negated=branch_negated,
+-                    current_negated=current_negated,
+-                    allow_joins=True,
+-                    split_subq=False,
+-                    reuse_with_filtered_relation=True,
+-                )
+-            target_clause.add(child_clause, connector)
+-        return target_clause
+-
++    @inspect_code
+     def add_filtered_relation(self, filtered_relation, alias):
+         filtered_relation.alias = alias
+         lookups = dict(get_children_from_q(filtered_relation.condition))
+@@ -1609,6 +1796,11 @@ class Query(BaseExpression):
+                         "relations deeper than the relation_name (got %r for "
+                         "%r)." % (lookup, filtered_relation.relation_name)
+                     )
++        filtered_relation.condition = rename_prefix_from_q(
++            filtered_relation.relation_name,
++            alias,
++            filtered_relation.condition,
++        )
+         self._filtered_relations[filtered_relation.alias] = filtered_relation
+ 
+     def names_to_path(self, names, opts, allow_many=True, fail_on_missing=False):
+@@ -1727,6 +1919,7 @@ class Query(BaseExpression):
+                 break
+         return path, final_field, targets, names[pos + 1 :]
+ 
++    @inspect_code
+     def setup_joins(
+         self,
+         names,
+@@ -1734,7 +1927,6 @@ class Query(BaseExpression):
+         alias,
+         can_reuse=None,
+         allow_many=True,
+-        reuse_with_filtered_relation=False,
+     ):
+         """
+         Compute the necessary table joins for the passage through the fields
+@@ -1747,9 +1939,6 @@ class Query(BaseExpression):
+         that can be reused. Note that non-reverse foreign keys are always
+         reusable when using setup_joins().
+ 
+-        The 'reuse_with_filtered_relation' can be used to force 'can_reuse'
+-        parameter and force the relation on the given connections.
+-
+         If 'allow_many' is False, then any reverse foreign key seen will
+         generate a MultiJoin exception.
+ 
+@@ -1841,15 +2030,9 @@ class Query(BaseExpression):
+                 nullable,
+                 filtered_relation=filtered_relation,
+             )
+-            reuse = can_reuse if join.m2m or reuse_with_filtered_relation else None
+-            alias = self.join(
+-                connection,
+-                reuse=reuse,
+-                reuse_with_filtered_relation=reuse_with_filtered_relation,
+-            )
++            reuse = can_reuse if join.m2m else None
++            alias = self.join(connection, reuse=reuse)
+             joins.append(alias)
+-            if filtered_relation:
+-                filtered_relation.path = joins[:]
+         return JoinInfo(final_field, targets, opts, joins, path, final_transformer)
+ 
+     def trim_joins(self, targets, joins, path):
+diff --git a/tests/filtered_relation/tests.py b/tests/filtered_relation/tests.py
+index 0fce8b0..2cceeb8 100644
+--- a/tests/filtered_relation/tests.py
++++ b/tests/filtered_relation/tests.py
+@@ -793,6 +793,47 @@ class FilteredRelationAggregationTests(TestCase):
+             qs.annotate(total=Count("pk")).values("total"), [{"total": 1}]
+         )
+ 
++    def test_condition_spans_join(self):
++        self.assertSequenceEqual(
++            Book.objects.annotate(
++                contains_editor_author=FilteredRelation(
++                    "author", condition=Q(author__name__icontains=F("editor__name"))
++                )
++            ).filter(
++                contains_editor_author__isnull=False,
++            ),
++            [self.book1],
++        )
++
++    def test_condition_spans_join_chained(self):
++        self.assertSequenceEqual(
++            Book.objects.annotate(
++                contains_editor_author=FilteredRelation(
++                    "author", condition=Q(author__name__icontains=F("editor__name"))
++                ),
++                contains_editor_author_ref=FilteredRelation(
++                    "author",
++                    condition=Q(author__name=F("contains_editor_author__name")),
++                ),
++            ).filter(
++                contains_editor_author_ref__isnull=False,
++            ),
++            [self.book1],
++        )
++
++    def test_condition_self_ref(self):
++        self.assertSequenceEqual(
++            Book.objects.annotate(
++                contains_author=FilteredRelation(
++                    "author",
++                    condition=Q(title__icontains=F("author__name")),
++                )
++            ).filter(
++                contains_author__isnull=False,
++            ),
++            [self.book1],
++        )
++
+ 
+ class FilteredRelationAnalyticalAggregationTests(TestCase):
+     @classmethod

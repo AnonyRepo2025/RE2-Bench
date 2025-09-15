@@ -1,0 +1,593 @@
+diff --git a/sympy/printing/glsl.py b/sympy/printing/glsl.py
+index 2b8267c..4546cad 100644
+--- a/sympy/printing/glsl.py
++++ b/sympy/printing/glsl.py
+@@ -53,7 +53,7 @@ class GLSLPrinter(CodePrinter):
+         'allow_unknown_functions': False,
+         'contract': True,
+         'error_on_reserved': False,
+-        'reserved_word_suffix': '_'
++        'reserved_word_suffix': '_',
+     }
+ 
+     def __init__(self, settings={}):
+diff --git a/sympy/printing/jscode.py b/sympy/printing/jscode.py
+index 9e08c6a..ddf6fee 100644
+--- a/sympy/printing/jscode.py
++++ b/sympy/printing/jscode.py
+@@ -57,7 +57,7 @@ class JavascriptCodePrinter(CodePrinter):
+         'user_functions': {},
+         'human': True,
+         'allow_unknown_functions': False,
+-        'contract': True
++        'contract': True,
+     }  # type: Dict[str, Any]
+ 
+     def __init__(self, settings={}):
+diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py
+index 99e0f57..012a95d 100644
+--- a/sympy/printing/latex.py
++++ b/sympy/printing/latex.py
+@@ -3,6 +3,199 @@
+ """
+ 
+ from __future__ import print_function, division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-18477/sympy/printing/latex.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ from typing import Any, Dict
+ 
+@@ -125,6 +318,7 @@ class LatexPrinter(Printer):
+     printmethod = "_latex"
+ 
+     _default_settings = {
++        "full_prec": False,
+         "fold_frac_powers": False,
+         "fold_func_brackets": False,
+         "fold_short_frac": None,
+@@ -144,6 +338,8 @@ class LatexPrinter(Printer):
+         "gothic_re_im": False,
+         "decimal_separator": "period",
+         "perm_cyclic": True,
++        "min": None,
++        "max": None,
+     }  # type: Dict[str, Any]
+ 
+     def __init__(self, settings=None):
+@@ -411,10 +607,14 @@ def _print_AppliedPermutation(self, expr):
+         perm, var = expr.args
+         return r"\sigma_{%s}(%s)" % (self._print(perm), self._print(var))
+ 
++    @inspect_code
+     def _print_Float(self, expr):
+         # Based off of that in StrPrinter
+         dps = prec_to_dps(expr._prec)
+-        str_real = mlib.to_str(expr._mpf_, dps, strip_zeros=True)
++        strip = False if self._settings['full_prec'] else True
++        low = self._settings["min"] if "min" in self._settings else None
++        high = self._settings["max"] if "max" in self._settings else None
++        str_real = mlib.to_str(expr._mpf_, dps, strip_zeros=strip, min_fixed=low, max_fixed=high)
+ 
+         # Must always have a mul symbol (as 2.5 10^{20} just looks odd)
+         # thus we use the number separator
+@@ -2550,8 +2750,9 @@ def translate(s):
+         return s
+ 
+ 
+-def latex(expr, fold_frac_powers=False, fold_func_brackets=False,
+-          fold_short_frac=None, inv_trig_style="abbreviated",
++@inspect_code
++def latex(expr, full_prec=False, min=None, max=None, fold_frac_powers=False,
++          fold_func_brackets=False, fold_short_frac=None, inv_trig_style="abbreviated",
+           itex=False, ln_notation=False, long_frac_ratio=None,
+           mat_delim="[", mat_str=None, mode="plain", mul_symbol=None,
+           order=None, symbol_names=None, root_notation=True,
+@@ -2561,6 +2762,8 @@ def latex(expr, fold_frac_powers=False, fold_func_brackets=False,
+ 
+     Parameters
+     ==========
++    full_prec: boolean, optional
++        If set to True, a floating point number is printed with full precision.
+     fold_frac_powers : boolean, optional
+         Emit ``^{p/q}`` instead of ``^{\frac{p}{q}}`` for fractional powers.
+     fold_func_brackets : boolean, optional
+@@ -2628,6 +2831,12 @@ def latex(expr, fold_frac_powers=False, fold_func_brackets=False,
+         when ``comma`` is specified. Lists, sets, and tuple are printed with semicolon
+         separating the elements when ``comma`` is chosen. For example, [1; 2; 3] when
+         ``comma`` is chosen and [1,2,3] for when ``period`` is chosen.
++    min: Integer or None, optional
++        Sets the lower bound for the exponent to print floating point numbers in
++        fixed-point format.
++    max: Integer or None, optional
++        Sets the upper bound for the exponent to print floating point numbers in
++        fixed-point format.
+ 
+     Notes
+     =====
+@@ -2739,6 +2948,7 @@ def latex(expr, fold_frac_powers=False, fold_func_brackets=False,
+         symbol_names = {}
+ 
+     settings = {
++        'full_prec': full_prec,
+         'fold_frac_powers': fold_frac_powers,
+         'fold_func_brackets': fold_func_brackets,
+         'fold_short_frac': fold_short_frac,
+@@ -2758,6 +2968,8 @@ def latex(expr, fold_frac_powers=False, fold_func_brackets=False,
+         'gothic_re_im': gothic_re_im,
+         'decimal_separator': decimal_separator,
+         'perm_cyclic' : perm_cyclic,
++        'min': min,
++        'max': max,
+     }
+ 
+     return LatexPrinter(settings).doprint(expr)
+diff --git a/sympy/printing/pycode.py b/sympy/printing/pycode.py
+index 93a1e1b..ee27b3c 100644
+--- a/sympy/printing/pycode.py
++++ b/sympy/printing/pycode.py
+@@ -92,7 +92,7 @@ class AbstractPythonCodePrinter(CodePrinter):
+         inline=True,
+         fully_qualified_modules=True,
+         contract=False,
+-        standard='python3'
++        standard='python3',
+     )
+ 
+     def __init__(self, settings=None):
+diff --git a/sympy/printing/str.py b/sympy/printing/str.py
+index 94b2753..f95fc24 100644
+--- a/sympy/printing/str.py
++++ b/sympy/printing/str.py
+@@ -3,6 +3,199 @@
+ """
+ 
+ from __future__ import print_function, division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-18477/sympy/printing/str.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ from typing import Any, Dict
+ 
+@@ -24,6 +217,8 @@ class StrPrinter(Printer):
+         "sympy_integers": False,
+         "abbrev": False,
+         "perm_cyclic": True,
++        "min": None,
++        "max": None,
+     }  # type: Dict[str, Any]
+ 
+     _relationals = dict()  # type: Dict[str, str]
+@@ -679,6 +874,7 @@ def _print_mpq(self, expr):
+         else:
+             return "%s/%s" % (expr.numerator, expr.denominator)
+ 
++    @inspect_code
+     def _print_Float(self, expr):
+         prec = expr._prec
+         if prec < 5:
+@@ -691,7 +887,9 @@ def _print_Float(self, expr):
+             strip = True
+         elif self._settings["full_prec"] == "auto":
+             strip = self._print_level > 1
+-        rv = mlib_to_str(expr._mpf_, dps, strip_zeros=strip)
++        low = self._settings["min"] if "min" in self._settings else None
++        high = self._settings["max"] if "max" in self._settings else None
++        rv = mlib_to_str(expr._mpf_, dps, strip_zeros=strip, min_fixed=low, max_fixed=high)
+         if rv.startswith('-.0'):
+             rv = '-0.' + rv[3:]
+         elif rv.startswith('.0'):
+diff --git a/sympy/printing/tests/test_latex.py b/sympy/printing/tests/test_latex.py
+index d88a160..f87f361 100644
+--- a/sympy/printing/tests/test_latex.py
++++ b/sympy/printing/tests/test_latex.py
+@@ -214,6 +214,14 @@ def test_latex_Float():
+     assert latex(Float(1.0e-100)) == r"1.0 \cdot 10^{-100}"
+     assert latex(Float(1.0e-100), mul_symbol="times") == \
+         r"1.0 \times 10^{-100}"
++    assert latex(Float('10000.0'), full_prec=False, min=-2, max=2) == \
++        r"1.0 \cdot 10^{4}"
++    assert latex(Float('10000.0'), full_prec=False, min=-2, max=4) == \
++        r"1.0 \cdot 10^{4}"
++    assert latex(Float('10000.0'), full_prec=False, min=-2, max=5) == \
++        r"10000.0"
++    assert latex(Float('0.099999'), full_prec=True,  min=-2, max=5) == \
++        r"9.99990000000000 \cdot 10^{-2}"
+ 
+ 
+ def test_latex_vector_expressions():
+diff --git a/sympy/printing/tests/test_str.py b/sympy/printing/tests/test_str.py
+index c2b2936..f4a980e 100644
+--- a/sympy/printing/tests/test_str.py
++++ b/sympy/printing/tests/test_str.py
+@@ -513,6 +513,10 @@ def test_Float():
+                                      '5028841971693993751058209749445923')
+     assert str(pi.round(-1)) == '0.0'
+     assert str((pi**400 - (pi**400).round(1)).n(2)) == '-0.e+88'
++    assert sstr(Float("100"), full_prec=False, min=-2, max=2) == '1.0e+2'
++    assert sstr(Float("100"), full_prec=False, min=-2, max=3) == '100.0'
++    assert sstr(Float("0.1"), full_prec=False, min=-2, max=3) == '0.1'
++    assert sstr(Float("0.099"), min=-2, max=3) == '9.90000000000000e-2'
+ 
+ 
+ def test_Relational():

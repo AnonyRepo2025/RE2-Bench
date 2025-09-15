@@ -1,0 +1,497 @@
+diff --git a/sklearn/ensemble/_stacking.py b/sklearn/ensemble/_stacking.py
+index c57d88f..503b3fd 100644
+--- a/sklearn/ensemble/_stacking.py
++++ b/sklearn/ensemble/_stacking.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-15138/sklearn/ensemble/_stacking.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """Stacking classifier and regressor."""
+ 
+ # Authors: Guillaume Lemaitre <g.lemaitre58@gmail.com>
+@@ -8,6 +201,7 @@ from copy import deepcopy
+ 
+ import numpy as np
+ from joblib import Parallel, delayed
++import scipy.sparse as sparse
+ 
+ from ..base import clone
+ from ..base import ClassifierMixin, RegressorMixin, TransformerMixin
+@@ -37,13 +231,15 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble,
+ 
+     @abstractmethod
+     def __init__(self, estimators, final_estimator=None, cv=None,
+-                 stack_method='auto', n_jobs=None, verbose=0):
++                 stack_method='auto', n_jobs=None, verbose=0,
++                 passthrough=False):
+         super().__init__(estimators=estimators)
+         self.final_estimator = final_estimator
+         self.cv = cv
+         self.stack_method = stack_method
+         self.n_jobs = n_jobs
+         self.verbose = verbose
++        self.passthrough = passthrough
+ 
+     def _clone_final_estimator(self, default):
+         if self.final_estimator is not None:
+@@ -51,8 +247,15 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble,
+         else:
+             self.final_estimator_ = clone(default)
+ 
+-    def _concatenate_predictions(self, predictions):
+-        """Concatenate the predictions of each first layer learner.
++    @inspect_code
++    def _concatenate_predictions(self, X, predictions):
++        """Concatenate the predictions of each first layer learner and
++        possibly the input dataset `X`.
++
++        If `X` is sparse and `self.passthrough` is False, the output of
++        `transform` will be dense (the predictions). If `X` is sparse
++        and `self.passthrough` is True, the output of `transform` will
++        be sparse.
+ 
+         This helper is in charge of ensuring the preditions are 2D arrays and
+         it will drop one of the probability column when using probabilities
+@@ -72,7 +275,12 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble,
+                     X_meta.append(preds[:, 1:])
+                 else:
+                     X_meta.append(preds)
+-        return np.concatenate(X_meta, axis=1)
++        if self.passthrough:
++            X_meta.append(X)
++            if sparse.issparse(X):
++                return sparse.hstack(X_meta, format=X.format)
++
++        return np.hstack(X_meta)
+ 
+     @staticmethod
+     def _method_name(name, estimator, method):
+@@ -91,6 +299,7 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble,
+                                  'the method {}.'.format(name, method))
+             return method
+ 
++    @inspect_code
+     def fit(self, X, y, sample_weight=None):
+         """Fit the estimators.
+ 
+@@ -165,7 +374,7 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble,
+             if est != 'drop'
+         ]
+ 
+-        X_meta = self._concatenate_predictions(predictions)
++        X_meta = self._concatenate_predictions(X, predictions)
+         if sample_weight is not None:
+             try:
+                 self.final_estimator_.fit(
+@@ -184,6 +393,7 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble,
+ 
+         return self
+ 
++    @inspect_code
+     def _transform(self, X):
+         """Concatenate and return the predictions of the estimators."""
+         check_is_fitted(self)
+@@ -192,7 +402,7 @@ class _BaseStacking(TransformerMixin, _BaseHeterogeneousEnsemble,
+             for est, meth in zip(self.estimators_, self.stack_method_)
+             if est != 'drop'
+         ]
+-        return self._concatenate_predictions(predictions)
++        return self._concatenate_predictions(X, predictions)
+ 
+     @if_delegate_has_method(delegate='final_estimator_')
+     def predict(self, X, **predict_params):
+@@ -288,6 +498,12 @@ class StackingClassifier(ClassifierMixin, _BaseStacking):
+         `None` means 1 unless in a `joblib.parallel_backend` context. -1 means
+         using all processors. See Glossary for more details.
+ 
++    passthrough : bool, default=False
++        When False, only the predictions of estimators will be used as
++        training data for `final_estimator`. When True, the
++        `final_estimator` is trained on the predictions as well as the
++        original training data.
++
+     Attributes
+     ----------
+     estimators_ : list of estimators
+@@ -344,13 +560,15 @@ class StackingClassifier(ClassifierMixin, _BaseStacking):
+ 
+     """
+     def __init__(self, estimators, final_estimator=None, cv=None,
+-                 stack_method='auto', n_jobs=None, verbose=0):
++                 stack_method='auto', n_jobs=None, passthrough=False,
++                 verbose=0):
+         super().__init__(
+             estimators=estimators,
+             final_estimator=final_estimator,
+             cv=cv,
+             stack_method=stack_method,
+             n_jobs=n_jobs,
++            passthrough=passthrough,
+             verbose=verbose
+         )
+ 
+@@ -525,6 +743,12 @@ class StackingRegressor(RegressorMixin, _BaseStacking):
+         `None` means 1 unless in a `joblib.parallel_backend` context. -1 means
+         using all processors. See Glossary for more details.
+ 
++    passthrough : bool, default=False
++        When False, only the predictions of estimators will be used as
++        training data for `final_estimator`. When True, the
++        `final_estimator` is trained on the predictions as well as the
++        original training data.
++
+     Attributes
+     ----------
+     estimators_ : list of estimator
+@@ -569,13 +793,14 @@ class StackingRegressor(RegressorMixin, _BaseStacking):
+ 
+     """
+     def __init__(self, estimators, final_estimator=None, cv=None, n_jobs=None,
+-                 verbose=0):
++                 passthrough=False, verbose=0):
+         super().__init__(
+             estimators=estimators,
+             final_estimator=final_estimator,
+             cv=cv,
+             stack_method="predict",
+             n_jobs=n_jobs,
++            passthrough=passthrough,
+             verbose=verbose
+         )
+ 
+diff --git a/sklearn/ensemble/tests/test_stacking.py b/sklearn/ensemble/tests/test_stacking.py
+index 6289361..42bb84f 100644
+--- a/sklearn/ensemble/tests/test_stacking.py
++++ b/sklearn/ensemble/tests/test_stacking.py
+@@ -5,6 +5,7 @@
+ 
+ import pytest
+ import numpy as np
++import scipy.sparse as sparse
+ 
+ from sklearn.base import BaseEstimator
+ from sklearn.base import ClassifierMixin
+@@ -38,6 +39,7 @@ from sklearn.model_selection import StratifiedKFold
+ from sklearn.model_selection import KFold
+ 
+ from sklearn.utils._testing import assert_allclose
++from sklearn.utils._testing import assert_allclose_dense_sparse
+ from sklearn.utils._testing import ignore_warnings
+ from sklearn.utils.estimator_checks import check_estimator
+ from sklearn.utils.estimator_checks import check_no_attributes_set_in_init
+@@ -52,7 +54,8 @@ X_iris, y_iris = load_iris(return_X_y=True)
+ @pytest.mark.parametrize(
+     "final_estimator", [None, RandomForestClassifier(random_state=42)]
+ )
+-def test_stacking_classifier_iris(cv, final_estimator):
++@pytest.mark.parametrize("passthrough", [False, True])
++def test_stacking_classifier_iris(cv, final_estimator, passthrough):
+     # prescale the data to avoid convergence warning without using a pipeline
+     # for later assert
+     X_train, X_test, y_train, y_test = train_test_split(
+@@ -60,7 +63,8 @@ def test_stacking_classifier_iris(cv, final_estimator):
+     )
+     estimators = [('lr', LogisticRegression()), ('svc', LinearSVC())]
+     clf = StackingClassifier(
+-        estimators=estimators, final_estimator=final_estimator, cv=cv
++        estimators=estimators, final_estimator=final_estimator, cv=cv,
++        passthrough=passthrough
+     )
+     clf.fit(X_train, y_train)
+     clf.predict(X_test)
+@@ -68,7 +72,10 @@ def test_stacking_classifier_iris(cv, final_estimator):
+     assert clf.score(X_test, y_test) > 0.8
+ 
+     X_trans = clf.transform(X_test)
+-    assert X_trans.shape[1] == 6
++    expected_column_count = 10 if passthrough else 6
++    assert X_trans.shape[1] == expected_column_count
++    if passthrough:
++        assert_allclose(X_test, X_trans[:, -4:])
+ 
+     clf.set_params(lr='drop')
+     clf.fit(X_train, y_train)
+@@ -79,7 +86,10 @@ def test_stacking_classifier_iris(cv, final_estimator):
+         clf.decision_function(X_test)
+ 
+     X_trans = clf.transform(X_test)
+-    assert X_trans.shape[1] == 3
++    expected_column_count_drop = 7 if passthrough else 3
++    assert X_trans.shape[1] == expected_column_count_drop
++    if passthrough:
++        assert_allclose(X_test, X_trans[:, -4:])
+ 
+ 
+ def test_stacking_classifier_drop_column_binary_classification():
+@@ -161,7 +171,9 @@ def test_stacking_regressor_drop_estimator():
+      (RandomForestRegressor(random_state=42), {}),
+      (DummyRegressor(), {'return_std': True})]
+ )
+-def test_stacking_regressor_diabetes(cv, final_estimator, predict_params):
++@pytest.mark.parametrize("passthrough", [False, True])
++def test_stacking_regressor_diabetes(cv, final_estimator, predict_params,
++                                     passthrough):
+     # prescale the data to avoid convergence warning without using a pipeline
+     # for later assert
+     X_train, X_test, y_train, _ = train_test_split(
+@@ -169,7 +181,8 @@ def test_stacking_regressor_diabetes(cv, final_estimator, predict_params):
+     )
+     estimators = [('lr', LinearRegression()), ('svr', LinearSVR())]
+     reg = StackingRegressor(
+-        estimators=estimators, final_estimator=final_estimator, cv=cv
++        estimators=estimators, final_estimator=final_estimator, cv=cv,
++        passthrough=passthrough
+     )
+     reg.fit(X_train, y_train)
+     result = reg.predict(X_test, **predict_params)
+@@ -178,14 +191,58 @@ def test_stacking_regressor_diabetes(cv, final_estimator, predict_params):
+         assert len(result) == expected_result_length
+ 
+     X_trans = reg.transform(X_test)
+-    assert X_trans.shape[1] == 2
++    expected_column_count = 12 if passthrough else 2
++    assert X_trans.shape[1] == expected_column_count
++    if passthrough:
++        assert_allclose(X_test, X_trans[:, -10:])
+ 
+     reg.set_params(lr='drop')
+     reg.fit(X_train, y_train)
+     reg.predict(X_test)
+ 
+     X_trans = reg.transform(X_test)
+-    assert X_trans.shape[1] == 1
++    expected_column_count_drop = 11 if passthrough else 1
++    assert X_trans.shape[1] == expected_column_count_drop
++    if passthrough:
++        assert_allclose(X_test, X_trans[:, -10:])
++
++
++@pytest.mark.parametrize('fmt', ['csc', 'csr', 'coo'])
++def test_stacking_regressor_sparse_passthrough(fmt):
++    # Check passthrough behavior on a sparse X matrix
++    X_train, X_test, y_train, _ = train_test_split(
++        sparse.coo_matrix(scale(X_diabetes)).asformat(fmt),
++        y_diabetes, random_state=42
++    )
++    estimators = [('lr', LinearRegression()), ('svr', LinearSVR())]
++    rf = RandomForestRegressor(n_estimators=10, random_state=42)
++    clf = StackingRegressor(
++        estimators=estimators, final_estimator=rf, cv=5, passthrough=True
++    )
++    clf.fit(X_train, y_train)
++    X_trans = clf.transform(X_test)
++    assert_allclose_dense_sparse(X_test, X_trans[:, -10:])
++    assert sparse.issparse(X_trans)
++    assert X_test.format == X_trans.format
++
++
++@pytest.mark.parametrize('fmt', ['csc', 'csr', 'coo'])
++def test_stacking_classifier_sparse_passthrough(fmt):
++    # Check passthrough behavior on a sparse X matrix
++    X_train, X_test, y_train, _ = train_test_split(
++        sparse.coo_matrix(scale(X_iris)).asformat(fmt),
++        y_iris, random_state=42
++    )
++    estimators = [('lr', LogisticRegression()), ('svc', LinearSVC())]
++    rf = RandomForestClassifier(n_estimators=10, random_state=42)
++    clf = StackingClassifier(
++        estimators=estimators, final_estimator=rf, cv=5, passthrough=True
++    )
++    clf.fit(X_train, y_train)
++    X_trans = clf.transform(X_test)
++    assert_allclose_dense_sparse(X_test, X_trans[:, -4:])
++    assert sparse.issparse(X_trans)
++    assert X_test.format == X_trans.format
+ 
+ 
+ def test_stacking_classifier_drop_binary_prob():

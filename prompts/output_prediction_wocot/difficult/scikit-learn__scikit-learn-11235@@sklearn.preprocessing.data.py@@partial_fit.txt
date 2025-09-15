@@ -1,0 +1,508 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+from __future__ import division
+from itertools import chain, combinations
+import numbers
+import warnings
+from itertools import combinations_with_replacement as combinations_w_r
+from distutils.version import LooseVersion
+import numpy as np
+from scipy import sparse
+from scipy import stats
+from ..base import BaseEstimator, TransformerMixin
+from ..externals import six
+from ..externals.six import string_types
+from ..utils import check_array
+from ..utils.extmath import row_norms
+from ..utils.extmath import _incremental_mean_and_var
+from ..utils.fixes import _argmax, nanpercentile
+from ..utils.sparsefuncs_fast import inplace_csr_row_normalize_l1, inplace_csr_row_normalize_l2
+from ..utils.sparsefuncs import inplace_column_scale, mean_variance_axis, incr_mean_variance_axis, min_max_axis
+from ..utils.validation import check_is_fitted, check_random_state, FLOAT_DTYPES
+from .label import LabelEncoder
+BOUNDS_THRESHOLD = 1e-07
+zip = six.moves.zip
+map = six.moves.map
+range = six.moves.range
+__all__ = ['Binarizer', 'KernelCenterer', 'MinMaxScaler', 'MaxAbsScaler', 'Normalizer', 'OneHotEncoder', 'RobustScaler', 'StandardScaler', 'QuantileTransformer', 'PowerTransformer', 'add_dummy_feature', 'binarize', 'normalize', 'scale', 'robust_scale', 'maxabs_scale', 'minmax_scale', 'quantile_transform', 'power_transform']
+
+class StandardScaler(BaseEstimator, TransformerMixin):
+
+    def __init__(self, copy=True, with_mean=True, with_std=True):
+        self.with_mean = with_mean
+        self.with_std = with_std
+        self.copy = copy
+
+    def _reset(self):
+        if hasattr(self, 'scale_'):
+            del self.scale_
+            del self.n_samples_seen_
+            del self.mean_
+            del self.var_
+
+    def fit(self, X, y=None):
+        self._reset()
+        return self.partial_fit(X, y)
+
+    def partial_fit(self, X, y=None):
+        X = check_array(X, accept_sparse=('csr', 'csc'), copy=self.copy, warn_on_dtype=True, estimator=self, dtype=FLOAT_DTYPES)
+        if sparse.issparse(X):
+            if self.with_mean:
+                raise ValueError('Cannot center sparse matrices: pass `with_mean=False` instead. See docstring for motivation and alternatives.')
+            if self.with_std:
+                if not hasattr(self, 'n_samples_seen_'):
+                    self.mean_, self.var_ = mean_variance_axis(X, axis=0)
+                    self.n_samples_seen_ = X.shape[0]
+                else:
+                    self.mean_, self.var_, self.n_samples_seen_ = incr_mean_variance_axis(X, axis=0, last_mean=self.mean_, last_var=self.var_, last_n=self.n_samples_seen_)
+            else:
+                self.mean_ = None
+                self.var_ = None
+                if not hasattr(self, 'n_samples_seen_'):
+                    self.n_samples_seen_ = X.shape[0]
+                else:
+                    self.n_samples_seen_ += X.shape[0]
+        else:
+            if not hasattr(self, 'n_samples_seen_'):
+                self.mean_ = 0.0
+                self.n_samples_seen_ = 0
+                if self.with_std:
+                    self.var_ = 0.0
+                else:
+                    self.var_ = None
+            if not self.with_mean and (not self.with_std):
+                self.mean_ = None
+                self.var_ = None
+                self.n_samples_seen_ += X.shape[0]
+            else:
+                self.mean_, self.var_, self.n_samples_seen_ = _incremental_mean_and_var(X, self.mean_, self.var_, self.n_samples_seen_)
+        if self.with_std:
+            self.scale_ = _handle_zeros_in_scale(np.sqrt(self.var_))
+        else:
+            self.scale_ = None
+        return self
+
+    def transform(self, X, y='deprecated', copy=None):
+        if not isinstance(y, string_types) or y != 'deprecated':
+            warnings.warn('The parameter y on transform() is deprecated since 0.19 and will be removed in 0.21', DeprecationWarning)
+        check_is_fitted(self, 'scale_')
+        copy = copy if copy is not None else self.copy
+        X = check_array(X, accept_sparse='csr', copy=copy, warn_on_dtype=True, estimator=self, dtype=FLOAT_DTYPES)
+        if sparse.issparse(X):
+            if self.with_mean:
+                raise ValueError('Cannot center sparse matrices: pass `with_mean=False` instead. See docstring for motivation and alternatives.')
+            if self.scale_ is not None:
+                inplace_column_scale(X, 1 / self.scale_)
+        else:
+            if self.with_mean:
+                X -= self.mean_
+            if self.with_std:
+                X /= self.scale_
+        return X
+
+    def inverse_transform(self, X, copy=None):
+        check_is_fitted(self, 'scale_')
+        copy = copy if copy is not None else self.copy
+        if sparse.issparse(X):
+            if self.with_mean:
+                raise ValueError('Cannot uncenter sparse matrices: pass `with_mean=False` instead See docstring for motivation and alternatives.')
+            if not sparse.isspmatrix_csr(X):
+                X = X.tocsr()
+                copy = False
+            if copy:
+                X = X.copy()
+            if self.scale_ is not None:
+                inplace_column_scale(X, self.scale_)
+        else:
+            X = np.asarray(X)
+            if copy:
+                X = X.copy()
+            if self.with_std:
+                X *= self.scale_
+            if self.with_mean:
+                X += self.mean_
+        return X
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=False, estimator=None):
+    if accept_sparse is None:
+        warnings.warn("Passing 'None' to parameter 'accept_sparse' in methods check_array and check_X_y is deprecated in version 0.19 and will be removed in 0.21. Use 'accept_sparse=False'  instead.", DeprecationWarning)
+        accept_sparse = False
+    array_orig = array
+    dtype_numeric = isinstance(dtype, six.string_types) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, six.string_types):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse, dtype, copy, force_all_finite)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                array = np.asarray(array, dtype=dtype, order=order)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of strings will be interpreted as decimal numbers if parameter 'dtype' is 'numeric'. It is recommended that you convert the array to type np.float64 before passing it to check_array.", FutureWarning)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    shape_repr = _shape_repr(array.shape)
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, shape_repr, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, shape_repr, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning)
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+    return array
+
+.sklearn.utils.validation._ensure_no_complex_data
+
+def _ensure_no_complex_data(array):
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+.sklearn.utils.validation._assert_all_finite
+
+def _assert_all_finite(X, allow_nan=False):
+    if _get_config()['assume_finite']:
+        return
+    X = np.asanyarray(X)
+    is_float = X.dtype.kind in 'fc'
+    if is_float and np.isfinite(X.sum()):
+        pass
+    elif is_float:
+        msg_err = 'Input contains {} or a value too large for {!r}.'
+        if allow_nan and np.isinf(X).any() or (not allow_nan and (not np.isfinite(X).all())):
+            type_err = 'infinity' if allow_nan else 'NaN, infinity'
+            raise ValueError(msg_err.format(type_err, X.dtype))
+
+.sklearn._config.get_config
+
+def get_config():
+    return _global_config.copy()
+
+.sklearn.utils.validation._shape_repr
+
+def _shape_repr(shape):
+    if len(shape) == 0:
+        return '()'
+    joined = ', '.join(('%d' % e for e in shape))
+    if len(shape) == 1:
+        joined += ','
+    return '(%s)' % joined
+
+.sklearn.utils.validation._num_samples
+
+def _num_samples(x):
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError('Expected sequence or array-like, got estimator %s' % x)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError('Expected sequence or array-like, got %s' % type(x))
+    if hasattr(x, 'shape'):
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        return x.shape[0]
+    else:
+        return len(x)
+
+.sklearn.preprocessing.data._handle_zeros_in_scale
+
+def _handle_zeros_in_scale(scale, copy=True):
+    if np.isscalar(scale):
+        if scale == 0.0:
+            scale = 1.0
+        return scale
+    elif isinstance(scale, np.ndarray):
+        if copy:
+            scale = scale.copy()
+        scale[scale == 0.0] = 1.0
+        return scale
+
+.sklearn.utils.validation._ensure_sparse_format
+
+def _ensure_sparse_format(spmatrix, accept_sparse, dtype, copy, force_all_finite):
+    if dtype is None:
+        dtype = spmatrix.dtype
+    changed_format = False
+    if isinstance(accept_sparse, six.string_types):
+        accept_sparse = [accept_sparse]
+    if accept_sparse is False:
+        raise TypeError('A sparse matrix was passed, but dense data is required. Use X.toarray() to convert to a dense numpy array.')
+    elif isinstance(accept_sparse, (list, tuple)):
+        if len(accept_sparse) == 0:
+            raise ValueError("When providing 'accept_sparse' as a tuple or list, it must contain at least one string value.")
+        if spmatrix.format not in accept_sparse:
+            spmatrix = spmatrix.asformat(accept_sparse[0])
+            changed_format = True
+    elif accept_sparse is not True:
+        raise ValueError("Parameter 'accept_sparse' should be a string, boolean or list of strings. You provided 'accept_sparse={}'.".format(accept_sparse))
+    if dtype != spmatrix.dtype:
+        spmatrix = spmatrix.astype(dtype)
+    elif copy and (not changed_format):
+        spmatrix = spmatrix.copy()
+    if force_all_finite:
+        if not hasattr(spmatrix, 'data'):
+            warnings.warn("Can't check %s sparse matrix for nan or inf." % spmatrix.format)
+        else:
+            _assert_all_finite(spmatrix.data, allow_nan=force_all_finite == 'allow-nan')
+    return spmatrix
+
+.sklearn.utils.sparsefuncs.min_max_axis
+
+def min_max_axis(X, axis, ignore_nan=False):
+    if isinstance(X, sp.csr_matrix) or isinstance(X, sp.csc_matrix):
+        if ignore_nan:
+            return _sparse_nan_min_max(X, axis=axis)
+        else:
+            return _sparse_min_max(X, axis=axis)
+    else:
+        _raise_typeerror(X)
+
+.sklearn.utils.sparsefuncs._sparse_min_max
+
+def _sparse_min_max(X, axis):
+    return (_sparse_min_or_max(X, axis, np.minimum), _sparse_min_or_max(X, axis, np.maximum))
+
+.sklearn.utils.sparsefuncs._sparse_min_or_max
+
+def _sparse_min_or_max(X, axis, min_or_max):
+    if axis is None:
+        if 0 in X.shape:
+            raise ValueError('zero-size array to reduction operation')
+        zero = X.dtype.type(0)
+        if X.nnz == 0:
+            return zero
+        m = min_or_max.reduce(X.data.ravel())
+        if X.nnz != np.product(X.shape):
+            m = min_or_max(zero, m)
+        return m
+    if axis < 0:
+        axis += 2
+    if axis == 0 or axis == 1:
+        return _min_or_max_axis(X, axis, min_or_max)
+    else:
+        raise ValueError('invalid axis, use 0 for rows, or 1 for columns')
+
+.sklearn.utils.sparsefuncs._min_or_max_axis
+
+def _min_or_max_axis(X, axis, min_or_max):
+    N = X.shape[axis]
+    if N == 0:
+        raise ValueError('zero-size array to reduction operation')
+    M = X.shape[1 - axis]
+    mat = X.tocsc() if axis == 0 else X.tocsr()
+    mat.sum_duplicates()
+    major_index, value = _minor_reduce(mat, min_or_max)
+    not_full = np.diff(mat.indptr)[major_index] < N
+    value[not_full] = min_or_max(value[not_full], 0)
+    mask = value != 0
+    major_index = np.compress(mask, major_index)
+    value = np.compress(mask, value)
+    if axis == 0:
+        res = sp.coo_matrix((value, (np.zeros(len(value)), major_index)), dtype=X.dtype, shape=(1, M))
+    else:
+        res = sp.coo_matrix((value, (major_index, np.zeros(len(value)))), dtype=X.dtype, shape=(M, 1))
+    return res.A.ravel()
+
+.sklearn.utils.sparsefuncs._minor_reduce
+
+def _minor_reduce(X, ufunc):
+    major_index = np.flatnonzero(np.diff(X.indptr))
+    value = ufunc.reduceat(X.data, X.indptr[major_index])
+    return (major_index, value)
+
+
+[/PYTHON]
+What will be the output of `partial_fit`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "with_mean": true,
+        "with_std": true,
+        "copy": true,
+        "mean_": "[ 0.01856024  0.33028013  0.08692573 -0.35475727 -0.19924864  0.34906594\n  0.02357614  0.82576568  1.1583156   0.56363053  0.42663319 -0.37481204\n -0.03596331  0.835155   -0.95414806 -1.33377147 -1.08470163  0.60253935\n  0.56290546  0.54326148  1.00014819  1.04243206 -0.58960405  0.3972959\n -0.89649733  0.20513497 -0.34519141  0.85053853  0.07194541 -0.14454634]",
+        "n_samples_seen_": 469,
+        "var_": "[ 12.84079879  61.15274581  27.15060793  33.92451448   1.31040928\n  42.23818341  40.09099943  48.41470578  94.00380335  43.8312197\n  19.09216297  25.23121805  47.80387777   2.35076492  43.37509125\n  49.91844725   8.2038302    4.62251144  16.21165689  17.0954297\n  34.28859426  24.53611115 101.77636959   3.53132617   8.90150635\n   5.80941359  41.54170135   9.55204984  24.86872545   9.9422166 ]",
+        "scale_": "[ 3.58340603  7.82002211  5.21062452  5.82447547  1.14473109  6.49909097\n  6.33174537  6.95806768  9.69555586  6.62051506  4.36945797  5.02306859\n  6.91403484  1.53322044  6.58597686  7.06529881  2.86423292  2.15000266\n  4.02637019  4.13466198  5.85564636  4.9533939  10.08842751  1.87918231\n  2.98353923  2.41027251  6.4452852   3.09063907  4.98685527  3.15312807]"
+    },
+    "args": {
+        "X": "[[  0.07502744  -4.56321133   1.76919009   5.35247043   0.30407403\n    4.63432284  -2.34784453  -0.08644247   1.96216865   3.61707997\n    6.27656227   1.97693625 -10.78447334  -1.73408131   6.80635231\n   -3.77705996   5.47769956   3.77950018  -2.24260137  -4.21340792\n    1.23239203   1.41069131  -4.15420605  -1.51097566  -0.67638104\n   -0.20541441   0.9497847   -0.49377556  15.01430105  -1.10385377]]"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "with_mean": XXX,
+    "with_std": XXX,
+    "copy": XXX,
+    "mean_": XXX,
+    "n_samples_seen_": XXX,
+    "var_": XXX,
+    "scale_": XXX
+}
+```
+[/STRUCTURE]

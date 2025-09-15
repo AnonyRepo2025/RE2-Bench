@@ -1,0 +1,41 @@
+[THOUGHT]
+1. `_get_params` first calls `super(...).get_params(deep=True)`, which will return a dict containing:
+   - All init parameters of `self` (`transformers`, `remainder`, `n_jobs`, `transformer_weights`), and
+   - For any of those whose value has a `get_params` method (here only `remainder`), it will add keys of the form `remainder__<param>` with their values.
+2. The observed output includes:
+   - `"n_jobs": 1`
+   - `"transformer_weights": null`
+   - `"transformers": null`  (so `self.transformers` must have been `null`)
+   - The `remainder__*` keys (`copy`, `with_mean`, `with_std`) and also a `"remainder"` entry which is the object itself serialized as its own parameter dict.
+3. Then, because `deep=True`, `_get_params` does:
+     estimators = getattr(self, attr)
+     out.update(estimators)
+   and for each `(name, estimator)` in `estimators`, it sets `out[name] = estimator` (and would recurse if the estimator had its own `get_params`, but here the estimator is the string `"passthrough"`).
+4. The only extra key in the output beyond the base params + `remainder__*` keys is `"trans1": "passthrough"`.  This must come from `estimators = [("trans1", "passthrough")]`.  Therefore:
+   - `attr` must be `"transformers"`,
+   - `self.transformers` must be `[("trans1", "passthrough")]`.
+5. The call must have been `_get_params("transformers", deep=True)`.
+
+Putting this together, the reconstructed input is:
+[INPUT]
+```
+{
+    "self": {
+        "transformers": [["trans1", "passthrough"]],
+        "remainder": {
+            "with_mean": true,
+            "with_std": false,
+            "copy": true
+        },
+        "n_jobs": 1,
+        "transformer_weights": null
+    },
+    "args": {
+        "attr": "transformers"
+    },
+    "kwargs": {
+        "deep": true
+    }
+}
+```
+[/INPUT]

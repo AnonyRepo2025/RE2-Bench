@@ -1,0 +1,636 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index cf419cb..f3b031d 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-16322/django/db/models/query.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ The main QuerySet implementation. This provides the public API for the ORM.
+ """
+@@ -23,7 +216,7 @@ from django.db import (
+ from django.db.models import AutoField, DateField, DateTimeField, Field, sql
+ from django.db.models.constants import LOOKUP_SEP, OnConflict
+ from django.db.models.deletion import Collector
+-from django.db.models.expressions import Case, F, Ref, Value, When
++from django.db.models.expressions import Case, F, Value, When
+ from django.db.models.functions import Cast, Trunc
+ from django.db.models.query_utils import FilteredRelation, Q
+ from django.db.models.sql.constants import CURSOR, GET_ITERATOR_CHUNK_SIZE
+@@ -566,6 +759,7 @@ class QuerySet(AltersData):
+         ):
+             yield item
+ 
++    @inspect_code
+     def aggregate(self, *args, **kwargs):
+         """
+         Return a dictionary containing the calculations (aggregation)
+@@ -589,24 +783,7 @@ class QuerySet(AltersData):
+                 raise TypeError("Complex aggregates require an alias")
+             kwargs[arg.default_alias] = arg
+ 
+-        query = self.query.chain()
+-        for (alias, aggregate_expr) in kwargs.items():
+-            query.add_annotation(aggregate_expr, alias, is_summary=True)
+-            annotation = query.annotations[alias]
+-            if not annotation.contains_aggregate:
+-                raise TypeError("%s is not an aggregate expression" % alias)
+-            for expr in annotation.get_source_expressions():
+-                if (
+-                    expr.contains_aggregate
+-                    and isinstance(expr, Ref)
+-                    and expr.refs in kwargs
+-                ):
+-                    name = expr.refs
+-                    raise exceptions.FieldError(
+-                        "Cannot compute %s('%s'): '%s' is an aggregate"
+-                        % (annotation.name, name, name)
+-                    )
+-        return query.get_aggregation(self.db, kwargs)
++        return self.query.chain().get_aggregation(self.db, kwargs)
+ 
+     async def aaggregate(self, *args, **kwargs):
+         return await sync_to_async(self.aggregate)(*args, **kwargs)
+@@ -1655,7 +1832,6 @@ class QuerySet(AltersData):
+                 clone.query.add_annotation(
+                     annotation,
+                     alias,
+-                    is_summary=False,
+                     select=select,
+                 )
+         for alias, annotation in clone.query.annotations.items():
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 2d150ed..894fa8b 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-16322/django/db/models/sql/query.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Create SQL statements for QuerySets.
+ 
+@@ -381,24 +574,29 @@ class Query(BaseExpression):
+             alias = None
+         return target.get_col(alias, field)
+ 
+-    def get_aggregation(self, using, added_aggregate_names):
++    @inspect_code
++    def get_aggregation(self, using, aggregate_exprs):
+         """
+         Return the dictionary with the values of the existing aggregations.
+         """
+-        if not self.annotation_select:
++        if not aggregate_exprs:
+             return {}
+-        existing_annotations = {
+-            alias: annotation
+-            for alias, annotation in self.annotations.items()
+-            if alias not in added_aggregate_names
+-        }
++        aggregates = {}
++        for alias, aggregate_expr in aggregate_exprs.items():
++            self.check_alias(alias)
++            aggregate = aggregate_expr.resolve_expression(
++                self, allow_joins=True, reuse=None, summarize=True
++            )
++            if not aggregate.contains_aggregate:
++                raise TypeError("%s is not an aggregate expression" % alias)
++            aggregates[alias] = aggregate
+         # Existing usage of aggregation can be determined by the presence of
+         # selected aggregates but also by filters against aliased aggregates.
+         _, having, qualify = self.where.split_having_qualify()
+         has_existing_aggregation = (
+             any(
+                 getattr(annotation, "contains_aggregate", True)
+-                for annotation in existing_annotations.values()
++                for annotation in self.annotations.values()
+             )
+             or having
+         )
+@@ -449,25 +647,19 @@ class Query(BaseExpression):
+                     # filtering against window functions is involved as it
+                     # requires complex realising.
+                     annotation_mask = set()
+-                    for name in added_aggregate_names:
+-                        annotation_mask.add(name)
+-                        annotation_mask |= inner_query.annotations[name].get_refs()
++                    for aggregate in aggregates.values():
++                        annotation_mask |= aggregate.get_refs()
+                     inner_query.set_annotation_mask(annotation_mask)
+ 
+-            # Remove any aggregates marked for reduction from the subquery and
+-            # move them to the outer AggregateQuery. This requires making sure
+-            # all columns referenced by the aggregates are selected in the
+-            # subquery. It is achieved by retrieving all column references from
+-            # the aggregates, explicitly selecting them if they are not
+-            # already, and making sure the aggregates are repointed to
+-            # referenced to them.
++            # Add aggregates to the outer AggregateQuery. This requires making
++            # sure all columns referenced by the aggregates are selected in the
++            # inner query. It is achieved by retrieving all column references
++            # by the aggregates, explicitly selecting them in the inner query,
++            # and making sure the aggregates are repointed to them.
+             col_refs = {}
+-            for alias, expression in list(inner_query.annotation_select.items()):
+-                if not expression.is_summary:
+-                    continue
+-                annotation_select_mask = inner_query.annotation_select_mask
++            for alias, aggregate in aggregates.items():
+                 replacements = {}
+-                for col in self._gen_cols([expression], resolve_refs=False):
++                for col in self._gen_cols([aggregate], resolve_refs=False):
+                     if not (col_ref := col_refs.get(col)):
+                         index = len(col_refs) + 1
+                         col_alias = f"__col{index}"
+@@ -476,13 +668,9 @@ class Query(BaseExpression):
+                         inner_query.annotations[col_alias] = col
+                         inner_query.append_annotation_mask([col_alias])
+                     replacements[col] = col_ref
+-                outer_query.annotations[alias] = expression.replace_expressions(
++                outer_query.annotations[alias] = aggregate.replace_expressions(
+                     replacements
+                 )
+-                del inner_query.annotations[alias]
+-                annotation_select_mask.remove(alias)
+-                # Make sure the annotation_select wont use cached results.
+-                inner_query.set_annotation_mask(inner_query.annotation_select_mask)
+             if (
+                 inner_query.select == ()
+                 and not inner_query.default_cols
+@@ -499,19 +687,21 @@ class Query(BaseExpression):
+             self.select = ()
+             self.default_cols = False
+             self.extra = {}
+-            if existing_annotations:
++            if self.annotations:
+                 # Inline reference to existing annotations and mask them as
+                 # they are unnecessary given only the summarized aggregations
+                 # are requested.
+                 replacements = {
+                     Ref(alias, annotation): annotation
+-                    for alias, annotation in existing_annotations.items()
++                    for alias, annotation in self.annotations.items()
+                 }
+-                for name in added_aggregate_names:
+-                    self.annotations[name] = self.annotations[name].replace_expressions(
+-                        replacements
+-                    )
+-                self.set_annotation_mask(added_aggregate_names)
++                self.annotations = {
++                    alias: aggregate.replace_expressions(replacements)
++                    for alias, aggregate in aggregates.items()
++                }
++            else:
++                self.annotations = aggregates
++            self.set_annotation_mask(aggregates)
+ 
+         empty_set_result = [
+             expression.empty_result_set_value
+@@ -532,13 +722,13 @@ class Query(BaseExpression):
+ 
+         return dict(zip(outer_query.annotation_select, result))
+ 
++    @inspect_code
+     def get_count(self, using):
+         """
+         Perform a COUNT() query using the current filter constraints.
+         """
+         obj = self.clone()
+-        obj.add_annotation(Count("*"), alias="__count", is_summary=True)
+-        return obj.get_aggregation(using, ["__count"])["__count"]
++        return obj.get_aggregation(using, {"__count": Count("*")})["__count"]
+ 
+     def has_filters(self):
+         return self.where
+@@ -1085,12 +1275,10 @@ class Query(BaseExpression):
+                 "semicolons, or SQL comments."
+             )
+ 
+-    def add_annotation(self, annotation, alias, is_summary=False, select=True):
++    def add_annotation(self, annotation, alias, select=True):
+         """Add a single annotation expression to the Query."""
+         self.check_alias(alias)
+-        annotation = annotation.resolve_expression(
+-            self, allow_joins=True, reuse=None, summarize=is_summary
+-        )
++        annotation = annotation.resolve_expression(self, allow_joins=True, reuse=None)
+         if select:
+             self.append_annotation_mask([alias])
+         else:
+diff --git a/tests/aggregation/tests.py b/tests/aggregation/tests.py
+index c098716..4e860a7 100644
+--- a/tests/aggregation/tests.py
++++ b/tests/aggregation/tests.py
+@@ -1258,11 +1258,11 @@ class AggregateTestCase(TestCase):
+         self.assertEqual(author.sum_age, other_author.sum_age)
+ 
+     def test_aggregate_over_aggregate(self):
+-        msg = "Cannot compute Avg('age'): 'age' is an aggregate"
++        msg = "Cannot resolve keyword 'age_agg' into field."
+         with self.assertRaisesMessage(FieldError, msg):
+-            Author.objects.annotate(age_alias=F("age"),).aggregate(
+-                age=Sum(F("age")),
+-                avg_age=Avg(F("age")),
++            Author.objects.aggregate(
++                age_agg=Sum(F("age")),
++                avg_age=Avg(F("age_agg")),
+             )
+ 
+     def test_annotated_aggregate_over_annotated_aggregate(self):
+@@ -2086,6 +2086,14 @@ class AggregateTestCase(TestCase):
+         )
+         self.assertEqual(len(qs), 6)
+ 
++    def test_aggregation_over_annotation_shared_alias(self):
++        self.assertEqual(
++            Publisher.objects.annotate(agg=Count("book__authors"),).aggregate(
++                agg=Count("agg"),
++            ),
++            {"agg": 5},
++        )
++
+ 
+ class AggregateAnnotationPruningTests(TestCase):
+     @classmethod

@@ -1,0 +1,316 @@
+def check_X_y(X, y, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, multi_output=False, ensure_min_samples=1, ensure_min_features=1, y_numeric=False, warn_on_dtype=None, estimator=None):
+    if y is None:
+        raise ValueError('y cannot be None')
+    X = check_array(X, accept_sparse=accept_sparse, accept_large_sparse=accept_large_sparse, dtype=dtype, order=order, copy=copy, force_all_finite=force_all_finite, ensure_2d=ensure_2d, allow_nd=allow_nd, ensure_min_samples=ensure_min_samples, ensure_min_features=ensure_min_features, warn_on_dtype=warn_on_dtype, estimator=estimator)
+    if multi_output:
+        y = check_array(y, 'csr', force_all_finite=True, ensure_2d=False, dtype=None)
+    else:
+        y = column_or_1d(y, warn=True)
+        _assert_all_finite(y)
+    if y_numeric and y.dtype.kind == 'O':
+        y = y.astype(np.float64)
+    check_consistent_length(X, y)
+    return (X, y)
+
+def check_array(array, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=None, estimator=None):
+    if warn_on_dtype is not None:
+        warnings.warn("'warn_on_dtype' is deprecated in version 0.21 and will be removed in 0.23. Don't set `warn_on_dtype` to remove this warning.", FutureWarning, stacklevel=2)
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+        if all((isinstance(dtype, np.dtype) for dtype in dtypes_orig)):
+            dtype_orig = np.result_type(*array.dtypes)
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse, dtype=dtype, copy=copy, force_all_finite=force_all_finite, accept_large_sparse=accept_large_sparse)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                if dtype is not None and np.dtype(dtype).kind in 'iu':
+                    array = np.asarray(array, order=order)
+                    if array.dtype.kind == 'f':
+                        _assert_all_finite(array, allow_nan=False, msg_dtype=dtype)
+                    array = array.astype(dtype, casting='unsafe', copy=False)
+                else:
+                    array = np.asarray(array, order=order, dtype=dtype)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of bytes/strings will be converted to decimal numbers if dtype='numeric'. It is recommended that you convert the array to a float dtype before using it in scikit-learn, for example by using your_array = your_array.astype(np.float64).", FutureWarning, stacklevel=2)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, array.shape, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, array.shape, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=2)
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+    if warn_on_dtype and dtypes_orig is not None and ({array.dtype} != set(dtypes_orig)):
+        msg = 'Data with input dtype %s were all converted to %s%s.' % (', '.join(map(str, sorted(set(dtypes_orig)))), array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=3)
+    return array
+
+def _ensure_no_complex_data(array):
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+def _num_samples(x):
+    message = 'Expected sequence or array-like, got %s' % type(x)
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError(message)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError(message)
+    if hasattr(x, 'shape') and x.shape is not None:
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        if isinstance(x.shape[0], numbers.Integral):
+            return x.shape[0]
+    try:
+        return len(x)
+    except TypeError:
+        raise TypeError(message)
+
+def column_or_1d(y, warn=False):
+    y = np.asarray(y)
+    shape = np.shape(y)
+    if len(shape) == 1:
+        return np.ravel(y)
+    if len(shape) == 2 and shape[1] == 1:
+        if warn:
+            warnings.warn('A column-vector y was passed when a 1d array was expected. Please change the shape of y to (n_samples, ), for example using ravel().', DataConversionWarning, stacklevel=2)
+        return np.ravel(y)
+    raise ValueError('bad input shape {0}'.format(shape))
+
+def _assert_all_finite(X, allow_nan=False, msg_dtype=None):
+    from .extmath import _safe_accumulator_op
+    if _get_config()['assume_finite']:
+        return
+    X = np.asanyarray(X)
+    is_float = X.dtype.kind in 'fc'
+    if is_float and np.isfinite(_safe_accumulator_op(np.sum, X)):
+        pass
+    elif is_float:
+        msg_err = 'Input contains {} or a value too large for {!r}.'
+        if allow_nan and np.isinf(X).any() or (not allow_nan and (not np.isfinite(X).all())):
+            type_err = 'infinity' if allow_nan else 'NaN, infinity'
+            raise ValueError(msg_err.format(type_err, msg_dtype if msg_dtype is not None else X.dtype))
+    elif X.dtype == np.dtype('object') and (not allow_nan):
+        if _object_dtype_isnan(X).any():
+            raise ValueError('Input contains NaN')
+
+def get_config():
+    return _global_config.copy()
+
+def check_consistent_length(*arrays):
+    lengths = [_num_samples(X) for X in arrays if X is not None]
+    uniques = np.unique(lengths)
+    if len(uniques) > 1:
+        raise ValueError('Found input variables with inconsistent numbers of samples: %r' % [int(l) for l in lengths])
+
+def is_classifier(estimator):
+    return getattr(estimator, '_estimator_type', None) == 'classifier'
+
+def check_cv(cv=5, y=None, classifier=False):
+    cv = 5 if cv is None else cv
+    if isinstance(cv, numbers.Integral):
+        if classifier and y is not None and (type_of_target(y) in ('binary', 'multiclass')):
+            return StratifiedKFold(cv)
+        else:
+            return KFold(cv)
+    if not hasattr(cv, 'split') or isinstance(cv, str):
+        if not isinstance(cv, Iterable) or isinstance(cv, str):
+            raise ValueError('Expected cv as an integer, cross-validation object (from sklearn.model_selection) or an iterable. Got %s.' % cv)
+        return _CVIterableWrapper(cv)
+    return cv
+
+def type_of_target(y):
+    valid = (isinstance(y, (Sequence, spmatrix)) or hasattr(y, '__array__')) and (not isinstance(y, str))
+    if not valid:
+        raise ValueError('Expected array-like (array or non-string sequence), got %r' % y)
+    sparse_pandas = y.__class__.__name__ in ['SparseSeries', 'SparseArray']
+    if sparse_pandas:
+        raise ValueError("y cannot be class 'SparseSeries' or 'SparseArray'")
+    if is_multilabel(y):
+        return 'multilabel-indicator'
+    try:
+        y = np.asarray(y)
+    except ValueError:
+        return 'unknown'
+    try:
+        if not hasattr(y[0], '__array__') and isinstance(y[0], Sequence) and (not isinstance(y[0], str)):
+            raise ValueError('You appear to be using a legacy multi-label data representation. Sequence of sequences are no longer supported; use a binary array or sparse matrix instead - the MultiLabelBinarizer transformer can convert to this format.')
+    except IndexError:
+        pass
+    if y.ndim > 2 or (y.dtype == object and len(y) and (not isinstance(y.flat[0], str))):
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] == 0:
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] > 1:
+        suffix = '-multioutput'
+    else:
+        suffix = ''
+    if y.dtype.kind == 'f' and np.any(y != y.astype(int)):
+        _assert_all_finite(y)
+        return 'continuous' + suffix
+    if len(np.unique(y)) > 2 or (y.ndim >= 2 and len(y[0]) > 1):
+        return 'multiclass' + suffix
+    else:
+        return 'binary'
+
+def is_multilabel(y):
+    if hasattr(y, '__array__') or isinstance(y, Sequence):
+        y = np.asarray(y)
+    if not (hasattr(y, 'shape') and y.ndim == 2 and (y.shape[1] > 1)):
+        return False
+    if issparse(y):
+        if isinstance(y, (dok_matrix, lil_matrix)):
+            y = y.tocsr()
+        return len(y.data) == 0 or (np.unique(y.data).size == 1 and (y.dtype.kind in 'biu' or _is_integral_float(np.unique(y.data))))
+    else:
+        labels = np.unique(y)
+        return len(labels) < 3 and (y.dtype.kind in 'biu' or _is_integral_float(labels))
+
+def __init__(self, n_splits=5, shuffle=False, random_state=None):
+    super().__init__(n_splits, shuffle, random_state)
+
+def __init__(self, n_splits, shuffle, random_state):
+    if not isinstance(n_splits, numbers.Integral):
+        raise ValueError('The number of folds must be of Integral type. %s of type %s was passed.' % (n_splits, type(n_splits)))
+    n_splits = int(n_splits)
+    if n_splits <= 1:
+        raise ValueError('k-fold cross-validation requires at least one train/test split by setting n_splits=2 or more, got n_splits={0}.'.format(n_splits))
+    if not isinstance(shuffle, bool):
+        raise TypeError('shuffle must be True or False; got {0}'.format(shuffle))
+    if not shuffle and random_state is not None:
+        warnings.warn('Setting a random_state has no effect since shuffle is False. This will raise an error in 0.24. You should leave random_state to its default (None), or set shuffle=True.', FutureWarning)
+    self.n_splits = n_splits
+    self.shuffle = shuffle
+    self.random_state = random_state
+
+def check_scoring(estimator, scoring=None, allow_none=False):
+    if not hasattr(estimator, 'fit'):
+        raise TypeError("estimator should be an estimator implementing 'fit' method, %r was passed" % estimator)
+    if isinstance(scoring, str):
+        return get_scorer(scoring)
+    elif callable(scoring):
+        module = getattr(scoring, '__module__', None)
+        if hasattr(module, 'startswith') and module.startswith('sklearn.metrics.') and (not module.startswith('sklearn.metrics._scorer')) and (not module.startswith('sklearn.metrics.tests.')):
+            raise ValueError('scoring value %r looks like it is a metric function rather than a scorer. A scorer should require an estimator as its first parameter. Please use `make_scorer` to convert a metric to a scorer.' % scoring)
+        return get_scorer(scoring)
+    elif scoring is None:
+        if hasattr(estimator, 'score'):
+            return _passthrough_scorer
+        elif allow_none:
+            return None
+        else:
+            raise TypeError("If no scoring is specified, the estimator passed should have a 'score' method. The estimator %r does not." % estimator)
+    elif isinstance(scoring, Iterable):
+        raise ValueError('For evaluating multiple scores, use sklearn.model_selection.cross_validate instead. {0} was passed.'.format(scoring))
+    else:
+        raise ValueError('scoring value should either be a callable, string or None. %r was passed' % scoring)
+
+
+
+import numpy as np
+from joblib import Parallel, delayed, effective_n_jobs
+from ..utils import check_X_y, safe_sqr
+from ..utils.metaestimators import if_delegate_has_method
+from ..utils.metaestimators import _safe_split
+from ..utils.validation import check_is_fitted
+from ..base import BaseEstimator
+from ..base import MetaEstimatorMixin
+from ..base import clone
+from ..base import is_classifier
+from ..model_selection import check_cv
+from ..model_selection._validation import _score
+from ..metrics import check_scoring
+from ._base import SelectorMixin
+
+class RFECV(RFE):
+
+    def __init__(self, estimator, step=1, min_features_to_select=1, cv=None, scoring=None, verbose=0, n_jobs=None):
+        self.estimator = estimator
+        self.step = step
+        self.cv = cv
+        self.scoring = scoring
+        self.verbose = verbose
+        self.n_jobs = n_jobs
+        self.min_features_to_select = min_features_to_select
+
+    def fit(self, X, y, groups=None):
+        X, y = check_X_y(X, y, 'csr', ensure_min_features=2, force_all_finite=False)
+        cv = check_cv(self.cv, y, is_classifier(self.estimator))
+        scorer = check_scoring(self.estimator, scoring=self.scoring)
+        n_features = X.shape[1]
+        if 0.0 < self.step < 1.0:
+            step = int(max(1, self.step * n_features))
+        else:
+            step = int(self.step)
+        if step <= 0:
+            raise ValueError('Step must be >0')
+        rfe = RFE(estimator=self.estimator, n_features_to_select=self.min_features_to_select, step=self.step, verbose=self.verbose)
+        if effective_n_jobs(self.n_jobs) == 1:
+            parallel, func = (list, _rfe_single_fit)
+        else:
+            parallel = Parallel(n_jobs=self.n_jobs)
+            func = delayed(_rfe_single_fit)
+        scores = parallel((func(rfe, self.estimator, X, y, train, test, scorer) for train, test in cv.split(X, y, groups)))
+        scores = np.sum(scores, axis=0)
+        scores_rev = scores[::-1]
+        argmax_idx = len(scores) - np.argmax(scores_rev) - 1
+        n_features_to_select = max(n_features - argmax_idx * step, self.min_features_to_select)
+        rfe = RFE(estimator=self.estimator, n_features_to_select=n_features_to_select, step=self.step, verbose=self.verbose)
+        rfe.fit(X, y)
+        self.support_ = rfe.support_
+        self.n_features_ = rfe.n_features_
+        self.ranking_ = rfe.ranking_
+        self.estimator_ = clone(self.estimator)
+        self.estimator_.fit(self.transform(X), y)
+        self.grid_scores_ = scores[::-1] / cv.get_n_splits(X, y, groups)
+        return self

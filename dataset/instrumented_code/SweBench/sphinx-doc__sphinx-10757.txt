@@ -1,0 +1,121 @@
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index 3a964db..71e3913 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -502,32 +502,34 @@ class HyperlinkCollector(SphinxPostTransform):
+         builder = cast(CheckExternalLinksBuilder, self.app.builder)
+         hyperlinks = builder.hyperlinks
+ 
+-        # reference nodes
+-        for refnode in self.document.findall(nodes.reference):
+-            if 'refuri' not in refnode:
+-                continue
+-            uri = refnode['refuri']
++        def add_uri(uri: str, node: nodes.Element) -> None:
+             newuri = self.app.emit_firstresult('linkcheck-process-uri', uri)
+             if newuri:
+                 uri = newuri
+ 
+-            lineno = get_node_line(refnode)
++            lineno = get_node_line(node)
+             uri_info = Hyperlink(uri, self.env.docname, lineno)
+             if uri not in hyperlinks:
+                 hyperlinks[uri] = uri_info
+ 
++        # reference nodes
++        for refnode in self.document.findall(nodes.reference):
++            if 'refuri' not in refnode:
++                continue
++            uri = refnode['refuri']
++            add_uri(uri, refnode)
++
+         # image nodes
+         for imgnode in self.document.findall(nodes.image):
+             uri = imgnode['candidates'].get('?')
+             if uri and '://' in uri:
+-                newuri = self.app.emit_firstresult('linkcheck-process-uri', uri)
+-                if newuri:
+-                    uri = newuri
+-
+-                lineno = get_node_line(imgnode)
+-                uri_info = Hyperlink(uri, self.env.docname, lineno)
+-                if uri not in hyperlinks:
+-                    hyperlinks[uri] = uri_info
++                add_uri(uri, imgnode)
++
++        # raw nodes
++        for rawnode in self.document.findall(nodes.raw):
++            uri = rawnode.get('source')
++            if uri and '://' in uri:
++                add_uri(uri, rawnode)
+ 
+ 
+ def rewrite_github_anchor(app: Sphinx, uri: str) -> Optional[str]:
+diff --git a/tests/roots/test-linkcheck/links.txt b/tests/roots/test-linkcheck/links.txt
+index 626f843..1d24084 100644
+--- a/tests/roots/test-linkcheck/links.txt
++++ b/tests/roots/test-linkcheck/links.txt
+@@ -17,3 +17,6 @@ Some additional anchors to exercise ignore code
+ 
+ .. image:: https://www.google.com/image.png
+ .. figure:: https://www.google.com/image2.png
++
++.. raw:: html
++   :url: https://www.sphinx-doc.org/
+diff --git a/tests/test_build_linkcheck.py b/tests/test_build_linkcheck.py
+index cc5cb4d..631c7fa 100644
+--- a/tests/test_build_linkcheck.py
++++ b/tests/test_build_linkcheck.py
+@@ -41,7 +41,7 @@ def test_defaults(app):
+     assert "Not Found for url: https://www.google.com/image2.png" in content
+     # looking for local file should fail
+     assert "[broken] path/to/notfound" in content
+-    assert len(content.splitlines()) == 6
++    assert len(content.splitlines()) == 7
+ 
+ 
+ @pytest.mark.sphinx('linkcheck', testroot='linkcheck', freshenv=True)
+@@ -58,8 +58,8 @@ def test_defaults_json(app):
+                  "info"]:
+         assert attr in row
+ 
+-    assert len(content.splitlines()) == 11
+-    assert len(rows) == 11
++    assert len(content.splitlines()) == 12
++    assert len(rows) == 12
+     # the output order of the rows is not stable
+     # due to possible variance in network latency
+     rowsby = {row["uri"]: row for row in rows}
+@@ -80,7 +80,7 @@ def test_defaults_json(app):
+     assert dnerow['uri'] == 'https://localhost:7777/doesnotexist'
+     assert rowsby['https://www.google.com/image2.png'] == {
+         'filename': 'links.txt',
+-        'lineno': 19,
++        'lineno': 20,
+         'status': 'broken',
+         'code': 0,
+         'uri': 'https://www.google.com/image2.png',
+@@ -94,6 +94,15 @@ def test_defaults_json(app):
+     # images should fail
+     assert "Not Found for url: https://www.google.com/image.png" in \
+         rowsby["https://www.google.com/image.png"]["info"]
++    # raw nodes' url should be checked too
++    assert rowsby["https://www.sphinx-doc.org/"] == {
++        'filename': 'links.txt',
++        'lineno': 21,
++        'status': 'redirected',
++        'code': 302,
++        'uri': 'https://www.sphinx-doc.org/',
++        'info': 'https://www.sphinx-doc.org/en/master/'
++    }
+ 
+ 
+ @pytest.mark.sphinx(
+@@ -102,6 +111,7 @@ def test_defaults_json(app):
+                    'linkcheck_ignore': [
+                        'https://localhost:7777/doesnotexist',
+                        'http://www.sphinx-doc.org/en/master/index.html#',
++                       'https://www.sphinx-doc.org/',
+                        'https://www.google.com/image.png',
+                        'https://www.google.com/image2.png',
+                        'path/to/notfound']

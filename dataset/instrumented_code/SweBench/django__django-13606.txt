@@ -1,0 +1,526 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 1391846..c596ccf 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -1083,19 +1083,18 @@ class Subquery(Expression):
+     contains_aggregate = False
+ 
+     def __init__(self, queryset, output_field=None, **extra):
+-        self.query = queryset.query
++        # Allow the usage of both QuerySet and sql.Query objects.
++        self.query = getattr(queryset, 'query', queryset)
+         self.extra = extra
+-        # Prevent the QuerySet from being evaluated.
+-        self.queryset = queryset._chain(_result_cache=[], prefetch_done=True)
+         super().__init__(output_field)
+ 
+     def __getstate__(self):
+         state = super().__getstate__()
+         args, kwargs = state['_constructor_args']
+         if args:
+-            args = (self.queryset, *args[1:])
++            args = (self.query, *args[1:])
+         else:
+-            kwargs['queryset'] = self.queryset
++            kwargs['queryset'] = self.query
+         state['_constructor_args'] = args, kwargs
+         return state
+ 
+diff --git a/django/db/models/lookups.py b/django/db/models/lookups.py
+index 576ff40..43f40c2 100644
+--- a/django/db/models/lookups.py
++++ b/django/db/models/lookups.py
+@@ -12,6 +12,7 @@ from django.db.models.query_utils import RegisterLookupMixin
+ from django.utils.datastructures import OrderedSet
+ from django.utils.deprecation import RemovedInDjango40Warning
+ from django.utils.functional import cached_property
++from django.utils.hashable import make_hashable
+ 
+ 
+ class Lookup:
+@@ -143,6 +144,18 @@ class Lookup:
+     def is_summary(self):
+         return self.lhs.is_summary or getattr(self.rhs, 'is_summary', False)
+ 
++    @property
++    def identity(self):
++        return self.__class__, self.lhs, self.rhs
++
++    def __eq__(self, other):
++        if not isinstance(other, Lookup):
++            return NotImplemented
++        return self.identity == other.identity
++
++    def __hash__(self):
++        return hash(make_hashable(self.identity))
++
+ 
+ class Transform(RegisterLookupMixin, Func):
+     """
+diff --git a/django/db/models/sql/datastructures.py b/django/db/models/sql/datastructures.py
+index c2c347b..c9598b3 100644
+--- a/django/db/models/sql/datastructures.py
++++ b/django/db/models/sql/datastructures.py
+@@ -114,17 +114,28 @@ class Join:
+             self.join_field, self.nullable, filtered_relation=filtered_relation,
+         )
+ 
+-    def equals(self, other, with_filtered_relation):
++    @property
++    def identity(self):
+         return (
+-            isinstance(other, self.__class__) and
+-            self.table_name == other.table_name and
+-            self.parent_alias == other.parent_alias and
+-            self.join_field == other.join_field and
+-            (not with_filtered_relation or self.filtered_relation == other.filtered_relation)
++            self.__class__,
++            self.table_name,
++            self.parent_alias,
++            self.join_field,
++            self.filtered_relation,
+         )
+ 
+     def __eq__(self, other):
+-        return self.equals(other, with_filtered_relation=True)
++        if not isinstance(other, Join):
++            return NotImplemented
++        return self.identity == other.identity
++
++    def __hash__(self):
++        return hash(self.identity)
++
++    def equals(self, other, with_filtered_relation):
++        if with_filtered_relation:
++            return self == other
++        return self.identity[:-1] == other.identity[:-1]
+ 
+     def demote(self):
+         new = self.relabeled_clone({})
+@@ -160,9 +171,17 @@ class BaseTable:
+     def relabeled_clone(self, change_map):
+         return self.__class__(self.table_name, change_map.get(self.table_alias, self.table_alias))
+ 
++    @property
++    def identity(self):
++        return self.__class__, self.table_name, self.table_alias
++
++    def __eq__(self, other):
++        if not isinstance(other, BaseTable):
++            return NotImplemented
++        return self.identity == other.identity
++
++    def __hash__(self):
++        return hash(self.identity)
++
+     def equals(self, other, with_filtered_relation):
+-        return (
+-            isinstance(self, other.__class__) and
+-            self.table_name == other.table_name and
+-            self.table_alias == other.table_alias
+-        )
++        return self.identity == other.identity
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index ee98984..d52267e 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-13606/django/db/models/sql/query.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Create SQL statements for QuerySets.
+ 
+@@ -23,7 +216,9 @@ from django.core.exceptions import (
+ from django.db import DEFAULT_DB_ALIAS, NotSupportedError, connections
+ from django.db.models.aggregates import Count
+ from django.db.models.constants import LOOKUP_SEP
+-from django.db.models.expressions import BaseExpression, Col, F, OuterRef, Ref
++from django.db.models.expressions import (
++    BaseExpression, Col, Exists, F, OuterRef, Ref, ResolvedOuterRef,
++)
+ from django.db.models.fields import Field
+ from django.db.models.fields.related_lookups import MultiColSource
+ from django.db.models.lookups import Lookup
+@@ -39,6 +234,7 @@ from django.db.models.sql.where import (
+ )
+ from django.utils.deprecation import RemovedInDjango40Warning
+ from django.utils.functional import cached_property
++from django.utils.hashable import make_hashable
+ from django.utils.tree import Node
+ 
+ __all__ = ['Query', 'RawQuery']
+@@ -246,6 +442,14 @@ class Query(BaseExpression):
+         for alias in self.alias_map:
+             return alias
+ 
++    @property
++    def identity(self):
++        identity = (
++            (arg, make_hashable(value))
++            for arg, value in self.__dict__.items()
++        )
++        return (self.__class__, *identity)
++
+     def __str__(self):
+         """
+         Return the query as a string of SQL with the parameter values
+@@ -1744,6 +1948,7 @@ class Query(BaseExpression):
+                 reuse.update(join_list)
+             return self._get_col(targets[0], join_info.targets[0], join_list[-1])
+ 
++    @inspect_code
+     def split_exclude(self, filter_expr, can_reuse, names_with_path):
+         """
+         When doing an exclude against any kind of N-to-many relation, we need
+@@ -1756,12 +1961,12 @@ class Query(BaseExpression):
+         filters in the original query.
+ 
+         We will turn this into equivalent of:
+-            WHERE NOT (pk IN (SELECT parent_id FROM thetable
+-                              WHERE name = 'foo' AND parent_id IS NOT NULL))
+-
+-        It might be worth it to consider using WHERE NOT EXISTS as that has
+-        saner null handling, and is easier for the backend's optimizer to
+-        handle.
++            WHERE NOT EXISTS(
++                SELECT 1
++                FROM child
++                WHERE name = 'foo' AND child.parent_id = parent.id
++                LIMIT 1
++            )
+         """
+         filter_lhs, filter_rhs = filter_expr
+         if isinstance(filter_rhs, OuterRef):
+@@ -1777,17 +1982,9 @@ class Query(BaseExpression):
+         # the subquery.
+         trimmed_prefix, contains_louter = query.trim_start(names_with_path)
+ 
+-        # Add extra check to make sure the selected field will not be null
+-        # since we are adding an IN <subquery> clause. This prevents the
+-        # database from tripping over IN (...,NULL,...) selects and returning
+-        # nothing
+         col = query.select[0]
+         select_field = col.target
+         alias = col.alias
+-        if self.is_nullable(select_field):
+-            lookup_class = select_field.get_lookup('isnull')
+-            lookup = lookup_class(select_field.get_col(alias), False)
+-            query.where.add(lookup, AND)
+         if alias in can_reuse:
+             pk = select_field.model._meta.pk
+             # Need to add a restriction so that outer query's filters are in effect for
+@@ -1801,9 +1998,11 @@ class Query(BaseExpression):
+             query.where.add(lookup, AND)
+             query.external_aliases[alias] = True
+ 
+-        condition, needed_inner = self.build_filter(
+-            ('%s__in' % trimmed_prefix, query),
+-            current_negated=True, branch_negated=True, can_reuse=can_reuse)
++        lookup_class = select_field.get_lookup('exact')
++        lookup = lookup_class(col, ResolvedOuterRef(trimmed_prefix))
++        query.where.add(lookup, AND)
++        condition, needed_inner = self.build_filter(Exists(query))
++
+         if contains_louter:
+             or_null_condition, _ = self.build_filter(
+                 ('%s__isnull' % trimmed_prefix, True),
+diff --git a/tests/lookup/test_lookups.py b/tests/lookup/test_lookups.py
+index c3aa48d..4d90612 100644
+--- a/tests/lookup/test_lookups.py
++++ b/tests/lookup/test_lookups.py
+@@ -1,10 +1,34 @@
+ from datetime import datetime
++from unittest import mock
+ 
+ from django.db.models import DateTimeField, Value
+-from django.db.models.lookups import YearLookup
++from django.db.models.lookups import Lookup, YearLookup
+ from django.test import SimpleTestCase
+ 
+ 
++class CustomLookup(Lookup):
++    pass
++
++
++class LookupTests(SimpleTestCase):
++    def test_equality(self):
++        lookup = Lookup(Value(1), Value(2))
++        self.assertEqual(lookup, lookup)
++        self.assertEqual(lookup, Lookup(lookup.lhs, lookup.rhs))
++        self.assertEqual(lookup, mock.ANY)
++        self.assertNotEqual(lookup, Lookup(lookup.lhs, Value(3)))
++        self.assertNotEqual(lookup, Lookup(Value(3), lookup.rhs))
++        self.assertNotEqual(lookup, CustomLookup(lookup.lhs, lookup.rhs))
++
++    def test_hash(self):
++        lookup = Lookup(Value(1), Value(2))
++        self.assertEqual(hash(lookup), hash(lookup))
++        self.assertEqual(hash(lookup), hash(Lookup(lookup.lhs, lookup.rhs)))
++        self.assertNotEqual(hash(lookup), hash(Lookup(lookup.lhs, Value(3))))
++        self.assertNotEqual(hash(lookup), hash(Lookup(Value(3), lookup.rhs)))
++        self.assertNotEqual(hash(lookup), hash(CustomLookup(lookup.lhs, lookup.rhs)))
++
++
+ class YearLookupTests(SimpleTestCase):
+     def test_get_bound_params(self):
+         look_up = YearLookup(
+diff --git a/tests/queries/test_query.py b/tests/queries/test_query.py
+index 523fa60..5db9d96 100644
+--- a/tests/queries/test_query.py
++++ b/tests/queries/test_query.py
+@@ -150,3 +150,31 @@ class TestQuery(SimpleTestCase):
+         msg = 'Cannot filter against a non-conditional expression.'
+         with self.assertRaisesMessage(TypeError, msg):
+             query.build_where(Func(output_field=CharField()))
++
++    def test_equality(self):
++        self.assertNotEqual(
++            Author.objects.all().query,
++            Author.objects.filter(item__name='foo').query,
++        )
++        self.assertEqual(
++            Author.objects.filter(item__name='foo').query,
++            Author.objects.filter(item__name='foo').query,
++        )
++        self.assertEqual(
++            Author.objects.filter(item__name='foo').query,
++            Author.objects.filter(Q(item__name='foo')).query,
++        )
++
++    def test_hash(self):
++        self.assertNotEqual(
++            hash(Author.objects.all().query),
++            hash(Author.objects.filter(item__name='foo').query)
++        )
++        self.assertEqual(
++            hash(Author.objects.filter(item__name='foo').query),
++            hash(Author.objects.filter(item__name='foo').query),
++        )
++        self.assertEqual(
++            hash(Author.objects.filter(item__name='foo').query),
++            hash(Author.objects.filter(Q(item__name='foo')).query),
++        )
+diff --git a/tests/queries/tests.py b/tests/queries/tests.py
+index c98a6ad..c3e3a40 100644
+--- a/tests/queries/tests.py
++++ b/tests/queries/tests.py
+@@ -2807,11 +2807,11 @@ class ExcludeTests(TestCase):
+         f1 = Food.objects.create(name='apples')
+         Food.objects.create(name='oranges')
+         Eaten.objects.create(food=f1, meal='dinner')
+-        j1 = Job.objects.create(name='Manager')
++        cls.j1 = Job.objects.create(name='Manager')
+         cls.r1 = Responsibility.objects.create(description='Playing golf')
+         j2 = Job.objects.create(name='Programmer')
+         r2 = Responsibility.objects.create(description='Programming')
+-        JobResponsibilities.objects.create(job=j1, responsibility=cls.r1)
++        JobResponsibilities.objects.create(job=cls.j1, responsibility=cls.r1)
+         JobResponsibilities.objects.create(job=j2, responsibility=r2)
+ 
+     def test_to_field(self):
+@@ -2884,6 +2884,14 @@ class ExcludeTests(TestCase):
+             [number],
+         )
+ 
++    def test_exclude_multivalued_exists(self):
++        with CaptureQueriesContext(connection) as captured_queries:
++            self.assertSequenceEqual(
++                Job.objects.exclude(responsibilities__description='Programming'),
++                [self.j1],
++            )
++        self.assertIn('exists', captured_queries[0]['sql'].lower())
++
+ 
+ class ExcludeTest17600(TestCase):
+     """

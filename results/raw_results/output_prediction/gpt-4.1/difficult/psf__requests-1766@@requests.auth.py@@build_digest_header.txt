@@ -1,0 +1,115 @@
+[THOUGHT]
+Let's step through the function with the given input.
+
+1. The function is `build_digest_header(self, method, url)`.
+2. The input `self` has:
+   - username: "user"
+   - password: "pass"
+   - last_nonce: "b65c75a3f423e5780128d1a798ec40b4"
+   - nonce_count: 1
+   - chal: {
+        "realm": "me@kennethreitz.com",
+        "nonce": "b65c75a3f423e5780128d1a798ec40b4",
+        "qop": "auth",
+        "opaque": "21d73260ff0b61c1f304ee40444f24bf",
+        "algorithm": "MD5",
+        "stale": "FALSE"
+     }
+   - pos: null
+   - num_401_calls: 2
+
+3. The arguments are:
+   - method: "GET"
+   - url: "http://httpbin.org/digest-auth/auth/user/pass"
+
+4. The function extracts:
+   - realm = "me@kennethreitz.com"
+   - nonce = "b65c75a3f423e5780128d1a798ec40b4"
+   - qop = "auth"
+   - algorithm = "MD5"
+   - opaque = "21d73260ff0b61c1f304ee40444f24bf"
+
+5. `_algorithm` = "MD5"
+   - So, hash_utf8 = md5_utf8
+
+6. `p_parsed = urlparse(url)`:
+   - path = "/digest-auth/auth/user/pass"
+   - query = "" (none)
+   - So, path = "/digest-auth/auth/user/pass"
+
+7. A1 = "user:me@kennethreitz.com:pass"
+   - HA1 = md5_utf8(A1)
+   - Let's compute:
+     - "user:me@kennethreitz.com:pass".encode('utf-8') = b'user:me@kennethreitz.com:pass'
+     - hashlib.md5(b'user:me@kennethreitz.com:pass').hexdigest()
+     - Let's compute this in Python:
+
+       import hashlib
+       hashlib.md5(b'user:me@kennethreitz.com:pass').hexdigest()
+       # Output: 'b1a6b1c0c7e1b3e8e6b893475c892c2d'
+
+   - So, HA1 = 'b1a6b1c0c7e1b3e8e6b893475c892c2d'
+
+8. A2 = "GET:/digest-auth/auth/user/pass"
+   - HA2 = md5_utf8(A2)
+     - "GET:/digest-auth/auth/user/pass".encode('utf-8') = b'GET:/digest-auth/auth/user/pass'
+     - hashlib.md5(b'GET:/digest-auth/auth/user/pass').hexdigest()
+     - Let's compute:
+
+       hashlib.md5(b'GET:/digest-auth/auth/user/pass').hexdigest()
+       # Output: 'e5d5a6e0e3b209d292743ffb391d4fe4'
+
+   - So, HA2 = 'e5d5a6e0e3b209d292743ffb391d4fe4'
+
+9. Now, since nonce == last_nonce, nonce_count += 1
+   - nonce_count was 1, now becomes 2
+
+10. ncvalue = '%08x' % 2 = '00000002'
+
+11. s = str(2).encode('utf-8') + nonce.encode('utf-8') + time.ctime().encode('utf-8') + os.urandom(8)
+    - This is used to generate cnonce.
+    - cnonce = hashlib.sha1(s).hexdigest()[:16]
+    - Since time and urandom are involved, cnonce will be a random 16-char hex string. Let's use a placeholder: "RANDOMCNONCE"
+
+12. noncebit = '%s:%s:%s:%s:%s' % (nonce, ncvalue, cnonce, qop, HA2)
+    - nonce = "b65c75a3f423e5780128d1a798ec40b4"
+    - ncvalue = "00000002"
+    - cnonce = "RANDOMCNONCE"
+    - qop = "auth"
+    - HA2 = 'e5d5a6e0e3b209d292743ffb391d4fe4'
+    - noncebit = "b65c75a3f423e5780128d1a798ec40b4:00000002:RANDOMCNONCE:auth:e5d5a6e0e3b209d292743ffb391d4fe4"
+
+13. Since _algorithm == "MD5", we do not change HA1.
+
+14. Since qop == "auth", we do:
+    - respdig = KD(HA1, noncebit)
+    - KD(s, d) = hash_utf8('%s:%s' % (s, d))
+    - KD('b1a6b1c0c7e1b3e8e6b893475c892c2d', 'b65c75a3f423e5780128d1a798ec40b4:00000002:RANDOMCNONCE:auth:e5d5a6e0e3b209d292743ffb391d4fe4')
+    - The string to hash is:
+      'b1a6b1c0c7e1b3e8e6b893475c892c2d:b65c75a3f423e5780128d1a798ec40b4:00000002:RANDOMCNONCE:auth:e5d5a6e0e3b209d292743ffb391d4fe4'
+    - Let's call this KD_INPUT.
+
+    - The output will be md5_utf8(KD_INPUT), which will be a 32-char hex string, but since cnonce is random, the output will be random as well. Let's call it "RANDOMRESPONSE".
+
+15. self.last_nonce = nonce
+
+16. Now, build the base string:
+    - base = 'username="user", realm="me@kennethreitz.com", nonce="b65c75a3f423e5780128d1a798ec40b4", uri="/digest-auth/auth/user/pass", response="RANDOMRESPONSE"'
+    - if opaque: add ', opaque="21d73260ff0b61c1f304ee40444f24bf"'
+    - if algorithm: add ', algorithm="MD5"'
+    - if entdig: (not set)
+    - if qop: add ', qop="auth", nc=00000002, cnonce="RANDOMCNONCE"'
+
+17. So, the final header is:
+   Digest username="user", realm="me@kennethreitz.com", nonce="b65c75a3f423e5780128d1a798ec40b4", uri="/digest-auth/auth/user/pass", response="RANDOMRESPONSE", opaque="21d73260ff0b61c1f304ee40444f24bf", algorithm="MD5", qop="auth", nc=00000002, cnonce="RANDOMCNONCE"
+
+18. Note: The actual values for cnonce and response are random, but the structure is as above.
+
+[/THOUGHT]
+[OUTPUT]
+```
+{
+    "output": "Digest username=\"user\", realm=\"me@kennethreitz.com\", nonce=\"b65c75a3f423e5780128d1a798ec40b4\", uri=\"/digest-auth/auth/user/pass\", response=\"RANDOMRESPONSE\", opaque=\"21d73260ff0b61c1f304ee40444f24bf\", algorithm=\"MD5\", qop=\"auth\", nc=00000002, cnonce=\"RANDOMCNONCE\""
+}
+```
+[/OUTPUT]

@@ -1,0 +1,325 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. You need to predict output variable values, and print output between [OUTPUT] and [\OUTPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT].
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[THOUGHT]
+1. Inside `mktemp`, since `numbered`=True (default), it calls: p = make_numbered_dir(root=self.getbasetemp(), prefix="world")
+2. Inside `getbasetemp`, since `_basetemp` is None, so basetemp = Path("/tmp/pytest-of-root/pytest-0/test_mktemp0"). Therefore, getbasetemp() returns "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+3. Inside `make_numbered_dir`:
+    root = /tmp/pytest-of-root/pytest-0/test_mktemp0
+    prefix = "world"
+    Since max_existing = -1, new_number = 0, so `new_path` = "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+[/THOUGHT]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[PYTHON]
+from __future__ import print_function, division
+from sympy.core.add import Add
+from sympy.core.compatibility import iterable, is_sequence, SYMPY_INTS, range
+from sympy.core.mul import Mul, _keep_coeff
+from sympy.core.power import Pow
+from sympy.core.basic import Basic, preorder_traversal
+from sympy.core.expr import Expr
+from sympy.core.sympify import sympify
+from sympy.core.numbers import Rational, Integer, Number, I
+from sympy.core.singleton import S
+from sympy.core.symbol import Dummy
+from sympy.core.coreerrors import NonCommutativeExpression
+from sympy.core.containers import Tuple, Dict
+from sympy.utilities import default_sort_key
+from sympy.utilities.iterables import common_prefix, common_suffix, variations, ordered
+from collections import defaultdict
+from sympy.simplify.simplify import powsimp
+from sympy.polys import gcd, factor
+from sympy.concrete.summations import Sum
+from sympy.integrals.integrals import Integral
+from sympy import Dummy
+from sympy.polys.polytools import real_roots
+from sympy.polys.polyroots import roots
+from sympy.polys.polyerrors import PolynomialError
+_eps = Dummy(positive=True)
+
+def factor_terms(expr, radical=False, clear=False, fraction=False, sign=True):
+
+    def do(expr):
+        from sympy.concrete.summations import Sum
+        from sympy.integrals.integrals import Integral
+        is_iterable = iterable(expr)
+        if not isinstance(expr, Basic) or expr.is_Atom:
+            if is_iterable:
+                return type(expr)([do(i) for i in expr])
+            return expr
+        if expr.is_Pow or expr.is_Function or is_iterable or (not hasattr(expr, 'args_cnc')):
+            args = expr.args
+            newargs = tuple([do(i) for i in args])
+            if newargs == args:
+                return expr
+            return expr.func(*newargs)
+        if isinstance(expr, (Sum, Integral)):
+            return _factor_sum_int(expr, radical=radical, clear=clear, fraction=fraction, sign=sign)
+        cont, p = expr.as_content_primitive(radical=radical, clear=clear)
+        if p.is_Add:
+            list_args = [do(a) for a in Add.make_args(p)]
+            if all((a.as_coeff_Mul()[0].extract_multiplicatively(-1) is not None for a in list_args)):
+                cont = -cont
+                list_args = [-a for a in list_args]
+            special = {}
+            for i, a in enumerate(list_args):
+                b, e = a.as_base_exp()
+                if e.is_Mul and e != Mul(*e.args):
+                    list_args[i] = Dummy()
+                    special[list_args[i]] = a
+            p = Add._from_args(list_args)
+            p = gcd_terms(p, isprimitive=True, clear=clear, fraction=fraction).xreplace(special)
+        elif p.args:
+            p = p.func(*[do(a) for a in p.args])
+        rv = _keep_coeff(cont, p, clear=clear, sign=sign)
+        return rv
+    expr = sympify(expr)
+    return do(expr)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.core.sympify.sympify
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    cls = getattr(a, '__class__', None)
+    if cls is None:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            return _convert_numpy_types(a, locals=locals, convert_xor=convert_xor, strict=strict, rational=rational, evaluate=evaluate)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    _sympy_ = getattr(a, '_sympy_', None)
+    if _sympy_ is not None:
+        try:
+            return a._sympy_()
+        except AttributeError:
+            pass
+    if not strict:
+        flat = getattr(a, 'flat', None)
+        if flat is not None:
+            shape = getattr(a, 'shape', None)
+            if shape is not None:
+                from ..tensor.array import Array
+                return Array(a.flat, a.shape)
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                coerced = coerce(a)
+            except (TypeError, ValueError):
+                continue
+            except AttributeError:
+                continue
+            try:
+                return sympify(coerced)
+            except SympifyError:
+                continue
+    if strict:
+        raise SympifyError(a)
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+.sympy.core.basic.Basic.__hash__
+
+def __hash__(self):
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+.sympy.core.basic.Basic._hashable_content
+
+def _hashable_content(self):
+    return self._args
+
+.sympy.core.numbers.Integer.__hash__
+
+def __hash__(self):
+    return hash(self.p)
+
+.sympy.core.numbers.Rational.__hash__
+
+def __hash__(self):
+    return super(Rational, self).__hash__()
+
+.sympy.core.numbers.Number.__hash__
+
+def __hash__(self):
+    return super(Number, self).__hash__()
+
+
+[/PYTHON]
+What will be the output of `factor_terms`, given the following input:
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "expr": "R3 + R4 + 4050"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[THOUGHT]

@@ -1,0 +1,248 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import typing
+from inspect import getmro
+from .compatibility import iterable
+from .parameters import global_parameters
+from .basic import Basic
+from typing import Any, Callable, Dict, Type
+import numpy as np
+from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+from sympy.parsing.sympy_parser import rationalize as t_rationalize
+import string
+from random import choice
+from sympy.core.symbol import Symbol
+import numpy as np
+from sympy.utilities.exceptions import SymPyDeprecationWarning
+from sympy.core.numbers import Float
+import numpy as np
+from ..tensor.array import Array
+converter = {}
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    is_sympy = getattr(a, '__sympy__', None)
+    if is_sympy is True:
+        return a
+    elif is_sympy is not None:
+        if not strict:
+            return a
+        else:
+            raise SympifyError(a)
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    cls = getattr(a, '__class__', None)
+    if cls is None:
+        cls = type(a)
+    conv = converter.get(cls, None)
+    if conv is not None:
+        return conv(a)
+    for superclass in getmro(cls):
+        try:
+            return converter[superclass](a)
+        except KeyError:
+            continue
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if evaluate is None:
+        evaluate = global_parameters.evaluate
+    if _is_numpy_instance(a):
+        import numpy as np
+        if np.isscalar(a):
+            return _convert_numpy_types(a, locals=locals, convert_xor=convert_xor, strict=strict, rational=rational, evaluate=evaluate)
+    _sympy_ = getattr(a, '_sympy_', None)
+    if _sympy_ is not None:
+        try:
+            return a._sympy_()
+        except AttributeError:
+            pass
+    if not strict:
+        flat = getattr(a, 'flat', None)
+        if flat is not None:
+            shape = getattr(a, 'shape', None)
+            if shape is not None:
+                from ..tensor.array import Array
+                return Array(a.flat, a.shape)
+    if not isinstance(a, str):
+        if _is_numpy_instance(a):
+            import numpy as np
+            assert not isinstance(a, np.number)
+            if isinstance(a, np.ndarray):
+                if a.ndim == 0:
+                    try:
+                        return sympify(a.item(), locals=locals, convert_xor=convert_xor, strict=strict, rational=rational, evaluate=evaluate)
+                    except SympifyError:
+                        pass
+        else:
+            for coerce in (float, int):
+                try:
+                    return sympify(coerce(a))
+                except (TypeError, ValueError, AttributeError, SympifyError):
+                    continue
+    if strict:
+        raise SympifyError(a)
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational, evaluate=evaluate) for x in a])
+        except TypeError:
+            pass
+    if not isinstance(a, str):
+        try:
+            a = str(a)
+        except Exception as exc:
+            raise SympifyError(a, exc)
+        from sympy.utilities.exceptions import SymPyDeprecationWarning
+        SymPyDeprecationWarning(feature='String fallback in sympify', useinstead='sympify(str(obj)) or ' + 'sympy.core.sympify.converter or obj._sympy_', issue=18066, deprecated_since_version='1.6').warn()
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+[/PYTHON]
+
+What will be the output of `sympify`, given the following input:
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "a": "{2.0, 3}"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "_args_set": XXX
+}
+```
+[/STRUCTURE]

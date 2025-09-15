@@ -1,0 +1,2579 @@
+diff --git a/requests/adapters.py b/requests/adapters.py
+index 841cbbf..9af9dd6 100644
+--- a/requests/adapters.py
++++ b/requests/adapters.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/psf__requests-2678/requests/adapters.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # -*- coding: utf-8 -*-
+ 
+ """
+@@ -19,6 +212,7 @@ from .compat import urlparse, basestring
+ from .utils import (DEFAULT_CA_BUNDLE_PATH, get_encoding_from_headers,
+                     prepend_scheme_if_needed, get_auth_from_url, urldefragauth)
+ from .structures import CaseInsensitiveDict
++from .packages.urllib3.exceptions import ClosedPoolError
+ from .packages.urllib3.exceptions import ConnectTimeoutError
+ from .packages.urllib3.exceptions import HTTPError as _HTTPError
+ from .packages.urllib3.exceptions import MaxRetryError
+@@ -321,6 +515,7 @@ class HTTPAdapter(BaseAdapter):
+ 
+         return headers
+ 
++    @inspect_code
+     def send(self, request, stream=False, timeout=None, verify=True, cert=None, proxies=None):
+         """Sends PreparedRequest object. Returns Response object.
+ 
+@@ -421,6 +616,9 @@ class HTTPAdapter(BaseAdapter):
+ 
+             raise ConnectionError(e, request=request)
+ 
++        except ClosedPoolError as e:
++            raise ConnectionError(e, request=request)
++
+         except _ProxyError as e:
+             raise ProxyError(e)
+ 
+diff --git a/requests/auth.py b/requests/auth.py
+index 03c3302..7b72409 100644
+--- a/requests/auth.py
++++ b/requests/auth.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/psf__requests-2678/requests/auth.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # -*- coding: utf-8 -*-
+ 
+ """
+@@ -11,6 +204,7 @@ import os
+ import re
+ import time
+ import hashlib
++import threading
+ 
+ from base64 import b64encode
+ 
+@@ -63,19 +257,27 @@ class HTTPDigestAuth(AuthBase):
+     def __init__(self, username, password):
+         self.username = username
+         self.password = password
+-        self.last_nonce = ''
+-        self.nonce_count = 0
+-        self.chal = {}
+-        self.pos = None
+-        self.num_401_calls = 1
+-
++        # Keep state in per-thread local storage
++        self._thread_local = threading.local()
++
++    def init_per_thread_state(self):
++        # Ensure state is initialized just once per-thread
++        if not hasattr(self._thread_local, 'init'):
++            self._thread_local.init = True
++            self._thread_local.last_nonce = ''
++            self._thread_local.nonce_count = 0
++            self._thread_local.chal = {}
++            self._thread_local.pos = None
++            self._thread_local.num_401_calls = None
++
++    @inspect_code
+     def build_digest_header(self, method, url):
+ 
+-        realm = self.chal['realm']
+-        nonce = self.chal['nonce']
+-        qop = self.chal.get('qop')
+-        algorithm = self.chal.get('algorithm')
+-        opaque = self.chal.get('opaque')
++        realm = self._thread_local.chal['realm']
++        nonce = self._thread_local.chal['nonce']
++        qop = self._thread_local.chal.get('qop')
++        algorithm = self._thread_local.chal.get('algorithm')
++        opaque = self._thread_local.chal.get('opaque')
+ 
+         if algorithm is None:
+             _algorithm = 'MD5'
+@@ -114,12 +316,12 @@ class HTTPDigestAuth(AuthBase):
+         HA1 = hash_utf8(A1)
+         HA2 = hash_utf8(A2)
+ 
+-        if nonce == self.last_nonce:
+-            self.nonce_count += 1
++        if nonce == self._thread_local.last_nonce:
++            self._thread_local.nonce_count += 1
+         else:
+-            self.nonce_count = 1
+-        ncvalue = '%08x' % self.nonce_count
+-        s = str(self.nonce_count).encode('utf-8')
++            self._thread_local.nonce_count = 1
++        ncvalue = '%08x' % self._thread_local.nonce_count
++        s = str(self._thread_local.nonce_count).encode('utf-8')
+         s += nonce.encode('utf-8')
+         s += time.ctime().encode('utf-8')
+         s += os.urandom(8)
+@@ -139,7 +341,7 @@ class HTTPDigestAuth(AuthBase):
+             # XXX handle auth-int.
+             return None
+ 
+-        self.last_nonce = nonce
++        self._thread_local.last_nonce = nonce
+ 
+         # XXX should the partial digests be encoded too?
+         base = 'username="%s", realm="%s", nonce="%s", uri="%s", ' \
+@@ -158,23 +360,22 @@ class HTTPDigestAuth(AuthBase):
+     def handle_redirect(self, r, **kwargs):
+         """Reset num_401_calls counter on redirects."""
+         if r.is_redirect:
+-            self.num_401_calls = 1
++            self._thread_local.num_401_calls = 1
+ 
+     def handle_401(self, r, **kwargs):
+         """Takes the given response and tries digest-auth, if needed."""
+ 
+-        if self.pos is not None:
++        if self._thread_local.pos is not None:
+             # Rewind the file position indicator of the body to where
+             # it was to resend the request.
+-            r.request.body.seek(self.pos)
+-        num_401_calls = getattr(self, 'num_401_calls', 1)
++            r.request.body.seek(self._thread_local.pos)
+         s_auth = r.headers.get('www-authenticate', '')
+ 
+-        if 'digest' in s_auth.lower() and num_401_calls < 2:
++        if 'digest' in s_auth.lower() and self._thread_local.num_401_calls < 2:
+ 
+-            self.num_401_calls += 1
++            self._thread_local.num_401_calls += 1
+             pat = re.compile(r'digest ', flags=re.IGNORECASE)
+-            self.chal = parse_dict_header(pat.sub('', s_auth, count=1))
++            self._thread_local.chal = parse_dict_header(pat.sub('', s_auth, count=1))
+ 
+             # Consume content and release the original connection
+             # to allow our new request to reuse the same one.
+@@ -192,21 +393,25 @@ class HTTPDigestAuth(AuthBase):
+ 
+             return _r
+ 
+-        self.num_401_calls = 1
++        self._thread_local.num_401_calls = 1
+         return r
+ 
+     def __call__(self, r):
++        # Initialize per-thread state, if needed
++        self.init_per_thread_state()
+         # If we have a saved nonce, skip the 401
+-        if self.last_nonce:
++        if self._thread_local.last_nonce:
+             r.headers['Authorization'] = self.build_digest_header(r.method, r.url)
+         try:
+-            self.pos = r.body.tell()
++            self._thread_local.pos = r.body.tell()
+         except AttributeError:
+             # In the case of HTTPDigestAuth being reused and the body of
+             # the previous request was a file-like object, pos has the
+             # file position of the previous body. Ensure it's set to
+             # None.
+-            self.pos = None
++            self._thread_local.pos = None
+         r.register_hook('response', self.handle_401)
+         r.register_hook('response', self.handle_redirect)
++        self._thread_local.num_401_calls = 1
++
+         return r
+diff --git a/requests/packages/__init__.py b/requests/packages/__init__.py
+index d62c4b7..971c2ad 100644
+--- a/requests/packages/__init__.py
++++ b/requests/packages/__init__.py
+@@ -1,3 +1,36 @@
++'''
++Debian and other distributions "unbundle" requests' vendored dependencies, and
++rewrite all imports to use the global versions of ``urllib3`` and ``chardet``.
++The problem with this is that not only requests itself imports those
++dependencies, but third-party code outside of the distros' control too.
++
++In reaction to these problems, the distro maintainers replaced
++``requests.packages`` with a magical "stub module" that imports the correct
++modules. The implementations were varying in quality and all had severe
++problems. For example, a symlink (or hardlink) that links the correct modules
++into place introduces problems regarding object identity, since you now have
++two modules in `sys.modules` with the same API, but different identities::
++
++    requests.packages.urllib3 is not urllib3
++
++With version ``2.5.2``, requests started to maintain its own stub, so that
++distro-specific breakage would be reduced to a minimum, even though the whole
++issue is not requests' fault in the first place. See
++https://github.com/kennethreitz/requests/pull/2375 for the corresponding pull
++request.
++'''
++
+ from __future__ import absolute_import
++import sys
++
++try:
++    from . import urllib3
++except ImportError:
++    import urllib3
++    sys.modules['%s.urllib3' % __name__] = urllib3
+ 
+-from . import urllib3
++try:
++    from . import chardet
++except ImportError:
++    import chardet
++    sys.modules['%s.chardet' % __name__] = chardet
+diff --git a/requests/packages/urllib3/__init__.py b/requests/packages/urllib3/__init__.py
+index f48ac4a..b80f19d 100644
+--- a/requests/packages/urllib3/__init__.py
++++ b/requests/packages/urllib3/__init__.py
+@@ -4,7 +4,7 @@ urllib3 - Thread-safe connection pooling and re-using.
+ 
+ __author__ = 'Andrey Petrov (andrey.petrov@shazow.net)'
+ __license__ = 'MIT'
+-__version__ = '1.10.4'
++__version__ = 'dev'
+ 
+ 
+ from .connectionpool import (
+@@ -58,6 +58,8 @@ del NullHandler
+ import warnings
+ # SecurityWarning's always go off by default.
+ warnings.simplefilter('always', exceptions.SecurityWarning, append=True)
++# SubjectAltNameWarning's should go off once per host
++warnings.simplefilter('default', exceptions.SubjectAltNameWarning)
+ # InsecurePlatformWarning's don't vary between requests, so we keep it default.
+ warnings.simplefilter('default', exceptions.InsecurePlatformWarning,
+                       append=True)
+diff --git a/requests/packages/urllib3/connection.py b/requests/packages/urllib3/connection.py
+index 2a8c359..ef76dad 100644
+--- a/requests/packages/urllib3/connection.py
++++ b/requests/packages/urllib3/connection.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/psf__requests-2678/requests/packages/urllib3/connection.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import datetime
+ import sys
+ import socket
+@@ -38,7 +231,7 @@ except NameError:  # Python 2:
+ from .exceptions import (
+     ConnectTimeoutError,
+     SystemTimeWarning,
+-    SecurityWarning,
++    SubjectAltNameWarning,
+ )
+ from .packages.ssl_match_hostname import match_hostname
+ 
+@@ -188,10 +381,14 @@ class VerifiedHTTPSConnection(HTTPSConnection):
+     ssl_version = None
+     assert_fingerprint = None
+ 
++    @inspect_code
+     def set_cert(self, key_file=None, cert_file=None,
+                  cert_reqs=None, ca_certs=None,
+                  assert_hostname=None, assert_fingerprint=None):
+ 
++        if ca_certs and cert_reqs is None:
++            cert_reqs = 'CERT_REQUIRED'
++
+         self.key_file = key_file
+         self.cert_file = cert_file
+         self.cert_reqs = cert_reqs
+@@ -199,6 +396,7 @@ class VerifiedHTTPSConnection(HTTPSConnection):
+         self.assert_hostname = assert_hostname
+         self.assert_fingerprint = assert_fingerprint
+ 
++    @inspect_code
+     def connect(self):
+         # Add certificate verification
+         conn = self._new_conn()
+@@ -245,10 +443,11 @@ class VerifiedHTTPSConnection(HTTPSConnection):
+             cert = self.sock.getpeercert()
+             if not cert.get('subjectAltName', ()):
+                 warnings.warn((
+-                    'Certificate has no `subjectAltName`, falling back to check for a `commonName` for now. '
+-                    'This feature is being removed by major browsers and deprecated by RFC 2818. '
+-                    '(See https://github.com/shazow/urllib3/issues/497 for details.)'),
+-                    SecurityWarning
++                    'Certificate for {0} has no `subjectAltName`, falling back to check for a '
++                    '`commonName` for now. This feature is being removed by major browsers and '
++                    'deprecated by RFC 2818. (See https://github.com/shazow/urllib3/issues/497 '
++                    'for details.)'.format(hostname)),
++                    SubjectAltNameWarning
+                 )
+             match_hostname(cert, self.assert_hostname or hostname)
+ 
+diff --git a/requests/packages/urllib3/connectionpool.py b/requests/packages/urllib3/connectionpool.py
+index 117269a..d46a0f7 100644
+--- a/requests/packages/urllib3/connectionpool.py
++++ b/requests/packages/urllib3/connectionpool.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/psf__requests-2678/requests/packages/urllib3/connectionpool.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import errno
+ import logging
+ import sys
+@@ -17,6 +210,7 @@ from .exceptions import (
+     ClosedPoolError,
+     ProtocolError,
+     EmptyPoolError,
++    HeaderParsingError,
+     HostChangedError,
+     LocationValueError,
+     MaxRetryError,
+@@ -38,9 +232,10 @@ from .request import RequestMethods
+ from .response import HTTPResponse
+ 
+ from .util.connection import is_connection_dropped
++from .util.response import assert_header_parsing
+ from .util.retry import Retry
+ from .util.timeout import Timeout
+-from .util.url import get_host
++from .util.url import get_host, Url
+ 
+ 
+ xrange = six.moves.xrange
+@@ -120,7 +315,7 @@ class HTTPConnectionPool(ConnectionPool, RequestMethods):
+ 
+     :param maxsize:
+         Number of connections to save that can be reused. More than 1 is useful
+-        in multithreaded situations. If ``block`` is set to false, more
++        in multithreaded situations. If ``block`` is set to False, more
+         connections will be created but they will not be saved once they've
+         been used.
+ 
+@@ -381,8 +576,19 @@ class HTTPConnectionPool(ConnectionPool, RequestMethods):
+         log.debug("\"%s %s %s\" %s %s" % (method, url, http_version,
+                                           httplib_response.status,
+                                           httplib_response.length))
++
++        try:
++            assert_header_parsing(httplib_response.msg)
++        except HeaderParsingError as hpe:  # Platform-specific: Python 3
++            log.warning(
++                'Failed to parse headers (url=%s): %s',
++                self._absolute_url(url), hpe, exc_info=True)
++
+         return httplib_response
+ 
++    def _absolute_url(self, path):
++        return Url(scheme=self.scheme, host=self.host, port=self.port, path=path).url
++
+     def close(self):
+         """
+         Close all pooled connections and disable the pool.
+@@ -409,7 +615,7 @@ class HTTPConnectionPool(ConnectionPool, RequestMethods):
+ 
+         # TODO: Add optional support for socket.gethostbyname checking.
+         scheme, host, port = get_host(url)
+-
++ 
+         # Use explicit default port for comparison when none is given
+         if self.port and not port:
+             port = port_by_scheme.get(scheme)
+@@ -418,6 +624,7 @@ class HTTPConnectionPool(ConnectionPool, RequestMethods):
+ 
+         return (scheme, host, port) == (self.scheme, self.host, self.port)
+ 
++    @inspect_code
+     def urlopen(self, method, url, body=None, headers=None, retries=None,
+                 redirect=True, assert_same_host=True, timeout=_Default,
+                 pool_timeout=None, release_conn=None, **response_kw):
+@@ -568,25 +775,22 @@ class HTTPConnectionPool(ConnectionPool, RequestMethods):
+             # Close the connection. If a connection is reused on which there
+             # was a Certificate error, the next request will certainly raise
+             # another Certificate error.
+-            if conn:
+-                conn.close()
+-                conn = None
++            conn = conn and conn.close()
++            release_conn = True
+             raise SSLError(e)
+ 
+         except SSLError:
+             # Treat SSLError separately from BaseSSLError to preserve
+             # traceback.
+-            if conn:
+-                conn.close()
+-                conn = None
++            conn = conn and conn.close()
++            release_conn = True
+             raise
+ 
+         except (TimeoutError, HTTPException, SocketError, ConnectionError) as e:
+-            if conn:
+-                # Discard the connection for these exceptions. It will be
+-                # be replaced during the next _get_conn() call.
+-                conn.close()
+-                conn = None
++            # Discard the connection for these exceptions. It will be
++            # be replaced during the next _get_conn() call.
++            conn = conn and conn.close()
++            release_conn = True
+ 
+             if isinstance(e, SocketError) and self.proxy:
+                 e = ProxyError('Cannot connect to proxy.', e)
+@@ -626,6 +830,9 @@ class HTTPConnectionPool(ConnectionPool, RequestMethods):
+                 retries = retries.increment(method, url, response=response, _pool=self)
+             except MaxRetryError:
+                 if retries.raise_on_redirect:
++                    # Release the connection for this response, since we're not
++                    # returning it to be released manually.
++                    response.release_conn()
+                     raise
+                 return response
+ 
+@@ -671,6 +878,7 @@ class HTTPSConnectionPool(HTTPConnectionPool):
+     scheme = 'https'
+     ConnectionCls = HTTPSConnection
+ 
++    @inspect_code
+     def __init__(self, host, port=None,
+                  strict=False, timeout=Timeout.DEFAULT_TIMEOUT, maxsize=1,
+                  block=False, headers=None, retries=None,
+@@ -683,6 +891,10 @@ class HTTPSConnectionPool(HTTPConnectionPool):
+         HTTPConnectionPool.__init__(self, host, port, strict, timeout, maxsize,
+                                     block, headers, retries, _proxy, _proxy_headers,
+                                     **conn_kw)
++
++        if ca_certs and cert_reqs is None:
++            cert_reqs = 'CERT_REQUIRED'
++
+         self.key_file = key_file
+         self.cert_file = cert_file
+         self.cert_reqs = cert_reqs
+diff --git a/requests/packages/urllib3/contrib/pyopenssl.py b/requests/packages/urllib3/contrib/pyopenssl.py
+index b2c34a8..c9fd53e 100644
+--- a/requests/packages/urllib3/contrib/pyopenssl.py
++++ b/requests/packages/urllib3/contrib/pyopenssl.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/psf__requests-2678/requests/packages/urllib3/contrib/pyopenssl.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ '''SSL with SNI_-support for Python 2. Follow these instructions if you would
+ like to verify SSL certificates in Python 2. Note, the default libraries do
+ *not* do certificate checking; you need to do additional work to validate
+@@ -85,6 +278,14 @@ _openssl_verify = {
+ 
+ DEFAULT_SSL_CIPHER_LIST = util.ssl_.DEFAULT_CIPHERS
+ 
++# OpenSSL will only write 16K at a time
++SSL_WRITE_BLOCKSIZE = 16384
++
++try:
++    _ = memoryview
++    has_memoryview = True
++except NameError:
++    has_memoryview = False
+ 
+ orig_util_HAS_SNI = util.HAS_SNI
+ orig_connection_ssl_wrap_socket = connection.ssl_wrap_socket
+@@ -204,13 +405,21 @@ class WrappedSocket(object):
+                 continue
+ 
+     def sendall(self, data):
+-        while len(data):
+-            sent = self._send_until_done(data)
+-            data = data[sent:]
++        if has_memoryview and not isinstance(data, memoryview):
++            data = memoryview(data)
++
++        total_sent = 0
++        while total_sent < len(data):
++            sent = self._send_until_done(data[total_sent:total_sent+SSL_WRITE_BLOCKSIZE])
++            total_sent += sent
++
++    def shutdown(self):
++        # FIXME rethrow compatible exceptions should we ever use this
++        self.connection.shutdown()
+ 
+     def close(self):
+         if self._makefile_refs < 1:
+-            return self.connection.shutdown()
++            return self.connection.close()
+         else:
+             self._makefile_refs -= 1
+ 
+@@ -249,6 +458,7 @@ def _verify_callback(cnx, x509, err_no, err_depth, return_code):
+     return err_no == 0
+ 
+ 
++@inspect_code
+ def ssl_wrap_socket(sock, keyfile=None, certfile=None, cert_reqs=None,
+                     ca_certs=None, server_hostname=None,
+                     ssl_version=None):
+@@ -287,7 +497,7 @@ def ssl_wrap_socket(sock, keyfile=None, certfile=None, cert_reqs=None,
+                 raise timeout('select timed out')
+             continue
+         except OpenSSL.SSL.Error as e:
+-            raise ssl.SSLError('bad handshake', e)
++            raise ssl.SSLError('bad handshake: %r' % e)
+         break
+ 
+     return WrappedSocket(cnx, sock)
+diff --git a/requests/packages/urllib3/exceptions.py b/requests/packages/urllib3/exceptions.py
+index 31bda1c..36ce0d1 100644
+--- a/requests/packages/urllib3/exceptions.py
++++ b/requests/packages/urllib3/exceptions.py
+@@ -149,6 +149,11 @@ class SecurityWarning(HTTPWarning):
+     pass
+ 
+ 
++class SubjectAltNameWarning(SecurityWarning):
++    "Warned when connecting to a host with a certificate missing a SAN."
++    pass
++
++
+ class InsecureRequestWarning(SecurityWarning):
+     "Warned when making an unverified HTTPS request."
+     pass
+@@ -167,3 +172,19 @@ class InsecurePlatformWarning(SecurityWarning):
+ class ResponseNotChunked(ProtocolError, ValueError):
+     "Response needs to be chunked in order to read it as chunks."
+     pass
++
++
++class ProxySchemeUnknown(AssertionError, ValueError):
++    "ProxyManager does not support the supplied scheme"
++    # TODO(t-8ch): Stop inheriting from AssertionError in v2.0.
++
++    def __init__(self, scheme):
++        message = "Not supported proxy scheme %s" % scheme
++        super(ProxySchemeUnknown, self).__init__(message)
++
++
++class HeaderParsingError(HTTPError):
++    "Raised by assert_header_parsing, but we convert it to a log.warning statement."
++    def __init__(self, defects, unparsed_data):
++        message = '%s, unparsed data: %r' % (defects or 'Unknown', unparsed_data)
++        super(HeaderParsingError, self).__init__(message)
+diff --git a/requests/packages/urllib3/poolmanager.py b/requests/packages/urllib3/poolmanager.py
+index b8d1e74..e0d6dce 100644
+--- a/requests/packages/urllib3/poolmanager.py
++++ b/requests/packages/urllib3/poolmanager.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/psf__requests-2678/requests/packages/urllib3/poolmanager.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import logging
+ 
+ try:  # Python 3
+@@ -8,7 +201,7 @@ except ImportError:
+ from ._collections import RecentlyUsedContainer
+ from .connectionpool import HTTPConnectionPool, HTTPSConnectionPool
+ from .connectionpool import port_by_scheme
+-from .exceptions import LocationValueError, MaxRetryError
++from .exceptions import LocationValueError, MaxRetryError, ProxySchemeUnknown
+ from .request import RequestMethods
+ from .util.url import parse_url
+ from .util.retry import Retry
+@@ -216,6 +409,7 @@ class ProxyManager(PoolManager):
+ 
+     """
+ 
++    @inspect_code
+     def __init__(self, proxy_url, num_pools=10, headers=None,
+                  proxy_headers=None, **connection_pool_kw):
+ 
+@@ -227,8 +421,8 @@ class ProxyManager(PoolManager):
+             port = port_by_scheme.get(proxy.scheme, 80)
+             proxy = proxy._replace(port=port)
+ 
+-        assert proxy.scheme in ("http", "https"), \
+-            'Not supported proxy scheme %s' % proxy.scheme
++        if proxy.scheme not in ("http", "https"):
++            raise ProxySchemeUnknown(proxy.scheme)
+ 
+         self.proxy = proxy
+         self.proxy_headers = proxy_headers or {}
+diff --git a/requests/packages/urllib3/request.py b/requests/packages/urllib3/request.py
+index b08d6c9..a1a12bc 100644
+--- a/requests/packages/urllib3/request.py
++++ b/requests/packages/urllib3/request.py
+@@ -71,14 +71,22 @@ class RequestMethods(object):
+                                             headers=headers,
+                                             **urlopen_kw)
+ 
+-    def request_encode_url(self, method, url, fields=None, **urlopen_kw):
++    def request_encode_url(self, method, url, fields=None, headers=None,
++                           **urlopen_kw):
+         """
+         Make a request using :meth:`urlopen` with the ``fields`` encoded in
+         the url. This is useful for request methods like GET, HEAD, DELETE, etc.
+         """
++        if headers is None:
++            headers = self.headers
++
++        extra_kw = {'headers': headers}
++        extra_kw.update(urlopen_kw)
++
+         if fields:
+             url += '?' + urlencode(fields)
+-        return self.urlopen(method, url, **urlopen_kw)
++
++        return self.urlopen(method, url, **extra_kw)
+ 
+     def request_encode_body(self, method, url, fields=None, headers=None,
+                             encode_multipart=True, multipart_boundary=None,
+diff --git a/requests/packages/urllib3/response.py b/requests/packages/urllib3/response.py
+index 24140c4..0a9fe65 100644
+--- a/requests/packages/urllib3/response.py
++++ b/requests/packages/urllib3/response.py
+@@ -1,7 +1,201 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/psf__requests-2678/requests/packages/urllib3/response.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ try:
+     import http.client as httplib
+ except ImportError:
+     import httplib
++from contextlib import contextmanager
+ import zlib
+ import io
+ from socket import timeout as SocketTimeout
+@@ -12,7 +206,7 @@ from .exceptions import (
+ )
+ from .packages.six import string_types as basestring, binary_type, PY3
+ from .connection import HTTPException, BaseSSLError
+-from .util.response import is_fp_closed
++from .util.response import is_fp_closed, is_response_to_head
+ 
+ 
+ class DeflateDecoder(object):
+@@ -25,6 +219,7 @@ class DeflateDecoder(object):
+     def __getattr__(self, name):
+         return getattr(self._obj, name)
+ 
++    @inspect_code
+     def decompress(self, data):
+         if not data:
+             return data
+@@ -202,6 +397,47 @@ class HTTPResponse(io.IOBase):
+ 
+         return data
+ 
++    @contextmanager
++    def _error_catcher(self):
++        """
++        Catch low-level python exceptions, instead re-raising urllib3
++        variants, so that low-level exceptions are not leaked in the
++        high-level api.
++
++        On exit, release the connection back to the pool.
++        """
++        try:
++            try:
++                yield
++
++            except SocketTimeout:
++                # FIXME: Ideally we'd like to include the url in the ReadTimeoutError but
++                # there is yet no clean way to get at it from this context.
++                raise ReadTimeoutError(self._pool, None, 'Read timed out.')
++
++            except BaseSSLError as e:
++                # FIXME: Is there a better way to differentiate between SSLErrors?
++                if 'read operation timed out' not in str(e):  # Defensive:
++                    # This shouldn't happen but just in case we're missing an edge
++                    # case, let's avoid swallowing SSL errors.
++                    raise
++
++                raise ReadTimeoutError(self._pool, None, 'Read timed out.')
++
++            except HTTPException as e:
++                # This includes IncompleteRead.
++                raise ProtocolError('Connection broken: %r' % e, e)
++        except Exception:
++            # The response may not be closed but we're not going to use it anymore
++            # so close it now to ensure that the connection is released back to the pool.
++            if self._original_response and not self._original_response.isclosed():
++                self._original_response.close()
++
++            raise
++        finally:
++            if self._original_response and self._original_response.isclosed():
++                self.release_conn()
++
+     def read(self, amt=None, decode_content=None, cache_content=False):
+         """
+         Similar to :meth:`httplib.HTTPResponse.read`, but with two additional
+@@ -231,45 +467,28 @@ class HTTPResponse(io.IOBase):
+             return
+ 
+         flush_decoder = False
+-
+-        try:
+-            try:
+-                if amt is None:
+-                    # cStringIO doesn't like amt=None
+-                    data = self._fp.read()
++        data = None
++
++        with self._error_catcher():
++            if amt is None:
++                # cStringIO doesn't like amt=None
++                data = self._fp.read()
++                flush_decoder = True
++            else:
++                cache_content = False
++                data = self._fp.read(amt)
++                if amt != 0 and not data:  # Platform-specific: Buggy versions of Python.
++                    # Close the connection when no data is returned
++                    #
++                    # This is redundant to what httplib/http.client _should_
++                    # already do.  However, versions of python released before
++                    # December 15, 2012 (http://bugs.python.org/issue16298) do
++                    # not properly close the connection in all cases. There is
++                    # no harm in redundantly calling close.
++                    self._fp.close()
+                     flush_decoder = True
+-                else:
+-                    cache_content = False
+-                    data = self._fp.read(amt)
+-                    if amt != 0 and not data:  # Platform-specific: Buggy versions of Python.
+-                        # Close the connection when no data is returned
+-                        #
+-                        # This is redundant to what httplib/http.client _should_
+-                        # already do.  However, versions of python released before
+-                        # December 15, 2012 (http://bugs.python.org/issue16298) do
+-                        # not properly close the connection in all cases. There is
+-                        # no harm in redundantly calling close.
+-                        self._fp.close()
+-                        flush_decoder = True
+-
+-            except SocketTimeout:
+-                # FIXME: Ideally we'd like to include the url in the ReadTimeoutError but
+-                # there is yet no clean way to get at it from this context.
+-                raise ReadTimeoutError(self._pool, None, 'Read timed out.')
+-
+-            except BaseSSLError as e:
+-                # FIXME: Is there a better way to differentiate between SSLErrors?
+-                if 'read operation timed out' not in str(e):  # Defensive:
+-                    # This shouldn't happen but just in case we're missing an edge
+-                    # case, let's avoid swallowing SSL errors.
+-                    raise
+-
+-                raise ReadTimeoutError(self._pool, None, 'Read timed out.')
+-
+-            except HTTPException as e:
+-                # This includes IncompleteRead.
+-                raise ProtocolError('Connection broken: %r' % e, e)
+ 
++        if data:
+             self._fp_bytes_read += len(data)
+ 
+             data = self._decode(data, decode_content, flush_decoder)
+@@ -277,11 +496,8 @@ class HTTPResponse(io.IOBase):
+             if cache_content:
+                 self._body = data
+ 
+-            return data
++        return data
+ 
+-        finally:
+-            if self._original_response and self._original_response.isclosed():
+-                self.release_conn()
+ 
+     def stream(self, amt=2**16, decode_content=None):
+         """
+@@ -319,6 +535,7 @@ class HTTPResponse(io.IOBase):
+         with ``original_response=r``.
+         """
+         headers = r.msg
++
+         if not isinstance(headers, HTTPHeaderDict):
+             if PY3: # Python 3
+                 headers = HTTPHeaderDict(headers.items())
+@@ -437,30 +654,29 @@ class HTTPResponse(io.IOBase):
+             raise ResponseNotChunked("Response is not chunked. "
+                 "Header 'transfer-encoding: chunked' is missing.")
+ 
+-        if self._original_response and self._original_response._method.upper() == 'HEAD':
+-            # Don't bother reading the body of a HEAD request.
+-            # FIXME: Can we do this somehow without accessing private httplib _method?
++        # Don't bother reading the body of a HEAD request.
++        if self._original_response and is_response_to_head(self._original_response):
+             self._original_response.close()
+             return
+ 
+-        while True:
+-            self._update_chunk_length()
+-            if self.chunk_left == 0:
+-                break
+-            chunk = self._handle_chunk(amt)
+-            yield self._decode(chunk, decode_content=decode_content,
+-                               flush_decoder=True)
+-
+-        # Chunk content ends with \r\n: discard it.
+-        while True:
+-            line = self._fp.fp.readline()
+-            if not line:
+-                # Some sites may not end with '\r\n'.
+-                break
+-            if line == b'\r\n':
+-                break
+-
+-        # We read everything; close the "file".
+-        if self._original_response:
+-            self._original_response.close()
+-        self.release_conn()
++        with self._error_catcher():
++            while True:
++                self._update_chunk_length()
++                if self.chunk_left == 0:
++                    break
++                chunk = self._handle_chunk(amt)
++                yield self._decode(chunk, decode_content=decode_content,
++                                   flush_decoder=True)
++
++            # Chunk content ends with \r\n: discard it.
++            while True:
++                line = self._fp.fp.readline()
++                if not line:
++                    # Some sites may not end with '\r\n'.
++                    break
++                if line == b'\r\n':
++                    break
++
++            # We read everything; close the "file".
++            if self._original_response:
++                self._original_response.close()
+diff --git a/requests/packages/urllib3/util/connection.py b/requests/packages/urllib3/util/connection.py
+index 859aec6..dfc58b4 100644
+--- a/requests/packages/urllib3/util/connection.py
++++ b/requests/packages/urllib3/util/connection.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/psf__requests-2678/requests/packages/urllib3/util/connection.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import socket
+ try:
+     from select import poll, POLLIN
+@@ -45,6 +238,7 @@ def is_connection_dropped(conn):  # Platform-specific
+ 
+ # This function is copied from socket.py in the Python 2.7 standard
+ # library test suite. Added to its signature is only `socket_options`.
++@inspect_code
+ def create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+                       source_address=None, socket_options=None):
+     """Connect to *address* and return the socket object.
+@@ -60,6 +254,8 @@ def create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+     """
+ 
+     host, port = address
++    if host.startswith('['):
++        host = host.strip('[]')
+     err = None
+     for res in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM):
+         af, socktype, proto, canonname, sa = res
+diff --git a/requests/packages/urllib3/util/response.py b/requests/packages/urllib3/util/response.py
+index 45fff55..767ee15 100644
+--- a/requests/packages/urllib3/util/response.py
++++ b/requests/packages/urllib3/util/response.py
+@@ -1,3 +1,11 @@
++try:
++    import http.client as httplib
++except ImportError:
++    import httplib
++
++from ..exceptions import HeaderParsingError
++
++
+ def is_fp_closed(obj):
+     """
+     Checks whether a given file-like object is closed.
+@@ -20,3 +28,49 @@ def is_fp_closed(obj):
+         pass
+ 
+     raise ValueError("Unable to determine whether fp is closed.")
++
++
++def assert_header_parsing(headers):
++    """
++    Asserts whether all headers have been successfully parsed.
++    Extracts encountered errors from the result of parsing headers.
++
++    Only works on Python 3.
++
++    :param headers: Headers to verify.
++    :type headers: `httplib.HTTPMessage`.
++
++    :raises urllib3.exceptions.HeaderParsingError:
++        If parsing errors are found.
++    """
++
++    # This will fail silently if we pass in the wrong kind of parameter.
++    # To make debugging easier add an explicit check.
++    if not isinstance(headers, httplib.HTTPMessage):
++        raise TypeError('expected httplib.Message, got {}.'.format(
++            type(headers)))
++
++    defects = getattr(headers, 'defects', None)
++    get_payload = getattr(headers, 'get_payload', None)
++
++    unparsed_data = None
++    if get_payload:  # Platform-specific: Python 3.
++        unparsed_data = get_payload()
++
++    if defects or unparsed_data:
++        raise HeaderParsingError(defects=defects, unparsed_data=unparsed_data)
++
++
++def is_response_to_head(response):
++    """
++    Checks, wether a the request of a response has been a HEAD-request.
++    Handles the quirks of AppEngine.
++
++    :param conn:
++    :type conn: :class:`httplib.HTTPResponse`
++    """
++    # FIXME: Can we do this somehow without accessing private httplib _method?
++    method = response._method
++    if isinstance(method, int):  # Platform-specific: Appengine
++        return method == 3
++    return method.upper() == 'HEAD'
+diff --git a/requests/packages/urllib3/util/retry.py b/requests/packages/urllib3/util/retry.py
+index 7e0959d..1fb1f23 100644
+--- a/requests/packages/urllib3/util/retry.py
++++ b/requests/packages/urllib3/util/retry.py
+@@ -94,7 +94,7 @@ class Retry(object):
+ 
+         seconds. If the backoff_factor is 0.1, then :func:`.sleep` will sleep
+         for [0.1s, 0.2s, 0.4s, ...] between retries. It will never be longer
+-        than :attr:`Retry.MAX_BACKOFF`.
++        than :attr:`Retry.BACKOFF_MAX`.
+ 
+         By default, backoff is disabled (set to 0).
+ 
+diff --git a/requests/packages/urllib3/util/ssl_.py b/requests/packages/urllib3/util/ssl_.py
+index b846d42..311378b 100644
+--- a/requests/packages/urllib3/util/ssl_.py
++++ b/requests/packages/urllib3/util/ssl_.py
+@@ -8,6 +8,13 @@ SSLContext = None
+ HAS_SNI = False
+ create_default_context = None
+ 
++# Maps the length of a digest to a possible hash function producing this digest
++HASHFUNC_MAP = {
++    32: md5,
++    40: sha1,
++    64: sha256,
++}
++
+ import errno
+ import warnings
+ 
+@@ -112,31 +119,21 @@ def assert_fingerprint(cert, fingerprint):
+         Fingerprint as string of hexdigits, can be interspersed by colons.
+     """
+ 
+-    # Maps the length of a digest to a possible hash function producing
+-    # this digest.
+-    hashfunc_map = {
+-        16: md5,
+-        20: sha1,
+-        32: sha256,
+-    }
+-
+     fingerprint = fingerprint.replace(':', '').lower()
+-    digest_length, odd = divmod(len(fingerprint), 2)
+-
+-    if odd or digest_length not in hashfunc_map:
+-        raise SSLError('Fingerprint is of invalid length.')
++    digest_length = len(fingerprint)
++    hashfunc = HASHFUNC_MAP.get(digest_length)
++    if not hashfunc:
++        raise SSLError(
++            'Fingerprint of invalid length: {0}'.format(fingerprint))
+ 
+     # We need encode() here for py32; works on py2 and p33.
+     fingerprint_bytes = unhexlify(fingerprint.encode())
+ 
+-    hashfunc = hashfunc_map[digest_length]
+-
+     cert_digest = hashfunc(cert).digest()
+ 
+-    if not cert_digest == fingerprint_bytes:
++    if cert_digest != fingerprint_bytes:
+         raise SSLError('Fingerprints did not match. Expected "{0}", got "{1}".'
+-                       .format(hexlify(fingerprint_bytes),
+-                               hexlify(cert_digest)))
++                       .format(fingerprint, hexlify(cert_digest)))
+ 
+ 
+ def resolve_cert_reqs(candidate):
+diff --git a/test_requests.py b/test_requests.py
+index 7e5e4d8..7f37276 100755
+--- a/test_requests.py
++++ b/test_requests.py
+@@ -33,6 +33,11 @@ try:
+ except ImportError:
+     import io as StringIO
+ 
++try:
++    from multiprocessing.pool import ThreadPool
++except ImportError:
++    ThreadPool = None
++
+ if is_py3:
+     def u(s):
+         return s
+@@ -419,6 +424,21 @@ class RequestsTestCase(unittest.TestCase):
+         r = requests.get(url, auth=auth)
+         assert '"auth"' in r.request.headers['Authorization']
+ 
++    def test_DIGESTAUTH_THREADED(self):
++
++        auth = HTTPDigestAuth('user', 'pass')
++        url = httpbin('digest-auth', 'auth', 'user', 'pass')
++        session = requests.Session()
++        session.auth=auth
++
++        def do_request(i):
++            r = session.get(url)
++            assert '"auth"' in r.request.headers['Authorization']
++            return 1
++        if ThreadPool is not None:
++            pool = ThreadPool(processes=50)
++            pool.map(do_request, range(100))
++
+     def test_POSTBIN_GET_POST_FILES(self):
+ 
+         url = httpbin('post')
+@@ -1655,6 +1675,16 @@ def test_urllib3_retries():
+     with pytest.raises(RetryError):
+         s.get(httpbin('status/500'))
+ 
++
++def test_urllib3_pool_connection_closed():
++    s = requests.Session()
++    s.mount('http://', HTTPAdapter(pool_connections=0, pool_maxsize=0))
++
++    try:
++        s.get(httpbin('status/200'))
++    except ConnectionError as e:
++        assert u"HTTPConnectionPool(host='httpbin.org', port=80): Pool is closed." in str(e)
++
+ def test_vendor_aliases():
+     from requests.packages import urllib3
+     from requests.packages import chardet

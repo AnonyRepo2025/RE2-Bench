@@ -1,0 +1,210 @@
+1. The function `doit` is called in the `eval` method of the `Mod` class.
+2. The `eval` method is a class method that is called when the `Mod` class is evaluated.
+3. The `eval` method takes two arguments: `p` and `q`.
+4. The `doit` function is called with `p` and `q` as arguments.
+5. The `doit` function returns `nan` when `p` and `q` are `nan`.
+6. To get `nan` as the output, we need `p` and `q` to be `nan`.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "nan",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "nan"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/PYTHON]
+[PYTHON]
+from sympy.core.numbers import nan
+from .function import Function
+from sympy.core.add import Add
+from sympy.core.mul import Mul
+from sympy.core.singleton import S
+from sympy.core.exprtools import gcd_terms
+from sympy.polys.polytools import gcd
+from sympy.core.logic import fuzzy_and, fuzzy_not
+
+class Mod(Function):
+
+    @classmethod
+    def eval(cls, p, q):
+        from sympy.core.add import Add
+        from sympy.core.mul import Mul
+        from sympy.core.singleton import S
+        from sympy.core.exprtools import gcd_terms
+        from sympy.polys.polytools import gcd
+
+        def doit(p, q):
+            if p.is_infinite or q.is_infinite or p is nan or (q is nan):
+                return nan
+            if p == q or p == -q or (p.is_Pow and p.exp.is_integer and (p.base == q) and q.is_integer and p.exp.is_positive) or (p.is_integer and q == 1):
+                return S.Zero
+            if q.is_Number:
+                if p.is_Number:
+                    return p % q
+                if q == 2:
+                    if p.is_even:
+                        return S.Zero
+                    elif p.is_odd:
+                        return S.One
+            r = p / q
+            try:
+                d = int(r)
+            except TypeError:
+                pass
+            else:
+                if type(d) is int:
+                    rv = p - d * q
+                    if (rv * q < 0) == True:
+                        rv += q
+                    return rv
+            d = p - q
+            if d.is_negative:
+                if q.is_negative:
+                    return d
+                elif q.is_positive:
+                    return p
+        rv = doit(p, q)
+        if rv is not None:
+            return rv
+        if p.func is cls:
+            qinner = p.args[1]
+            if qinner == q:
+                return p
+        G = gcd(p, q)
+        if G != 1:
+            p, q = [gcd_terms(i / G, clear=False, fraction=False) for i in (p, q)]
+        pwas, qwas = (p, q)
+        if p.is_Add:
+            args = []
+            for i in p.args:
+                a = cls(i, q)
+                if a.count(cls) > i.count(cls):
+                    args.append(i)
+                else:
+                    args.append(a)
+            if args != list(p.args):
+                p = Add(*args)
+        else:
+            cp, p = p.as_coeff_Mul()
+            cq, q = q.as_coeff_Mul()
+            ok = False
+            if not cp.is_Rational or not cq.is_Rational:
+                r = cp % cq
+                if r == 0:
+                    G *= cq
+                    p *= int(cp / cq)
+                    ok = True
+            if not ok:
+                p = cp * p
+                q = cq * q
+        if p.could_extract_minus_sign() and q.could_extract_minus_sign():
+            G, p, q = [-i for i in (G, p, q)]
+        rv = doit(p, q)
+        if rv is not None:
+            return rv * G
+        if G.is_Float and G == 1:
+            p *= G
+            return cls(p, q, evaluate=False)
+        elif G.is_Mul and G.args[0].is_Float and (G.args[0] == 1):
+            p = G.args[0] * p
+            G = Mul._from_args(G.args[1:])
+        return G * cls(p, q, evaluate=(p, q) != (pwas, qwas))
+
+    def _eval_is_integer(self):
+        from sympy.core.logic import fuzzy_and, fuzzy_not
+        p, q = self.args
+        if fuzzy_and([p.is_integer, q.is_integer, fuzzy_not(q.is_zero)]):
+            return True
+
+    def _eval_is_nonnegative(self):
+        if self.args[1].is_positive:
+            return True
+
+    def _eval_is_nonpositive(self):
+        if self.args[1].is_negative:
+            return True
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.core.assumptions.getit
+
+def getit(self):
+    try:
+        return self._assumptions[fact]
+    except KeyError:
+        if self._assumptions is self.default_assumptions:
+            self._assumptions = self.default_assumptions.copy()
+        return _ask(fact, self)
+
+.sympy.core.assumptions.StdFactKB.copy
+
+def copy(self):
+    return self.__class__(self)
+
+.sympy.core.assumptions.StdFactKB.__init__
+
+def __init__(self, facts=None):
+    if not facts:
+        self._generator = {}
+    elif not isinstance(facts, FactKB):
+        self._generator = facts.copy()
+    else:
+        self._generator = facts.generator
+    if facts:
+        self.deduce_all_facts(facts)
+
+.sympy.core.assumptions.StdFactKB.generator
+
+def generator(self):
+    return self._generator.copy()
+
+.sympy.core.facts.FactKB.deduce_all_facts
+
+def deduce_all_facts(self, facts):
+    full_implications = self.rules.full_implications
+    beta_triggers = self.rules.beta_triggers
+    beta_rules = self.rules.beta_rules
+    if isinstance(facts, dict):
+        facts = facts.items()
+    while facts:
+        beta_maytrigger = set()
+        for k, v in facts:
+            if not self._tell(k, v) or v is None:
+                continue
+            for key, value in full_implications[k, v]:
+                self._tell(key, value)
+            beta_maytrigger.update(beta_triggers[k, v])
+        facts = []
+        for bidx in beta_maytrigger:
+            bcond, bimpl = beta_rules[bidx]
+            if all((self.get(k) is v for k, v in bcond)):
+                facts.append(bimpl)
+
+.sympy.core.facts.FactKB._tell
+
+def _tell(self, k, v):
+    if k in self and self[k] is not None:
+        if self[k] == v:
+            return False
+        else:
+            raise InconsistentAssumptions(self, k, v)
+    else:
+        self[k] = v
+        return True
+
+.sympy.core.assumptions._ask
+
+def _ask(fact, obj):
+    assumptions = obj._assumptions

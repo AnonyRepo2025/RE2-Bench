@@ -1,0 +1,315 @@
+diff --git a/django/db/backends/ddl_references.py b/django/db/backends/ddl_references.py
+index c06386a..3a5b9e4 100644
+--- a/django/db/backends/ddl_references.py
++++ b/django/db/backends/ddl_references.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14997/django/db/backends/ddl_references.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Helpers to manipulate deferred DDL statements that might need to be adjusted or
+ discarded within when executing a migration.
+@@ -209,14 +402,11 @@ class Expressions(TableColumns):
+         columns = [col.target.column for col in self.compiler.query._gen_cols([self.expressions])]
+         super().__init__(table, columns)
+ 
++    @inspect_code
+     def rename_table_references(self, old_table, new_table):
+         if self.table != old_table:
+             return
+-        expressions = deepcopy(self.expressions)
+-        self.columns = []
+-        for col in self.compiler.query._gen_cols([expressions]):
+-            col.alias = new_table
+-        self.expressions = expressions
++        self.expressions = self.expressions.relabeled_clone({old_table: new_table})
+         super().rename_table_references(old_table, new_table)
+ 
+     def rename_column_references(self, table, old_column, new_column):
+diff --git a/tests/backends/test_ddl_references.py b/tests/backends/test_ddl_references.py
+index bd4036e..ab3ba6c 100644
+--- a/tests/backends/test_ddl_references.py
++++ b/tests/backends/test_ddl_references.py
+@@ -5,6 +5,7 @@ from django.db.backends.ddl_references import (
+ from django.db.models import ExpressionList, F
+ from django.db.models.functions import Upper
+ from django.db.models.indexes import IndexExpression
++from django.db.models.sql import Query
+ from django.test import SimpleTestCase, TransactionTestCase
+ 
+ from .models import Person
+@@ -229,6 +230,27 @@ class ExpressionsTests(TransactionTestCase):
+             str(self.expressions),
+         )
+ 
++    def test_rename_table_references_without_alias(self):
++        compiler = Query(Person, alias_cols=False).get_compiler(connection=connection)
++        table = Person._meta.db_table
++        expressions = Expressions(
++            table=table,
++            expressions=ExpressionList(
++                IndexExpression(Upper('last_name')),
++                IndexExpression(F('first_name')),
++            ).resolve_expression(compiler.query),
++            compiler=compiler,
++            quote_value=self.editor.quote_value,
++        )
++        expressions.rename_table_references(table, 'other')
++        self.assertIs(expressions.references_table(table), False)
++        self.assertIs(expressions.references_table('other'), True)
++        expected_str = '(UPPER(%s)), %s' % (
++            self.editor.quote_name('last_name'),
++            self.editor.quote_name('first_name'),
++        )
++        self.assertEqual(str(expressions), expected_str)
++
+     def test_rename_column_references(self):
+         table = Person._meta.db_table
+         self.expressions.rename_column_references(table, 'first_name', 'other')
+diff --git a/tests/migrations/test_operations.py b/tests/migrations/test_operations.py
+index 5ae75a4..11961a1 100644
+--- a/tests/migrations/test_operations.py
++++ b/tests/migrations/test_operations.py
+@@ -2106,6 +2106,25 @@ class OperationTests(OperationTestBase):
+         self.assertEqual(definition[1], [])
+         self.assertEqual(definition[2], {'model_name': 'Pony', 'name': index_name})
+ 
++    @skipUnlessDBFeature('supports_expression_indexes')
++    def test_alter_field_with_func_index(self):
++        app_label = 'test_alfuncin'
++        index_name = f'{app_label}_pony_idx'
++        table_name = f'{app_label}_pony'
++        project_state = self.set_up_test_model(
++            app_label,
++            indexes=[models.Index(Abs('pink'), name=index_name)],
++        )
++        operation = migrations.AlterField('Pony', 'pink', models.IntegerField(null=True))
++        new_state = project_state.clone()
++        operation.state_forwards(app_label, new_state)
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++        self.assertIndexNameExists(table_name, index_name)
++        with connection.schema_editor() as editor:
++            operation.database_backwards(app_label, editor, new_state, project_state)
++        self.assertIndexNameExists(table_name, index_name)
++
+     def test_alter_field_with_index(self):
+         """
+         Test AlterField operation with an index to ensure indexes created via
+@@ -2664,6 +2683,26 @@ class OperationTests(OperationTestBase):
+             'name': 'covering_pink_constraint_rm',
+         })
+ 
++    def test_alter_field_with_func_unique_constraint(self):
++        app_label = 'test_alfuncuc'
++        constraint_name = f'{app_label}_pony_uq'
++        table_name = f'{app_label}_pony'
++        project_state = self.set_up_test_model(
++            app_label,
++            constraints=[models.UniqueConstraint('pink', 'weight', name=constraint_name)]
++        )
++        operation = migrations.AlterField('Pony', 'pink', models.IntegerField(null=True))
++        new_state = project_state.clone()
++        operation.state_forwards(app_label, new_state)
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++        if connection.features.supports_expression_indexes:
++            self.assertIndexNameExists(table_name, constraint_name)
++        with connection.schema_editor() as editor:
++            operation.database_backwards(app_label, editor, new_state, project_state)
++        if connection.features.supports_expression_indexes:
++            self.assertIndexNameExists(table_name, constraint_name)
++
+     def test_add_func_unique_constraint(self):
+         app_label = 'test_adfuncuc'
+         constraint_name = f'{app_label}_pony_abs_uq'

@@ -1,0 +1,310 @@
+diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py
+index 454feaa..d88cda6 100644
+--- a/django/db/migrations/serializer.py
++++ b/django/db/migrations/serializer.py
+@@ -46,6 +46,11 @@ class BaseSequenceSerializer(BaseSerializer):
+         return value % (", ".join(strings)), imports
+ 
+ 
++class BaseUnorderedSequenceSerializer(BaseSequenceSerializer):
++    def __init__(self, value):
++        super().__init__(sorted(value, key=repr))
++
++
+ class BaseSimpleSerializer(BaseSerializer):
+     def serialize(self):
+         return repr(self.value), set()
+@@ -151,7 +156,7 @@ class FloatSerializer(BaseSimpleSerializer):
+         return super().serialize()
+ 
+ 
+-class FrozensetSerializer(BaseSequenceSerializer):
++class FrozensetSerializer(BaseUnorderedSequenceSerializer):
+     def _format(self):
+         return "frozenset([%s])"
+ 
+@@ -279,7 +284,7 @@ class SequenceSerializer(BaseSequenceSerializer):
+         return "[%s]"
+ 
+ 
+-class SetSerializer(BaseSequenceSerializer):
++class SetSerializer(BaseUnorderedSequenceSerializer):
+     def _format(self):
+         # Serialize as a set literal except when value is empty because {}
+         # is an empty dict.
+diff --git a/django/db/migrations/writer.py b/django/db/migrations/writer.py
+index 79b89b2..737716a 100644
+--- a/django/db/migrations/writer.py
++++ b/django/db/migrations/writer.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-17066/django/db/migrations/writer.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import os
+ import re
+ from importlib import import_module
+@@ -126,6 +319,7 @@ class MigrationWriter:
+         self.include_header = include_header
+         self.needs_manual_porting = False
+ 
++    @inspect_code
+     def as_string(self):
+         """Return a string of the file contents."""
+         items = {
+@@ -154,7 +348,9 @@ class MigrationWriter:
+                 imports.add("from django.conf import settings")
+             else:
+                 dependencies.append("        %s," % self.serialize(dependency)[0])
+-        items["dependencies"] = "\n".join(dependencies) + "\n" if dependencies else ""
++        items["dependencies"] = (
++            "\n".join(sorted(dependencies)) + "\n" if dependencies else ""
++        )
+ 
+         # Format imports nicely, swapping imports of functions from migration files
+         # for comments
+diff --git a/tests/migrations/test_writer.py b/tests/migrations/test_writer.py
+index 33b52bd..bef8f64 100644
+--- a/tests/migrations/test_writer.py
++++ b/tests/migrations/test_writer.py
+@@ -768,12 +768,17 @@ class WriterTests(SimpleTestCase):
+     def test_serialize_frozensets(self):
+         self.assertSerializedEqual(frozenset())
+         self.assertSerializedEqual(frozenset("let it go"))
++        self.assertSerializedResultEqual(
++            frozenset("cba"), ("frozenset(['a', 'b', 'c'])", set())
++        )
+ 
+     def test_serialize_set(self):
+         self.assertSerializedEqual(set())
+         self.assertSerializedResultEqual(set(), ("set()", set()))
+         self.assertSerializedEqual({"a"})
+         self.assertSerializedResultEqual({"a"}, ("{'a'}", set()))
++        self.assertSerializedEqual({"c", "b", "a"})
++        self.assertSerializedResultEqual({"c", "b", "a"}, ("{'a', 'b', 'c'}", set()))
+ 
+     def test_serialize_timedelta(self):
+         self.assertSerializedEqual(datetime.timedelta())
+@@ -891,6 +896,33 @@ class WriterTests(SimpleTestCase):
+             result["custom_migration_operations"].more_operations.TestOperation,
+         )
+ 
++    def test_sorted_dependencies(self):
++        migration = type(
++            "Migration",
++            (migrations.Migration,),
++            {
++                "operations": [
++                    migrations.AddField("mymodel", "myfield", models.IntegerField()),
++                ],
++                "dependencies": [
++                    ("testapp10", "0005_fifth"),
++                    ("testapp02", "0005_third"),
++                    ("testapp02", "0004_sixth"),
++                    ("testapp01", "0001_initial"),
++                ],
++            },
++        )
++        output = MigrationWriter(migration, include_header=False).as_string()
++        self.assertIn(
++            "    dependencies = [\n"
++            "        ('testapp01', '0001_initial'),\n"
++            "        ('testapp02', '0004_sixth'),\n"
++            "        ('testapp02', '0005_third'),\n"
++            "        ('testapp10', '0005_fifth'),\n"
++            "    ]",
++            output,
++        )
++
+     def test_sorted_imports(self):
+         """
+         #24155 - Tests ordering of imports.

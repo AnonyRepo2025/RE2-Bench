@@ -1,0 +1,553 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import numpy as np
+from abc import abstractmethod
+from ..base import ClassifierMixin
+from ..base import RegressorMixin
+from ..base import TransformerMixin
+from ..base import clone
+from ..preprocessing import LabelEncoder
+from ..utils._joblib import Parallel, delayed
+from ..utils.validation import has_fit_parameter, check_is_fitted
+from ..utils.metaestimators import _BaseComposition
+from ..utils import Bunch
+
+def _parallel_fit_estimator(estimator, X, y, sample_weight=None):
+    if sample_weight is not None:
+        try:
+            estimator.fit(X, y, sample_weight=sample_weight)
+        except TypeError as exc:
+            if "unexpected keyword argument 'sample_weight'" in str(exc):
+                raise ValueError('Underlying estimator {} does not support sample weights.'.format(estimator.__class__.__name__)) from exc
+            raise
+    else:
+        estimator.fit(X, y)
+    return estimator
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.linear_model.logistic.LogisticRegression.fit
+
+def fit(self, X, y, sample_weight=None):
+    solver = _check_solver(self.solver, self.penalty, self.dual)
+    if not isinstance(self.C, numbers.Number) or self.C < 0:
+        raise ValueError('Penalty term must be positive; got (C=%r)' % self.C)
+    if self.penalty == 'elasticnet':
+        if not isinstance(self.l1_ratio, numbers.Number) or self.l1_ratio < 0 or self.l1_ratio > 1:
+            raise ValueError('l1_ratio must be between 0 and 1; got (l1_ratio=%r)' % self.l1_ratio)
+    elif self.l1_ratio is not None:
+        warnings.warn("l1_ratio parameter is only used when penalty is 'elasticnet'. Got (penalty={})".format(self.penalty))
+    if self.penalty == 'none':
+        if self.C != 1.0:
+            warnings.warn("Setting penalty='none' will ignore the C and l1_ratio parameters")
+        C_ = np.inf
+        penalty = 'l2'
+    else:
+        C_ = self.C
+        penalty = self.penalty
+    if not isinstance(self.max_iter, numbers.Number) or self.max_iter < 0:
+        raise ValueError('Maximum number of iteration must be positive; got (max_iter=%r)' % self.max_iter)
+    if not isinstance(self.tol, numbers.Number) or self.tol < 0:
+        raise ValueError('Tolerance for stopping criteria must be positive; got (tol=%r)' % self.tol)
+    if solver in ['lbfgs', 'liblinear']:
+        _dtype = np.float64
+    else:
+        _dtype = [np.float64, np.float32]
+    X, y = check_X_y(X, y, accept_sparse='csr', dtype=_dtype, order='C', accept_large_sparse=solver != 'liblinear')
+    check_classification_targets(y)
+    self.classes_ = np.unique(y)
+    n_samples, n_features = X.shape
+    multi_class = _check_multi_class(self.multi_class, solver, len(self.classes_))
+    if solver == 'liblinear':
+        if effective_n_jobs(self.n_jobs) != 1:
+            warnings.warn("'n_jobs' > 1 does not have any effect when 'solver' is set to 'liblinear'. Got 'n_jobs' = {}.".format(effective_n_jobs(self.n_jobs)))
+        self.coef_, self.intercept_, n_iter_ = _fit_liblinear(X, y, self.C, self.fit_intercept, self.intercept_scaling, self.class_weight, self.penalty, self.dual, self.verbose, self.max_iter, self.tol, self.random_state, sample_weight=sample_weight)
+        self.n_iter_ = np.array([n_iter_])
+        return self
+    if solver in ['sag', 'saga']:
+        max_squared_sum = row_norms(X, squared=True).max()
+    else:
+        max_squared_sum = None
+    n_classes = len(self.classes_)
+    classes_ = self.classes_
+    if n_classes < 2:
+        raise ValueError('This solver needs samples of at least 2 classes in the data, but the data contains only one class: %r' % classes_[0])
+    if len(self.classes_) == 2:
+        n_classes = 1
+        classes_ = classes_[1:]
+    if self.warm_start:
+        warm_start_coef = getattr(self, 'coef_', None)
+    else:
+        warm_start_coef = None
+    if warm_start_coef is not None and self.fit_intercept:
+        warm_start_coef = np.append(warm_start_coef, self.intercept_[:, np.newaxis], axis=1)
+    self.coef_ = list()
+    self.intercept_ = np.zeros(n_classes)
+    if multi_class == 'multinomial':
+        classes_ = [None]
+        warm_start_coef = [warm_start_coef]
+    if warm_start_coef is None:
+        warm_start_coef = [None] * n_classes
+    path_func = delayed(_logistic_regression_path)
+    if solver in ['sag', 'saga']:
+        prefer = 'threads'
+    else:
+        prefer = 'processes'
+    fold_coefs_ = Parallel(n_jobs=self.n_jobs, verbose=self.verbose, **_joblib_parallel_args(prefer=prefer))((path_func(X, y, pos_class=class_, Cs=[C_], l1_ratio=self.l1_ratio, fit_intercept=self.fit_intercept, tol=self.tol, verbose=self.verbose, solver=solver, multi_class=multi_class, max_iter=self.max_iter, class_weight=self.class_weight, check_input=False, random_state=self.random_state, coef=warm_start_coef_, penalty=penalty, max_squared_sum=max_squared_sum, sample_weight=sample_weight) for class_, warm_start_coef_ in zip(classes_, warm_start_coef)))
+    fold_coefs_, _, n_iter_ = zip(*fold_coefs_)
+    self.n_iter_ = np.asarray(n_iter_, dtype=np.int32)[:, 0]
+    if multi_class == 'multinomial':
+        self.coef_ = fold_coefs_[0][0]
+    else:
+        self.coef_ = np.asarray(fold_coefs_)
+        self.coef_ = self.coef_.reshape(n_classes, n_features + int(self.fit_intercept))
+    if self.fit_intercept:
+        self.intercept_ = self.coef_[:, -1]
+        self.coef_ = self.coef_[:, :-1]
+    return self
+
+.sklearn.linear_model.logistic._check_solver
+
+def _check_solver(solver, penalty, dual):
+    if solver == 'warn':
+        solver = 'liblinear'
+        warnings.warn("Default solver will be changed to 'lbfgs' in 0.22. Specify a solver to silence this warning.", FutureWarning)
+    all_solvers = ['liblinear', 'newton-cg', 'lbfgs', 'sag', 'saga']
+    if solver not in all_solvers:
+        raise ValueError('Logistic Regression supports only solvers in %s, got %s.' % (all_solvers, solver))
+    all_penalties = ['l1', 'l2', 'elasticnet', 'none']
+    if penalty not in all_penalties:
+        raise ValueError('Logistic Regression supports only penalties in %s, got %s.' % (all_penalties, penalty))
+    if solver not in ['liblinear', 'saga'] and penalty not in ('l2', 'none'):
+        raise ValueError("Solver %s supports only 'l2' or 'none' penalties, got %s penalty." % (solver, penalty))
+    if solver != 'liblinear' and dual:
+        raise ValueError('Solver %s supports only dual=False, got dual=%s' % (solver, dual))
+    if penalty == 'elasticnet' and solver != 'saga':
+        raise ValueError("Only 'saga' solver supports elasticnet penalty, got solver={}.".format(solver))
+    if solver == 'liblinear' and penalty == 'none':
+        raise ValueError("penalty='none' is not supported for the liblinear solver")
+    return solver
+
+.sklearn.utils.validation.check_X_y
+
+def check_X_y(X, y, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, multi_output=False, ensure_min_samples=1, ensure_min_features=1, y_numeric=False, warn_on_dtype=None, estimator=None):
+    if y is None:
+        raise ValueError('y cannot be None')
+    X = check_array(X, accept_sparse=accept_sparse, accept_large_sparse=accept_large_sparse, dtype=dtype, order=order, copy=copy, force_all_finite=force_all_finite, ensure_2d=ensure_2d, allow_nd=allow_nd, ensure_min_samples=ensure_min_samples, ensure_min_features=ensure_min_features, warn_on_dtype=warn_on_dtype, estimator=estimator)
+    if multi_output:
+        y = check_array(y, 'csr', force_all_finite=True, ensure_2d=False, dtype=None)
+    else:
+        y = column_or_1d(y, warn=True)
+        _assert_all_finite(y)
+    if y_numeric and y.dtype.kind == 'O':
+        y = y.astype(np.float64)
+    check_consistent_length(X, y)
+    return (X, y)
+
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=None, estimator=None):
+    if warn_on_dtype is not None:
+        warnings.warn("'warn_on_dtype' is deprecated in version 0.21 and will be removed in 0.23. Don't set `warn_on_dtype` to remove this warning.", DeprecationWarning)
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse, dtype=dtype, copy=copy, force_all_finite=force_all_finite, accept_large_sparse=accept_large_sparse)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                array = np.asarray(array, dtype=dtype, order=order)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of bytes/strings will be converted to decimal numbers if dtype='numeric'. It is recommended that you convert the array to a float dtype before using it in scikit-learn, for example by using your_array = your_array.astype(np.float64).", FutureWarning)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, array.shape, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, array.shape, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning)
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+    if warn_on_dtype and dtypes_orig is not None and ({array.dtype} != set(dtypes_orig)):
+        msg = 'Data with input dtype %s were all converted to %s%s.' % (', '.join(map(str, sorted(set(dtypes_orig)))), array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=3)
+    return array
+
+.sklearn.utils.validation._ensure_no_complex_data
+
+def _ensure_no_complex_data(array):
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+.sklearn.utils.validation._assert_all_finite
+
+def _assert_all_finite(X, allow_nan=False):
+    from .extmath import _safe_accumulator_op
+    if _get_config()['assume_finite']:
+        return
+    X = np.asanyarray(X)
+    is_float = X.dtype.kind in 'fc'
+    if is_float and np.isfinite(_safe_accumulator_op(np.sum, X)):
+        pass
+    elif is_float:
+        msg_err = 'Input contains {} or a value too large for {!r}.'
+        if allow_nan and np.isinf(X).any() or (not allow_nan and (not np.isfinite(X).all())):
+            type_err = 'infinity' if allow_nan else 'NaN, infinity'
+            raise ValueError(msg_err.format(type_err, X.dtype))
+    elif X.dtype == np.dtype('object') and (not allow_nan):
+        if _object_dtype_isnan(X).any():
+            raise ValueError('Input contains NaN')
+
+.sklearn._config.get_config
+
+def get_config():
+    return _global_config.copy()
+
+.sklearn.utils.extmath._safe_accumulator_op
+
+def _safe_accumulator_op(op, x, *args, **kwargs):
+    if np.issubdtype(x.dtype, np.floating) and x.dtype.itemsize < 8:
+        result = op(x, *args, **kwargs, dtype=np.float64)
+    else:
+        result = op(x, *args, **kwargs)
+    return result
+
+.sklearn.utils.validation._num_samples
+
+def _num_samples(x):
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError('Expected sequence or array-like, got estimator %s' % x)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError('Expected sequence or array-like, got %s' % type(x))
+    if hasattr(x, 'shape'):
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        if isinstance(x.shape[0], numbers.Integral):
+            return x.shape[0]
+        else:
+            return len(x)
+    else:
+        return len(x)
+
+.sklearn.utils.validation.column_or_1d
+
+def column_or_1d(y, warn=False):
+    shape = np.shape(y)
+    if len(shape) == 1:
+        return np.ravel(y)
+    if len(shape) == 2 and shape[1] == 1:
+        if warn:
+            warnings.warn('A column-vector y was passed when a 1d array was expected. Please change the shape of y to (n_samples, ), for example using ravel().', DataConversionWarning, stacklevel=2)
+        return np.ravel(y)
+    raise ValueError('bad input shape {0}'.format(shape))
+
+.sklearn.utils.validation.check_consistent_length
+
+def check_consistent_length(*arrays):
+    lengths = [_num_samples(X) for X in arrays if X is not None]
+    uniques = np.unique(lengths)
+    if len(uniques) > 1:
+        raise ValueError('Found input variables with inconsistent numbers of samples: %r' % [int(l) for l in lengths])
+
+.sklearn.utils.multiclass.check_classification_targets
+
+def check_classification_targets(y):
+    y_type = type_of_target(y)
+    if y_type not in ['binary', 'multiclass', 'multiclass-multioutput', 'multilabel-indicator', 'multilabel-sequences']:
+        raise ValueError('Unknown label type: %r' % y_type)
+
+.sklearn.utils.multiclass.type_of_target
+
+def type_of_target(y):
+    valid = (isinstance(y, (Sequence, spmatrix)) or hasattr(y, '__array__')) and (not isinstance(y, str))
+    if not valid:
+        raise ValueError('Expected array-like (array or non-string sequence), got %r' % y)
+    sparseseries = y.__class__.__name__ == 'SparseSeries'
+    if sparseseries:
+        raise ValueError("y cannot be class 'SparseSeries'.")
+    if is_multilabel(y):
+        return 'multilabel-indicator'
+    try:
+        y = np.asarray(y)
+    except ValueError:
+        return 'unknown'
+    try:
+        if not hasattr(y[0], '__array__') and isinstance(y[0], Sequence) and (not isinstance(y[0], str)):
+            raise ValueError('You appear to be using a legacy multi-label data representation. Sequence of sequences are no longer supported; use a binary array or sparse matrix instead - the MultiLabelBinarizer transformer can convert to this format.')
+    except IndexError:
+        pass
+    if y.ndim > 2 or (y.dtype == object and len(y) and (not isinstance(y.flat[0], str))):
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] == 0:
+        return 'unknown'
+    if y.ndim == 2 and y.shape[1] > 1:
+        suffix = '-multioutput'
+    else:
+        suffix = ''
+    if y.dtype.kind == 'f' and np.any(y != y.astype(int)):
+        _assert_all_finite(y)
+        return 'continuous' + suffix
+    if len(np.unique(y)) > 2 or (y.ndim >= 2 and len(y[0]) > 1):
+        return 'multiclass' + suffix
+    else:
+        return 'binary'
+
+.sklearn.utils.multiclass.is_multilabel
+
+def is_multilabel(y):
+    if hasattr(y, '__array__'):
+        y = np.asarray(y)
+    if not (hasattr(y, 'shape') and y.ndim == 2 and (y.shape[1] > 1)):
+        return False
+    if issparse(y):
+        if isinstance(y, (dok_matrix, lil_matrix)):
+            y = y.tocsr()
+        return len(y.data) == 0 or (np.unique(y.data).size == 1 and (y.dtype.kind in 'biu' or _is_integral_float(np.unique(y.data))))
+    else:
+        labels = np.unique(y)
+        return len(labels) < 3 and (y.dtype.kind in 'biu' or _is_integral_float(labels))
+
+.sklearn.linear_model.logistic._check_multi_class
+
+def _check_multi_class(multi_class, solver, n_classes):
+    if multi_class == 'warn':
+        multi_class = 'ovr'
+        if n_classes > 2:
+            warnings.warn("Default multi_class will be changed to 'auto' in 0.22. Specify the multi_class option to silence this warning.", FutureWarning)
+    if multi_class == 'auto':
+        if solver == 'liblinear':
+            multi_class = 'ovr'
+        elif n_classes > 2:
+            multi_class = 'multinomial'
+        else:
+            multi_class = 'ovr'
+    if multi_class not in ('multinomial', 'ovr'):
+        raise ValueError("multi_class should be 'multinomial', 'ovr' or 'auto'. Got %s." % multi_class)
+    if multi_class == 'multinomial' and solver == 'liblinear':
+        raise ValueError('Solver %s does not support a multinomial backend.' % solver)
+    return multi_class
+
+
+[/PYTHON]
+What will be the output of `_parallel_fit_estimator`, given the following input:
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "estimator": {
+            "penalty": "l2",
+            "dual": false,
+            "tol": 0.0001,
+            "C": 1.0,
+            "fit_intercept": true,
+            "intercept_scaling": 1,
+            "class_weight": null,
+            "random_state": 123,
+            "solver": "warn",
+            "max_iter": 100,
+            "multi_class": "warn",
+            "verbose": 0,
+            "warm_start": false,
+            "n_jobs": null,
+            "l1_ratio": null
+        },
+        "X": "[[3.5 1.4]\n [3.  1.4]\n [3.2 1.3]\n [3.1 1.5]\n [3.6 1.4]\n [3.9 1.7]\n [3.4 1.4]\n [3.4 1.5]\n [2.9 1.4]\n [3.1 1.5]\n [3.7 1.5]\n [3.4 1.6]\n [3.  1.4]\n [3.  1.1]\n [4.  1.2]\n [4.4 1.5]\n [3.9 1.3]\n [3.5 1.4]\n [3.8 1.7]\n [3.8 1.5]\n [3.4 1.7]\n [3.7 1.5]\n [3.6 1. ]\n [3.3 1.7]\n [3.4 1.9]\n [3.  1.6]\n [3.4 1.6]\n [3.5 1.5]\n [3.4 1.4]\n [3.2 1.6]\n [3.1 1.6]\n [3.4 1.5]\n [4.1 1.5]\n [4.2 1.4]\n [3.1 1.5]\n [3.2 1.2]\n [3.5 1.3]\n [3.6 1.4]\n [3.  1.3]\n [3.4 1.5]\n [3.5 1.3]\n [2.3 1.3]\n [3.2 1.3]\n [3.5 1.6]\n [3.8 1.9]\n [3.  1.4]\n [3.8 1.6]\n [3.2 1.4]\n [3.7 1.5]\n [3.3 1.4]\n [3.2 4.7]\n [3.2 4.5]\n [3.1 4.9]\n [2.3 4. ]\n [2.8 4.6]\n [2.8 4.5]\n [3.3 4.7]\n [2.4 3.3]\n [2.9 4.6]\n [2.7 3.9]\n [2.  3.5]\n [3.  4.2]\n [2.2 4. ]\n [2.9 4.7]\n [2.9 3.6]\n [3.1 4.4]\n [3.  4.5]\n [2.7 4.1]\n [2.2 4.5]\n [2.5 3.9]\n [3.2 4.8]\n [2.8 4. ]\n [2.5 4.9]\n [2.8 4.7]\n [2.9 4.3]\n [3.  4.4]\n [2.8 4.8]\n [3.  5. ]\n [2.9 4.5]\n [2.6 3.5]\n [2.4 3.8]\n [2.4 3.7]\n [2.7 3.9]\n [2.7 5.1]\n [3.  4.5]\n [3.4 4.5]\n [3.1 4.7]\n [2.3 4.4]\n [3.  4.1]\n [2.5 4. ]\n [2.6 4.4]\n [3.  4.6]\n [2.6 4. ]\n [2.3 3.3]\n [2.7 4.2]\n [3.  4.2]\n [2.9 4.2]\n [2.9 4.3]\n [2.5 3. ]\n [2.8 4.1]\n [3.3 6. ]\n [2.7 5.1]\n [3.  5.9]\n [2.9 5.6]\n [3.  5.8]\n [3.  6.6]\n [2.5 4.5]\n [2.9 6.3]\n [2.5 5.8]\n [3.6 6.1]\n [3.2 5.1]\n [2.7 5.3]\n [3.  5.5]\n [2.5 5. ]\n [2.8 5.1]\n [3.2 5.3]\n [3.  5.5]\n [3.8 6.7]\n [2.6 6.9]\n [2.2 5. ]\n [3.2 5.7]\n [2.8 4.9]\n [2.8 6.7]\n [2.7 4.9]\n [3.3 5.7]\n [3.2 6. ]\n [2.8 4.8]\n [3.  4.9]\n [2.8 5.6]\n [3.  5.8]\n [2.8 6.1]\n [3.8 6.4]\n [2.8 5.6]\n [2.8 5.1]\n [2.6 5.6]\n [3.  6.1]\n [3.4 5.6]\n [3.1 5.5]\n [3.  4.8]\n [3.1 5.4]\n [3.1 5.6]\n [3.1 5.1]\n [2.7 5.1]\n [3.2 5.9]\n [3.3 5.7]\n [3.  5.2]\n [2.5 5. ]\n [3.  5.2]\n [3.4 5.4]\n [3.  5.1]]",
+        "y": "[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2\n 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n 2 2]"
+    },
+    "kwargs": {
+        "sample_weight": null
+    }
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "penalty": XXX,
+    "dual": XXX,
+    "tol": XXX,
+    "C": XXX,
+    "fit_intercept": XXX,
+    "intercept_scaling": XXX,
+    "class_weight": XXX,
+    "random_state": XXX,
+    "solver": XXX,
+    "max_iter": XXX,
+    "multi_class": XXX,
+    "verbose": XXX,
+    "warm_start": XXX,
+    "n_jobs": XXX,
+    "l1_ratio": XXX,
+    "classes_": XXX,
+    "coef_": XXX,
+    "intercept_": XXX,
+    "n_iter_": XXX
+}
+```
+[/STRUCTURE]

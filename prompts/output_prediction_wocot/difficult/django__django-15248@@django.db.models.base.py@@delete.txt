@@ -1,0 +1,500 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import copy
+import inspect
+import warnings
+from functools import partialmethod
+from itertools import chain
+import django
+from django.apps import apps
+from django.conf import settings
+from django.core import checks
+from django.core.exceptions import NON_FIELD_ERRORS, FieldDoesNotExist, FieldError, MultipleObjectsReturned, ObjectDoesNotExist, ValidationError
+from django.db import DEFAULT_DB_ALIAS, DJANGO_VERSION_PICKLE_KEY, DatabaseError, connection, connections, router, transaction
+from django.db.models import NOT_PROVIDED, ExpressionWrapper, IntegerField, Max, Value
+from django.db.models.constants import LOOKUP_SEP
+from django.db.models.constraints import CheckConstraint, UniqueConstraint
+from django.db.models.deletion import CASCADE, Collector
+from django.db.models.fields.related import ForeignObjectRel, OneToOneField, lazy_related_operation, resolve_relation
+from django.db.models.functions import Coalesce
+from django.db.models.manager import Manager
+from django.db.models.options import Options
+from django.db.models.query import F, Q
+from django.db.models.signals import class_prepared, post_init, post_save, pre_init, pre_save
+from django.db.models.utils import make_model_tuple
+from django.utils.encoding import force_str
+from django.utils.hashable import make_hashable
+from django.utils.text import capfirst, get_text_list
+from django.utils.translation import gettext_lazy as _
+from django.db import models
+DEFERRED = Deferred()
+model_unpickle.__safe_for_unpickle__ = True
+
+class Model:
+    pk = property(_get_pk_val, _set_pk_val)
+    save.alters_data = True
+    save_base.alters_data = True
+    delete.alters_data = True
+
+    def __init__(self, *args, **kwargs):
+        cls = self.__class__
+        opts = self._meta
+        _setattr = setattr
+        _DEFERRED = DEFERRED
+        if opts.abstract:
+            raise TypeError('Abstract models cannot be instantiated.')
+        pre_init.send(sender=cls, args=args, kwargs=kwargs)
+        self._state = ModelState()
+        if len(args) > len(opts.concrete_fields):
+            raise IndexError('Number of args exceeds number of fields')
+        if not kwargs:
+            fields_iter = iter(opts.concrete_fields)
+            for val, field in zip(args, fields_iter):
+                if val is _DEFERRED:
+                    continue
+                _setattr(self, field.attname, val)
+        else:
+            fields_iter = iter(opts.fields)
+            for val, field in zip(args, fields_iter):
+                if val is _DEFERRED:
+                    continue
+                _setattr(self, field.attname, val)
+                if kwargs.pop(field.name, NOT_PROVIDED) is not NOT_PROVIDED:
+                    raise TypeError(f"{cls.__qualname__}() got both positional and keyword arguments for field '{field.name}'.")
+        for field in fields_iter:
+            is_related_object = False
+            if field.attname not in kwargs and field.column is None:
+                continue
+            if kwargs:
+                if isinstance(field.remote_field, ForeignObjectRel):
+                    try:
+                        rel_obj = kwargs.pop(field.name)
+                        is_related_object = True
+                    except KeyError:
+                        try:
+                            val = kwargs.pop(field.attname)
+                        except KeyError:
+                            val = field.get_default()
+                else:
+                    try:
+                        val = kwargs.pop(field.attname)
+                    except KeyError:
+                        val = field.get_default()
+            else:
+                val = field.get_default()
+            if is_related_object:
+                if rel_obj is not _DEFERRED:
+                    _setattr(self, field.name, rel_obj)
+            elif val is not _DEFERRED:
+                _setattr(self, field.attname, val)
+        if kwargs:
+            property_names = opts._property_names
+            for prop in tuple(kwargs):
+                try:
+                    if prop in property_names or opts.get_field(prop):
+                        if kwargs[prop] is not _DEFERRED:
+                            _setattr(self, prop, kwargs[prop])
+                        del kwargs[prop]
+                except (AttributeError, FieldDoesNotExist):
+                    pass
+            for kwarg in kwargs:
+                raise TypeError("%s() got an unexpected keyword argument '%s'" % (cls.__name__, kwarg))
+        super().__init__()
+        post_init.send(sender=cls, instance=self)
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        if len(values) != len(cls._meta.concrete_fields):
+            values_iter = iter(values)
+            values = [next(values_iter) if f.attname in field_names else DEFERRED for f in cls._meta.concrete_fields]
+        new = cls(*values)
+        new._state.adding = False
+        new._state.db = db
+        return new
+
+    def __hash__(self):
+        if self.pk is None:
+            raise TypeError('Model instances without primary key value are unhashable')
+        return hash(self.pk)
+
+    def _get_pk_val(self, meta=None):
+        meta = meta or self._meta
+        return getattr(self, meta.pk.attname)
+
+    def delete(self, using=None, keep_parents=False):
+        if self.pk is None:
+            raise ValueError("%s object can't be deleted because its %s attribute is set to None." % (self._meta.object_name, self._meta.pk.attname))
+        using = using or router.db_for_write(self.__class__, instance=self)
+        collector = Collector(using=using, origin=self)
+        collector.collect([self], keep_parents=keep_parents)
+        return collector.delete()
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.django.db.utils.ConnectionRouter._route_db
+
+def _route_db(self, model, **hints):
+    chosen_db = None
+    for router in self.routers:
+        try:
+            method = getattr(router, action)
+        except AttributeError:
+            pass
+        else:
+            chosen_db = method(model, **hints)
+            if chosen_db:
+                return chosen_db
+    instance = hints.get('instance')
+    if instance is not None and instance._state.db:
+        return instance._state.db
+    return DEFAULT_DB_ALIAS
+
+.django.db.models.deletion.Collector.__init__
+
+def __init__(self, using, origin=None):
+    self.using = using
+    self.origin = origin
+    self.data = defaultdict(set)
+    self.field_updates = defaultdict(partial(defaultdict, set))
+    self.restricted_objects = defaultdict(partial(defaultdict, set))
+    self.fast_deletes = []
+    self.dependencies = defaultdict(set)
+
+.django.db.models.deletion.Collector.collect
+
+def collect(self, objs, source=None, nullable=False, collect_related=True, source_attr=None, reverse_dependency=False, keep_parents=False, fail_on_restricted=True):
+    if self.can_fast_delete(objs):
+        self.fast_deletes.append(objs)
+        return
+    new_objs = self.add(objs, source, nullable, reverse_dependency=reverse_dependency)
+    if not new_objs:
+        return
+    model = new_objs[0].__class__
+    if not keep_parents:
+        concrete_model = model._meta.concrete_model
+        for ptr in concrete_model._meta.parents.values():
+            if ptr:
+                parent_objs = [getattr(obj, ptr.name) for obj in new_objs]
+                self.collect(parent_objs, source=model, source_attr=ptr.remote_field.related_name, collect_related=False, reverse_dependency=True, fail_on_restricted=False)
+    if not collect_related:
+        return
+    if keep_parents:
+        parents = set(model._meta.get_parent_list())
+    model_fast_deletes = defaultdict(list)
+    protected_objects = defaultdict(list)
+    for related in get_candidate_relations_to_delete(model._meta):
+        if keep_parents and related.model in parents:
+            continue
+        field = related.field
+        if field.remote_field.on_delete == DO_NOTHING:
+            continue
+        related_model = related.related_model
+        if self.can_fast_delete(related_model, from_field=field):
+            model_fast_deletes[related_model].append(field)
+            continue
+        batches = self.get_del_batches(new_objs, [field])
+        for batch in batches:
+            sub_objs = self.related_objects(related_model, [field], batch)
+            if not (sub_objs.query.select_related or self._has_signal_listeners(related_model)):
+                referenced_fields = set(chain.from_iterable(((rf.attname for rf in rel.field.foreign_related_fields) for rel in get_candidate_relations_to_delete(related_model._meta))))
+                sub_objs = sub_objs.only(*tuple(referenced_fields))
+            if sub_objs:
+                try:
+                    field.remote_field.on_delete(self, field, sub_objs, self.using)
+                except ProtectedError as error:
+                    key = "'%s.%s'" % (field.model.__name__, field.name)
+                    protected_objects[key] += error.protected_objects
+    if protected_objects:
+        raise ProtectedError('Cannot delete some instances of model %r because they are referenced through protected foreign keys: %s.' % (model.__name__, ', '.join(protected_objects)), set(chain.from_iterable(protected_objects.values())))
+    for related_model, related_fields in model_fast_deletes.items():
+        batches = self.get_del_batches(new_objs, related_fields)
+        for batch in batches:
+            sub_objs = self.related_objects(related_model, related_fields, batch)
+            self.fast_deletes.append(sub_objs)
+    for field in model._meta.private_fields:
+        if hasattr(field, 'bulk_related_objects'):
+            sub_objs = field.bulk_related_objects(new_objs, self.using)
+            self.collect(sub_objs, source=model, nullable=True, fail_on_restricted=False)
+    if fail_on_restricted:
+        for related_model, instances in self.data.items():
+            self.clear_restricted_objects_from_set(related_model, instances)
+        for qs in self.fast_deletes:
+            self.clear_restricted_objects_from_queryset(qs.model, qs)
+        if self.restricted_objects.values():
+            restricted_objects = defaultdict(list)
+            for related_model, fields in self.restricted_objects.items():
+                for field, objs in fields.items():
+                    if objs:
+                        key = "'%s.%s'" % (related_model.__name__, field.name)
+                        restricted_objects[key] += objs
+            if restricted_objects:
+                raise RestrictedError('Cannot delete some instances of model %r because they are referenced through restricted foreign keys: %s.' % (model.__name__, ', '.join(restricted_objects)), set(chain.from_iterable(restricted_objects.values())))
+
+.django.db.models.deletion.Collector.can_fast_delete
+
+def can_fast_delete(self, objs, from_field=None):
+    if from_field and from_field.remote_field.on_delete is not CASCADE:
+        return False
+    if hasattr(objs, '_meta'):
+        model = objs._meta.model
+    elif hasattr(objs, 'model') and hasattr(objs, '_raw_delete'):
+        model = objs.model
+    else:
+        return False
+    if self._has_signal_listeners(model):
+        return False
+    opts = model._meta
+    return all((link == from_field for link in opts.concrete_model._meta.parents.values())) and all((related.field.remote_field.on_delete is DO_NOTHING for related in get_candidate_relations_to_delete(opts))) and (not any((hasattr(field, 'bulk_related_objects') for field in opts.private_fields)))
+
+.django.db.models.deletion.Collector.add
+
+def add(self, objs, source=None, nullable=False, reverse_dependency=False):
+    if not objs:
+        return []
+    new_objs = []
+    model = objs[0].__class__
+    instances = self.data[model]
+    for obj in objs:
+        if obj not in instances:
+            new_objs.append(obj)
+    instances.update(new_objs)
+    if source is not None and (not nullable):
+        self.add_dependency(source, model, reverse_dependency=reverse_dependency)
+    return new_objs
+
+.django.db.models.deletion.get_candidate_relations_to_delete
+
+def get_candidate_relations_to_delete(opts):
+    return (f for f in opts.get_fields(include_hidden=True) if f.auto_created and (not f.concrete) and (f.one_to_one or f.one_to_many))
+
+.django.db.models.options.Options.get_fields
+
+def get_fields(self, include_parents=True, include_hidden=False):
+    if include_parents is False:
+        include_parents = PROXY_PARENTS
+    return self._get_fields(include_parents=include_parents, include_hidden=include_hidden)
+
+.django.db.models.options.Options._get_fields
+
+def _get_fields(self, forward=True, reverse=True, include_parents=True, include_hidden=False, seen_models=None):
+    if include_parents not in (True, False, PROXY_PARENTS):
+        raise TypeError('Invalid argument for include_parents: %s' % (include_parents,))
+    topmost_call = seen_models is None
+    if topmost_call:
+        seen_models = set()
+    seen_models.add(self.model)
+    cache_key = (forward, reverse, include_parents, include_hidden, topmost_call)
+    try:
+        return self._get_fields_cache[cache_key]
+    except KeyError:
+        pass
+    fields = []
+    if include_parents is not False:
+        for parent in self.parents:
+            if parent in seen_models:
+                continue
+            if parent._meta.concrete_model != self.concrete_model and include_parents == PROXY_PARENTS:
+                continue
+            for obj in parent._meta._get_fields(forward=forward, reverse=reverse, include_parents=include_parents, include_hidden=include_hidden, seen_models=seen_models):
+                if not getattr(obj, 'parent_link', False) or obj.model == self.concrete_model:
+                    fields.append(obj)
+    if reverse and (not self.proxy):
+        all_fields = self._relation_tree
+        for field in all_fields:
+            if include_hidden or not field.remote_field.hidden:
+                fields.append(field.remote_field)
+    if forward:
+        fields += self.local_fields
+        fields += self.local_many_to_many
+        if topmost_call:
+            fields += self.private_fields
+    fields = make_immutable_fields_list('get_fields()', fields)
+    self._get_fields_cache[cache_key] = fields
+    return fields
+
+.django.db.models.options.make_immutable_fields_list
+
+def make_immutable_fields_list(name, data):
+    return ImmutableList(data, warning=IMMUTABLE_WARNING % name)
+
+.django.utils.datastructures.ImmutableList.__new__
+
+def __new__(cls, *args, warning='ImmutableList object is immutable.', **kwargs):
+    self = tuple.__new__(cls, *args, **kwargs)
+    self.warning = warning
+    return self
+
+.django.db.models.deletion.Collector.clear_restricted_objects_from_set
+
+def clear_restricted_objects_from_set(self, model, objs):
+    if model in self.restricted_objects:
+        self.restricted_objects[model] = {field: items - objs for field, items in self.restricted_objects[model].items()}
+
+.django.utils.functional.cached_property.__get__
+
+def __get__(self, instance, cls=None):
+    if instance is None:
+        return self
+    res = instance.__dict__[self.name] = self.func(instance)
+    return res
+
+.django.db.models.fields.reverse_related.ForeignObjectRel.one_to_one
+
+def one_to_one(self):
+    return self.field.one_to_one
+
+.django.db.models.fields.reverse_related.ForeignObjectRel.one_to_many
+
+def one_to_many(self):
+    return self.field.many_to_one
+
+.django.db.models.fields.reverse_related.ForeignObjectRel.related_model
+
+def related_model(self):
+    if not self.field.model:
+        raise AttributeError("This property can't be accessed before self.field.contribute_to_class has been called.")
+    return self.field.model
+
+
+[/PYTHON]
+What will be the output of `delete`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "_state": {
+            "db": "default",
+            "adding": false
+        },
+        "id": 99998,
+        "first_name": "James",
+        "last_name": "Jones"
+    },
+    "args": {},
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "output": XXX        
+}
+```
+[/STRUCTURE]

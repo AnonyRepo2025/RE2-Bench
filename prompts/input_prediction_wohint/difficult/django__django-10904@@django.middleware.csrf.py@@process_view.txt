@@ -1,0 +1,341 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. You only need to predict input variable values, and print input between [INPUT] and [\INPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT]. 
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import logging
+import re
+import string
+from urllib.parse import urlparse
+from django.conf import settings
+from django.core.exceptions import DisallowedHost, ImproperlyConfigured
+from django.urls import get_callable
+from django.utils.cache import patch_vary_headers
+from django.utils.crypto import constant_time_compare, get_random_string
+from django.utils.deprecation import MiddlewareMixin
+from django.utils.http import is_same_domain
+from django.utils.log import log_response
+logger = logging.getLogger('django.security.csrf')
+REASON_NO_REFERER = 'Referer checking failed - no Referer.'
+REASON_BAD_REFERER = 'Referer checking failed - %s does not match any trusted origins.'
+REASON_NO_CSRF_COOKIE = 'CSRF cookie not set.'
+REASON_BAD_TOKEN = 'CSRF token missing or incorrect.'
+REASON_MALFORMED_REFERER = 'Referer checking failed - Referer is malformed.'
+REASON_INSECURE_REFERER = 'Referer checking failed - Referer is insecure while host is secure.'
+CSRF_SECRET_LENGTH = 32
+CSRF_TOKEN_LENGTH = 2 * CSRF_SECRET_LENGTH
+CSRF_ALLOWED_CHARS = string.ascii_letters + string.digits
+CSRF_SESSION_KEY = '_csrftoken'
+
+class CsrfViewMiddleware(MiddlewareMixin):
+
+    def process_view(self, request, callback, callback_args, callback_kwargs):
+        if getattr(request, 'csrf_processing_done', False):
+            return None
+        if getattr(callback, 'csrf_exempt', False):
+            return None
+        if request.method not in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+            if getattr(request, '_dont_enforce_csrf_checks', False):
+                return self._accept(request)
+            if request.is_secure():
+                referer = request.META.get('HTTP_REFERER')
+                if referer is None:
+                    return self._reject(request, REASON_NO_REFERER)
+                referer = urlparse(referer)
+                if '' in (referer.scheme, referer.netloc):
+                    return self._reject(request, REASON_MALFORMED_REFERER)
+                if referer.scheme != 'https':
+                    return self._reject(request, REASON_INSECURE_REFERER)
+                good_referer = settings.SESSION_COOKIE_DOMAIN if settings.CSRF_USE_SESSIONS else settings.CSRF_COOKIE_DOMAIN
+                if good_referer is not None:
+                    server_port = request.get_port()
+                    if server_port not in ('443', '80'):
+                        good_referer = '%s:%s' % (good_referer, server_port)
+                else:
+                    try:
+                        good_referer = request.get_host()
+                    except DisallowedHost:
+                        pass
+                good_hosts = list(settings.CSRF_TRUSTED_ORIGINS)
+                if good_referer is not None:
+                    good_hosts.append(good_referer)
+                if not any((is_same_domain(referer.netloc, host) for host in good_hosts)):
+                    reason = REASON_BAD_REFERER % referer.geturl()
+                    return self._reject(request, reason)
+            csrf_token = request.META.get('CSRF_COOKIE')
+            if csrf_token is None:
+                return self._reject(request, REASON_NO_CSRF_COOKIE)
+            request_csrf_token = ''
+            if request.method == 'POST':
+                try:
+                    request_csrf_token = request.POST.get('csrfmiddlewaretoken', '')
+                except OSError:
+                    pass
+            if request_csrf_token == '':
+                request_csrf_token = request.META.get(settings.CSRF_HEADER_NAME, '')
+            request_csrf_token = _sanitize_token(request_csrf_token)
+            if not _compare_salted_tokens(request_csrf_token, csrf_token):
+                return self._reject(request, REASON_BAD_TOKEN)
+        return self._accept(request)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.django.http.request.HttpRequest.is_secure
+
+def is_secure(self):
+    return self.scheme == 'https'
+
+.django.http.request.HttpRequest.scheme
+
+def scheme(self):
+    if settings.SECURE_PROXY_SSL_HEADER:
+        try:
+            header, value = settings.SECURE_PROXY_SSL_HEADER
+        except ValueError:
+            raise ImproperlyConfigured('The SECURE_PROXY_SSL_HEADER setting must be a tuple containing two values.')
+        if self.META.get(header) == value:
+            return 'https'
+    return self._get_scheme()
+
+.django.core.handlers.wsgi.WSGIRequest._get_scheme
+
+def _get_scheme(self):
+    return self.environ.get('wsgi.url_scheme')
+
+.django.utils.datastructures.MultiValueDict.get
+
+def get(self, key, default=None):
+    try:
+        val = self[key]
+    except KeyError:
+        return default
+    if val == []:
+        return default
+    return val
+
+.django.utils.datastructures.MultiValueDict.__getitem__
+
+def __getitem__(self, key):
+    try:
+        list_ = super().__getitem__(key)
+    except KeyError:
+        raise MultiValueDictKeyError(key)
+    try:
+        return list_[-1]
+    except IndexError:
+        return []
+
+.django.middleware.csrf._sanitize_token
+
+def _sanitize_token(token):
+    if re.search('[^a-zA-Z0-9]', token):
+        return _get_new_csrf_token()
+    elif len(token) == CSRF_TOKEN_LENGTH:
+        return token
+    elif len(token) == CSRF_SECRET_LENGTH:
+        return _salt_cipher_secret(token)
+    return _get_new_csrf_token()
+
+.django.middleware.csrf._salt_cipher_secret
+
+def _salt_cipher_secret(secret):
+    salt = _get_new_csrf_string()
+    chars = CSRF_ALLOWED_CHARS
+    pairs = zip((chars.index(x) for x in secret), (chars.index(x) for x in salt))
+    cipher = ''.join((chars[(x + y) % len(chars)] for x, y in pairs))
+    return salt + cipher
+
+.django.middleware.csrf._get_new_csrf_string
+
+def _get_new_csrf_string():
+    return get_random_string(CSRF_SECRET_LENGTH, allowed_chars=CSRF_ALLOWED_CHARS)
+
+.django.utils.crypto.get_random_string
+
+def get_random_string(length=12, allowed_chars='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'):
+    if not using_sysrandom:
+        random.seed(hashlib.sha256(('%s%s%s' % (random.getstate(), time.time(), settings.SECRET_KEY)).encode()).digest())
+    return ''.join((random.choice(allowed_chars) for i in range(length)))
+
+.django.middleware.csrf._compare_salted_tokens
+
+def _compare_salted_tokens(request_csrf_token, csrf_token):
+    return constant_time_compare(_unsalt_cipher_token(request_csrf_token), _unsalt_cipher_token(csrf_token))
+
+.django.middleware.csrf._unsalt_cipher_token
+
+def _unsalt_cipher_token(token):
+    salt = token[:CSRF_SECRET_LENGTH]
+    token = token[CSRF_SECRET_LENGTH:]
+    chars = CSRF_ALLOWED_CHARS
+    pairs = zip((chars.index(x) for x in token), (chars.index(x) for x in salt))
+    secret = ''.join((chars[x - y] for x, y in pairs))
+    return secret
+
+.django.utils.crypto.constant_time_compare
+
+def constant_time_compare(val1, val2):
+    return hmac.compare_digest(force_bytes(val1), force_bytes(val2))
+
+.django.utils.encoding.force_bytes
+
+def force_bytes(s, encoding='utf-8', strings_only=False, errors='strict'):
+    if isinstance(s, bytes):
+        if encoding == 'utf-8':
+            return s
+        else:
+            return s.decode('utf-8', errors).encode(encoding, errors)
+    if strings_only and is_protected_type(s):
+        return s
+    if isinstance(s, memoryview):
+        return bytes(s)
+    return str(s).encode(encoding, errors)
+
+.django.conf.__init__.LazySettings.__getattr__
+
+def __getattr__(self, name):
+    if self._wrapped is empty:
+        self._setup(name)
+    val = getattr(self._wrapped, name)
+    self.__dict__[name] = val
+    return val
+
+.django.middleware.csrf._get_new_csrf_token
+
+def _get_new_csrf_token():
+    return _salt_cipher_secret(_get_new_csrf_string())
+
+
+[/PYTHON]
+What will be the input of `process_view`, given the following input:
+[OUTPUT]
+```
+{
+    "_headers": {
+        "content-type": [
+            "Content-Type",
+            "text/html"
+        ]
+    },
+    "_closable_objects": null,
+    "_handler_class": null,
+    "cookies": {},
+    "closed": false,
+    "_reason_phrase": null,
+    "_charset": null,
+    "_container": null,
+    "_has_been_logged": true
+}
+```
+[/OUTPUT]
+
+[THOUGHT]

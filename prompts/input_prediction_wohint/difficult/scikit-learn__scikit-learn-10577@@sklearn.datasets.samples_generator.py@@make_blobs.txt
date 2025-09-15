@@ -1,0 +1,339 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. You only need to predict input variable values, and print input between [INPUT] and [\INPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT]. 
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import numbers
+import array
+import numpy as np
+from scipy import linalg
+import scipy.sparse as sp
+from collections import Iterable
+from ..preprocessing import MultiLabelBinarizer
+from ..utils import check_array, check_random_state
+from ..utils import shuffle as util_shuffle
+from ..utils.random import sample_without_replacement
+from ..externals import six
+map = six.moves.map
+zip = six.moves.zip
+
+def make_blobs(n_samples=100, n_features=2, centers=None, cluster_std=1.0, center_box=(-10.0, 10.0), shuffle=True, random_state=None):
+    generator = check_random_state(random_state)
+    if isinstance(n_samples, numbers.Integral):
+        if centers is None:
+            centers = 3
+        if isinstance(centers, numbers.Integral):
+            n_centers = centers
+            centers = generator.uniform(center_box[0], center_box[1], size=(n_centers, n_features))
+        else:
+            centers = check_array(centers)
+            n_features = centers.shape[1]
+            n_centers = centers.shape[0]
+    else:
+        n_centers = len(n_samples)
+        if centers is None:
+            centers = generator.uniform(center_box[0], center_box[1], size=(n_centers, n_features))
+        try:
+            assert len(centers) == n_centers
+        except TypeError:
+            raise ValueError('Parameter `centers` must be array-like. Got {!r} instead'.format(centers))
+        except AssertionError:
+            raise ValueError('Length of `n_samples` not consistent with number of centers. Got n_samples = {} and centers = {}'.format(n_samples, centers))
+        else:
+            centers = check_array(centers)
+            n_features = centers.shape[1]
+    if hasattr(cluster_std, '__len__') and len(cluster_std) != n_centers:
+        raise ValueError('Length of `clusters_std` not consistent with number of centers. Got centers = {} and cluster_std = {}'.format(centers, cluster_std))
+    if isinstance(cluster_std, numbers.Real):
+        cluster_std = np.ones(len(centers)) * cluster_std
+    X = []
+    y = []
+    if isinstance(n_samples, Iterable):
+        n_samples_per_center = n_samples
+    else:
+        n_samples_per_center = [int(n_samples // n_centers)] * n_centers
+        for i in range(n_samples % n_centers):
+            n_samples_per_center[i] += 1
+    for i, (n, std) in enumerate(zip(n_samples_per_center, cluster_std)):
+        X.append(generator.normal(loc=centers[i], scale=std, size=(n, n_features)))
+        y += [i] * n
+    X = np.concatenate(X)
+    y = np.array(y)
+    if shuffle:
+        total_n_samples = np.sum(n_samples)
+        indices = np.arange(total_n_samples)
+        generator.shuffle(indices)
+        X = X[indices]
+        y = y[indices]
+    return (X, y)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_random_state
+
+def check_random_state(seed):
+    print('[CALL]/home/changshu/CODEMIND/scripts/swebench/swebench_playground/dep/scikit-learn__scikit-learn-10577/sklearn/utils/validation.py@@check_random_state[/CALL]')
+    'Turn seed into a np.random.RandomState instance\n\n    Parameters\n    ----------\n    seed : None | int | instance of RandomState\n        If seed is None, return the RandomState singleton used by np.random.\n        If seed is an int, return a new RandomState instance seeded with seed.\n        If seed is already a RandomState instance, return it.\n        Otherwise raise ValueError.\n    '
+    if seed is None or seed is np.random:
+        return np.random.mtrand._rand
+    if isinstance(seed, (numbers.Integral, np.integer)):
+        return np.random.RandomState(seed)
+    if isinstance(seed, np.random.RandomState):
+        return seed
+    raise ValueError('%r cannot be used to seed a numpy.random.RandomState instance' % seed)
+
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=False, estimator=None):
+    print('[CALL]/home/changshu/CODEMIND/scripts/swebench/swebench_playground/dep/scikit-learn__scikit-learn-10577/sklearn/utils/validation.py@@check_array[/CALL]')
+    'Input validation on an array, list, sparse matrix or similar.\n\n    By default, the input is converted to an at least 2D numpy array.\n    If the dtype of the array is object, attempt converting to float,\n    raising on failure.\n\n    Parameters\n    ----------\n    array : object\n        Input object to check / convert.\n\n    accept_sparse : string, boolean or list/tuple of strings (default=False)\n        String[s] representing allowed sparse matrix formats, such as \'csc\',\n        \'csr\', etc. If the input is sparse but not in the allowed format,\n        it will be converted to the first listed format. True allows the input\n        to be any format. False means that a sparse matrix input will\n        raise an error.\n\n        .. deprecated:: 0.19\n           Passing \'None\' to parameter ``accept_sparse`` in methods is\n           deprecated in version 0.19 "and will be removed in 0.21. Use\n           ``accept_sparse=False`` instead.\n\n    dtype : string, type, list of types or None (default="numeric")\n        Data type of result. If None, the dtype of the input is preserved.\n        If "numeric", dtype is preserved unless array.dtype is object.\n        If dtype is a list of types, conversion on the first type is only\n        performed if the dtype of the input is not in the list.\n\n    order : \'F\', \'C\' or None (default=None)\n        Whether an array will be forced to be fortran or c-style.\n        When order is None (default), then if copy=False, nothing is ensured\n        about the memory layout of the output array; otherwise (copy=True)\n        the memory layout of the returned array is kept as close as possible\n        to the original array.\n\n    copy : boolean (default=False)\n        Whether a forced copy will be triggered. If copy=False, a copy might\n        be triggered by a conversion.\n\n    force_all_finite : boolean or \'allow-nan\', (default=True)\n        Whether to raise an error on np.inf and np.nan in X. The possibilities\n        are:\n\n        - True: Force all values of X to be finite.\n        - False: accept both np.inf and np.nan in X.\n        - \'allow-nan\':  accept  only  np.nan  values in  X.  Values  cannot  be\n          infinite.\n\n        .. versionadded:: 0.20\n           ``force_all_finite`` accepts the string ``\'allow-nan\'``.\n\n    ensure_2d : boolean (default=True)\n        Whether to raise a value error if X is not 2d.\n\n    allow_nd : boolean (default=False)\n        Whether to allow X.ndim > 2.\n\n    ensure_min_samples : int (default=1)\n        Make sure that the array has a minimum number of samples in its first\n        axis (rows for a 2D array). Setting to 0 disables this check.\n\n    ensure_min_features : int (default=1)\n        Make sure that the 2D array has some minimum number of features\n        (columns). The default value of 1 rejects empty datasets.\n        This check is only enforced when the input data has effectively 2\n        dimensions or is originally 1D and ``ensure_2d`` is True. Setting to 0\n        disables this check.\n\n    warn_on_dtype : boolean (default=False)\n        Raise DataConversionWarning if the dtype of the input data structure\n        does not match the requested dtype, causing a memory copy.\n\n    estimator : str or estimator instance (default=None)\n        If passed, include the name of the estimator in warning messages.\n\n    Returns\n    -------\n    X_converted : object\n        The converted and validated X.\n\n    '
+    if accept_sparse is None:
+        warnings.warn("Passing 'None' to parameter 'accept_sparse' in methods check_array and check_X_y is deprecated in version 0.19 and will be removed in 0.21. Use 'accept_sparse=False'  instead.", DeprecationWarning)
+        accept_sparse = False
+    dtype_numeric = isinstance(dtype, six.string_types) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, six.string_types):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse, dtype, copy, force_all_finite)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                array = np.array(array, dtype=dtype, order=order, copy=copy)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            array = np.array(array, dtype=dtype, order=order, copy=copy)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    shape_repr = _shape_repr(array.shape)
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, shape_repr, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, shape_repr, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning)
+    return array
+
+.sklearn.utils.validation._ensure_no_complex_data
+
+def _ensure_no_complex_data(array):
+    print('[CALL]/home/changshu/CODEMIND/scripts/swebench/swebench_playground/dep/scikit-learn__scikit-learn-10577/sklearn/utils/validation.py@@_ensure_no_complex_data[/CALL]')
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+.sklearn.utils.validation._assert_all_finite
+
+def _assert_all_finite(X, allow_nan=False):
+    print('[CALL]/home/changshu/CODEMIND/scripts/swebench/swebench_playground/dep/scikit-learn__scikit-learn-10577/sklearn/utils/validation.py@@_assert_all_finite[/CALL]')
+    'Like assert_all_finite, but only for ndarray.'
+    if _get_config()['assume_finite']:
+        return
+    X = np.asanyarray(X)
+    is_float = X.dtype.kind in 'fc'
+    if is_float and np.isfinite(X.sum()):
+        pass
+    elif is_float:
+        msg_err = 'Input contains {} or a value too large for {!r}.'
+        if allow_nan and np.isinf(X).any() or (not allow_nan and (not np.isfinite(X).all())):
+            type_err = 'infinity' if allow_nan else 'NaN, infinity'
+            raise ValueError(msg_err.format(type_err, X.dtype))
+
+.sklearn.__init__.get_config
+
+def get_config():
+    print('[CALL]/home/changshu/CODEMIND/scripts/swebench/swebench_playground/dep/scikit-learn__scikit-learn-10577/sklearn/__init__.py@@get_config[/CALL]')
+    'Retrieve current values for configuration set by :func:`set_config`\n\n    Returns\n    -------\n    config : dict\n        Keys are parameter names that can be passed to :func:`set_config`.\n    '
+    return {'assume_finite': _ASSUME_FINITE}
+
+.sklearn.utils.validation._shape_repr
+
+def _shape_repr(shape):
+    print('[CALL]/home/changshu/CODEMIND/scripts/swebench/swebench_playground/dep/scikit-learn__scikit-learn-10577/sklearn/utils/validation.py@@_shape_repr[/CALL]')
+    "Return a platform independent representation of an array shape\n\n    Under Python 2, the `long` type introduces an 'L' suffix when using the\n    default %r format for tuples of integers (typically used to store the shape\n    of an array).\n\n    Under Windows 64 bit (and Python 2), the `long` type is used by default\n    in numpy shapes even when the integer dimensions are well below 32 bit.\n    The platform specific type causes string messages or doctests to change\n    from one platform to another which is not desirable.\n\n    Under Python 3, there is no more `long` type so the `L` suffix is never\n    introduced in string representation.\n\n    >>> _shape_repr((1, 2))\n    '(1, 2)'\n    >>> one = 2 ** 64 / 2 ** 64  # force an upcast to `long` under Python 2\n    >>> _shape_repr((one, 2 * one))\n    '(1, 2)'\n    >>> _shape_repr((1,))\n    '(1,)'\n    >>> _shape_repr(())\n    '()'\n    "
+    if len(shape) == 0:
+        return '()'
+    joined = ', '.join(('%d' % e for e in shape))
+    if len(shape) == 1:
+        joined += ','
+    return '(%s)' % joined
+
+.sklearn.utils.validation._num_samples
+
+def _num_samples(x):
+    print('[CALL]/home/changshu/CODEMIND/scripts/swebench/swebench_playground/dep/scikit-learn__scikit-learn-10577/sklearn/utils/validation.py@@_num_samples[/CALL]')
+    'Return number of samples in array-like x.'
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError('Expected sequence or array-like, got estimator %s' % x)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError('Expected sequence or array-like, got %s' % type(x))
+    if hasattr(x, 'shape'):
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        return x.shape[0]
+    else:
+        return len(x)
+
+
+[/PYTHON]
+What will be the input of `make_blobs`, given the following input:
+[OUTPUT]
+```
+{
+    "output": [
+        "[[ 0.87305123  4.71438583]\n [ 1.42013331  4.63746165]\n [ 1.9263585   4.15243012]\n [ 3.54934659  0.6925054 ]\n [ 1.12031365  5.75806083]\n [-0.49772229  1.55128226]\n [ 2.36833522  0.04356792]\n [ 1.7373078   4.42546234]]",
+        "[0 0 0 1 0 1 1 0]"
+    ]
+}
+```
+[/OUTPUT]
+
+[THOUGHT]

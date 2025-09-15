@@ -1,0 +1,1003 @@
+diff --git a/django/contrib/postgres/aggregates/general.py b/django/contrib/postgres/aggregates/general.py
+index 27cfe31..ae432a0 100644
+--- a/django/contrib/postgres/aggregates/general.py
++++ b/django/contrib/postgres/aggregates/general.py
+@@ -1,5 +1,8 @@
++import warnings
++
+ from django.contrib.postgres.fields import ArrayField
+ from django.db.models import Aggregate, BooleanField, JSONField, Value
++from django.utils.deprecation import RemovedInDjango50Warning
+ 
+ from .mixins import OrderableAggMixin
+ 
+@@ -8,20 +11,44 @@ __all__ = [
+ ]
+ 
+ 
+-class ArrayAgg(OrderableAggMixin, Aggregate):
++# RemovedInDjango50Warning
++NOT_PROVIDED = object()
++
++
++class DeprecatedConvertValueMixin:
++    def __init__(self, *expressions, default=NOT_PROVIDED, **extra):
++        if default is NOT_PROVIDED:
++            default = None
++            self._default_provided = False
++        else:
++            self._default_provided = True
++        super().__init__(*expressions, default=default, **extra)
++
++    def convert_value(self, value, expression, connection):
++        if value is None and not self._default_provided:
++            warnings.warn(self.deprecation_msg, category=RemovedInDjango50Warning)
++            return self.deprecation_value
++        return value
++
++
++class ArrayAgg(DeprecatedConvertValueMixin, OrderableAggMixin, Aggregate):
+     function = 'ARRAY_AGG'
+     template = '%(function)s(%(distinct)s%(expressions)s %(ordering)s)'
+     allow_distinct = True
+ 
++    # RemovedInDjango50Warning
++    deprecation_value = property(lambda self: [])
++    deprecation_msg = (
++        'In Django 5.0, ArrayAgg() will return None instead of an empty list '
++        'if there are no rows. Pass default=None to opt into the new behavior '
++        'and silence this warning or default=Value([]) to keep the previous '
++        'behavior.'
++    )
++
+     @property
+     def output_field(self):
+         return ArrayField(self.source_expressions[0].output_field)
+ 
+-    def convert_value(self, value, expression, connection):
+-        if not value:
+-            return []
+-        return value
+-
+ 
+ class BitAnd(Aggregate):
+     function = 'BIT_AND'
+@@ -41,28 +68,36 @@ class BoolOr(Aggregate):
+     output_field = BooleanField()
+ 
+ 
+-class JSONBAgg(OrderableAggMixin, Aggregate):
++class JSONBAgg(DeprecatedConvertValueMixin, OrderableAggMixin, Aggregate):
+     function = 'JSONB_AGG'
+     template = '%(function)s(%(distinct)s%(expressions)s %(ordering)s)'
+     allow_distinct = True
+     output_field = JSONField()
+ 
+-    def convert_value(self, value, expression, connection):
+-        if not value:
+-            return '[]'
+-        return value
++    # RemovedInDjango50Warning
++    deprecation_value = '[]'
++    deprecation_msg = (
++        "In Django 5.0, JSONBAgg() will return None instead of an empty list "
++        "if there are no rows. Pass default=None to opt into the new behavior "
++        "and silence this warning or default=Value('[]') to keep the previous "
++        "behavior."
++    )
+ 
+ 
+-class StringAgg(OrderableAggMixin, Aggregate):
++class StringAgg(DeprecatedConvertValueMixin, OrderableAggMixin, Aggregate):
+     function = 'STRING_AGG'
+     template = '%(function)s(%(distinct)s%(expressions)s %(ordering)s)'
+     allow_distinct = True
+ 
++    # RemovedInDjango50Warning
++    deprecation_value = ''
++    deprecation_msg = (
++        "In Django 5.0, StringAgg() will return None instead of an empty "
++        "string if there are no rows. Pass default=None to opt into the new "
++        "behavior and silence this warning or default=Value('') to keep the "
++        "previous behavior."
++    )
++
+     def __init__(self, expression, delimiter, **extra):
+         delimiter_expr = Value(str(delimiter))
+         super().__init__(expression, delimiter_expr, **extra)
+-
+-    def convert_value(self, value, expression, connection):
+-        if not value:
+-            return ''
+-        return value
+diff --git a/django/contrib/postgres/aggregates/statistics.py b/django/contrib/postgres/aggregates/statistics.py
+index f3e1450..c0aae93 100644
+--- a/django/contrib/postgres/aggregates/statistics.py
++++ b/django/contrib/postgres/aggregates/statistics.py
+@@ -9,10 +9,10 @@ __all__ = [
+ class StatAggregate(Aggregate):
+     output_field = FloatField()
+ 
+-    def __init__(self, y, x, output_field=None, filter=None):
++    def __init__(self, y, x, output_field=None, filter=None, default=None):
+         if not x or not y:
+             raise ValueError('Both y and x must be provided.')
+-        super().__init__(y, x, output_field=output_field, filter=filter)
++        super().__init__(y, x, output_field=output_field, filter=filter, default=default)
+ 
+ 
+ class Corr(StatAggregate):
+@@ -20,9 +20,9 @@ class Corr(StatAggregate):
+ 
+ 
+ class CovarPop(StatAggregate):
+-    def __init__(self, y, x, sample=False, filter=None):
++    def __init__(self, y, x, sample=False, filter=None, default=None):
+         self.function = 'COVAR_SAMP' if sample else 'COVAR_POP'
+-        super().__init__(y, x, filter=filter)
++        super().__init__(y, x, filter=filter, default=default)
+ 
+ 
+ class RegrAvgX(StatAggregate):
+diff --git a/django/db/backends/mysql/features.py b/django/db/backends/mysql/features.py
+index 6e628e8..f6aef39 100644
+--- a/django/db/backends/mysql/features.py
++++ b/django/db/backends/mysql/features.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14026/django/db/backends/mysql/features.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import operator
+ 
+ from django.db.backends.base.features import BaseDatabaseFeatures
+@@ -60,6 +253,7 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+             'swedish_ci': f'{charset}_swedish_ci',
+         }
+ 
++    @inspect_code
+     @cached_property
+     def django_test_skips(self):
+         skips = {
+@@ -88,6 +282,17 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+                     'annotations.tests.NonAggregateAnnotationTestCase.test_annotation_aggregate_with_m2o',
+                 },
+             })
++        if not self.connection.mysql_is_mariadb and self.connection.mysql_version < (8,):
++            skips.update({
++                'Casting to datetime/time is not supported by MySQL < 8.0. (#30224)': {
++                    'aggregation.tests.AggregateTestCase.test_aggregation_default_using_time_from_python',
++                    'aggregation.tests.AggregateTestCase.test_aggregation_default_using_datetime_from_python',
++                },
++                'MySQL < 8.0 returns string type instead of datetime/time. (#30224)': {
++                    'aggregation.tests.AggregateTestCase.test_aggregation_default_using_time_from_database',
++                    'aggregation.tests.AggregateTestCase.test_aggregation_default_using_datetime_from_database',
++                },
++            })
+         if (
+             self.connection.mysql_is_mariadb and
+             (10, 4, 3) < self.connection.mysql_version < (10, 5, 2)
+diff --git a/django/db/models/aggregates.py b/django/db/models/aggregates.py
+index 8598ba9..9ff833e 100644
+--- a/django/db/models/aggregates.py
++++ b/django/db/models/aggregates.py
+@@ -1,9 +1,203 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14026/django/db/models/aggregates.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Classes to represent the definitions of aggregate functions.
+ """
+ from django.core.exceptions import FieldError
+ from django.db.models.expressions import Case, Func, Star, When
+ from django.db.models.fields import IntegerField
++from django.db.models.functions.comparison import Coalesce
+ from django.db.models.functions.mixins import (
+     FixDurationInputMixin, NumericOutputFieldMixin,
+ )
+@@ -22,11 +216,14 @@ class Aggregate(Func):
+     allow_distinct = False
+     empty_aggregate_value = None
+ 
+-    def __init__(self, *expressions, distinct=False, filter=None, **extra):
++    def __init__(self, *expressions, distinct=False, filter=None, default=None, **extra):
+         if distinct and not self.allow_distinct:
+             raise TypeError("%s does not allow distinct." % self.__class__.__name__)
++        if default is not None and self.empty_aggregate_value is not None:
++            raise TypeError(f'{self.__class__.__name__} does not allow default.')
+         self.distinct = distinct
+         self.filter = filter
++        self.default = default
+         super().__init__(*expressions, **extra)
+ 
+     def get_source_fields(self):
+@@ -43,6 +240,7 @@ class Aggregate(Func):
+         self.filter = self.filter and exprs.pop()
+         return super().set_source_expressions(exprs)
+ 
++    @inspect_code
+     def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
+         # Aggregates are not allowed in UPDATE queries, so ignore for_save
+         c = super().resolve_expression(query, allow_joins, reuse, summarize)
+@@ -56,7 +254,12 @@ class Aggregate(Func):
+                     before_resolved = self.get_source_expressions()[index]
+                     name = before_resolved.name if hasattr(before_resolved, 'name') else repr(before_resolved)
+                     raise FieldError("Cannot compute %s('%s'): '%s' is an aggregate" % (c.name, name, name))
+-        return c
++        if (default := c.default) is None:
++            return c
++        if hasattr(default, 'resolve_expression'):
++            default = default.resolve_expression(query, allow_joins, reuse, summarize)
++        c.default = None  # Reset the default argument before wrapping.
++        return Coalesce(c, default, output_field=c._output_field_or_none)
+ 
+     @property
+     def default_alias(self):
+diff --git a/tests/aggregation/tests.py b/tests/aggregation/tests.py
+index f7b2331..2de80f8 100644
+--- a/tests/aggregation/tests.py
++++ b/tests/aggregation/tests.py
+@@ -1,15 +1,19 @@
+ import datetime
++import math
+ import re
+ from decimal import Decimal
+ 
+ from django.core.exceptions import FieldError
+ from django.db import connection
+ from django.db.models import (
+-    Avg, Case, Count, DecimalField, DurationField, Exists, F, FloatField,
+-    IntegerField, Max, Min, OuterRef, Subquery, Sum, Value, When,
++    Avg, Case, Count, DateField, DateTimeField, DecimalField, DurationField,
++    Exists, F, FloatField, IntegerField, Max, Min, OuterRef, Q, StdDev,
++    Subquery, Sum, TimeField, Value, Variance, When,
+ )
+ from django.db.models.expressions import Func, RawSQL
+-from django.db.models.functions import Coalesce, Greatest
++from django.db.models.functions import (
++    Cast, Coalesce, Greatest, Now, Pi, TruncDate, TruncHour,
++)
+ from django.test import TestCase
+ from django.test.testcases import skipUnlessDBFeature
+ from django.test.utils import Approximate, CaptureQueriesContext
+@@ -18,6 +22,20 @@ from django.utils import timezone
+ from .models import Author, Book, Publisher, Store
+ 
+ 
++class NowUTC(Now):
++    template = 'CURRENT_TIMESTAMP'
++    output_field = DateTimeField()
++
++    def as_mysql(self, compiler, connection, **extra_context):
++        return self.as_sql(compiler, connection, template='UTC_TIMESTAMP', **extra_context)
++
++    def as_oracle(self, compiler, connection, **extra_context):
++        return self.as_sql(compiler, connection, template="CURRENT_TIMESTAMP AT TIME ZONE 'UTC'", **extra_context)
++
++    def as_postgresql(self, compiler, connection, **extra_context):
++        return self.as_sql(compiler, connection, template="STATEMENT_TIMESTAMP() AT TIME ZONE 'UTC'", **extra_context)
++
++
+ class AggregateTestCase(TestCase):
+ 
+     @classmethod
+@@ -1402,3 +1420,190 @@ class AggregateTestCase(TestCase):
+                 )['latest_opening'],
+                 datetime.datetime,
+             )
++
++    def test_aggregation_default_unsupported_by_count(self):
++        msg = 'Count does not allow default.'
++        with self.assertRaisesMessage(TypeError, msg):
++            Count('age', default=0)
++
++    def test_aggregation_default_unset(self):
++        for Aggregate in [Avg, Max, Min, StdDev, Sum, Variance]:
++            with self.subTest(Aggregate):
++                result = Author.objects.filter(age__gt=100).aggregate(
++                    value=Aggregate('age'),
++                )
++                self.assertIsNone(result['value'])
++
++    def test_aggregation_default_zero(self):
++        for Aggregate in [Avg, Max, Min, StdDev, Sum, Variance]:
++            with self.subTest(Aggregate):
++                result = Author.objects.filter(age__gt=100).aggregate(
++                    value=Aggregate('age', default=0),
++                )
++                self.assertEqual(result['value'], 0)
++
++    def test_aggregation_default_integer(self):
++        for Aggregate in [Avg, Max, Min, StdDev, Sum, Variance]:
++            with self.subTest(Aggregate):
++                result = Author.objects.filter(age__gt=100).aggregate(
++                    value=Aggregate('age', default=21),
++                )
++                self.assertEqual(result['value'], 21)
++
++    def test_aggregation_default_expression(self):
++        for Aggregate in [Avg, Max, Min, StdDev, Sum, Variance]:
++            with self.subTest(Aggregate):
++                result = Author.objects.filter(age__gt=100).aggregate(
++                    value=Aggregate('age', default=Value(5) * Value(7)),
++                )
++                self.assertEqual(result['value'], 35)
++
++    def test_aggregation_default_group_by(self):
++        qs = Publisher.objects.values('name').annotate(
++            books=Count('book'),
++            pages=Sum('book__pages', default=0),
++        ).filter(books=0)
++        self.assertSequenceEqual(
++            qs,
++            [{'name': "Jonno's House of Books", 'books': 0, 'pages': 0}],
++        )
++
++    def test_aggregation_default_compound_expression(self):
++        # Scale rating to a percentage; default to 50% if no books published.
++        formula = Avg('book__rating', default=2.5) * 20.0
++        queryset = Publisher.objects.annotate(rating=formula).order_by('name')
++        self.assertSequenceEqual(queryset.values('name', 'rating'), [
++            {'name': 'Apress', 'rating': 85.0},
++            {'name': "Jonno's House of Books", 'rating': 50.0},
++            {'name': 'Morgan Kaufmann', 'rating': 100.0},
++            {'name': 'Prentice Hall', 'rating': 80.0},
++            {'name': 'Sams', 'rating': 60.0},
++        ])
++
++    def test_aggregation_default_using_time_from_python(self):
++        expr = Min(
++            'store__friday_night_closing',
++            filter=~Q(store__name='Amazon.com'),
++            default=datetime.time(17),
++        )
++        if connection.vendor == 'mysql':
++            # Workaround for #30224 for MySQL 8.0+ & MariaDB.
++            expr.default = Cast(expr.default, TimeField())
++        queryset = Book.objects.annotate(oldest_store_opening=expr).order_by('isbn')
++        self.assertSequenceEqual(queryset.values('isbn', 'oldest_store_opening'), [
++            {'isbn': '013235613', 'oldest_store_opening': datetime.time(21, 30)},
++            {'isbn': '013790395', 'oldest_store_opening': datetime.time(23, 59, 59)},
++            {'isbn': '067232959', 'oldest_store_opening': datetime.time(17)},
++            {'isbn': '155860191', 'oldest_store_opening': datetime.time(21, 30)},
++            {'isbn': '159059725', 'oldest_store_opening': datetime.time(23, 59, 59)},
++            {'isbn': '159059996', 'oldest_store_opening': datetime.time(21, 30)},
++        ])
++
++    def test_aggregation_default_using_time_from_database(self):
++        now = timezone.now().astimezone(timezone.utc)
++        expr = Min(
++            'store__friday_night_closing',
++            filter=~Q(store__name='Amazon.com'),
++            default=TruncHour(NowUTC(), output_field=TimeField()),
++        )
++        queryset = Book.objects.annotate(oldest_store_opening=expr).order_by('isbn')
++        self.assertSequenceEqual(queryset.values('isbn', 'oldest_store_opening'), [
++            {'isbn': '013235613', 'oldest_store_opening': datetime.time(21, 30)},
++            {'isbn': '013790395', 'oldest_store_opening': datetime.time(23, 59, 59)},
++            {'isbn': '067232959', 'oldest_store_opening': datetime.time(now.hour)},
++            {'isbn': '155860191', 'oldest_store_opening': datetime.time(21, 30)},
++            {'isbn': '159059725', 'oldest_store_opening': datetime.time(23, 59, 59)},
++            {'isbn': '159059996', 'oldest_store_opening': datetime.time(21, 30)},
++        ])
++
++    def test_aggregation_default_using_date_from_python(self):
++        expr = Min('book__pubdate', default=datetime.date(1970, 1, 1))
++        if connection.vendor == 'mysql':
++            # Workaround for #30224 for MySQL 5.7+ & MariaDB.
++            expr.default = Cast(expr.default, DateField())
++        queryset = Publisher.objects.annotate(earliest_pubdate=expr).order_by('name')
++        self.assertSequenceEqual(queryset.values('name', 'earliest_pubdate'), [
++            {'name': 'Apress', 'earliest_pubdate': datetime.date(2007, 12, 6)},
++            {'name': "Jonno's House of Books", 'earliest_pubdate': datetime.date(1970, 1, 1)},
++            {'name': 'Morgan Kaufmann', 'earliest_pubdate': datetime.date(1991, 10, 15)},
++            {'name': 'Prentice Hall', 'earliest_pubdate': datetime.date(1995, 1, 15)},
++            {'name': 'Sams', 'earliest_pubdate': datetime.date(2008, 3, 3)},
++        ])
++
++    def test_aggregation_default_using_date_from_database(self):
++        now = timezone.now().astimezone(timezone.utc)
++        expr = Min('book__pubdate', default=TruncDate(NowUTC()))
++        queryset = Publisher.objects.annotate(earliest_pubdate=expr).order_by('name')
++        self.assertSequenceEqual(queryset.values('name', 'earliest_pubdate'), [
++            {'name': 'Apress', 'earliest_pubdate': datetime.date(2007, 12, 6)},
++            {'name': "Jonno's House of Books", 'earliest_pubdate': now.date()},
++            {'name': 'Morgan Kaufmann', 'earliest_pubdate': datetime.date(1991, 10, 15)},
++            {'name': 'Prentice Hall', 'earliest_pubdate': datetime.date(1995, 1, 15)},
++            {'name': 'Sams', 'earliest_pubdate': datetime.date(2008, 3, 3)},
++        ])
++
++    def test_aggregation_default_using_datetime_from_python(self):
++        expr = Min(
++            'store__original_opening',
++            filter=~Q(store__name='Amazon.com'),
++            default=datetime.datetime(1970, 1, 1),
++        )
++        if connection.vendor == 'mysql':
++            # Workaround for #30224 for MySQL 8.0+ & MariaDB.
++            expr.default = Cast(expr.default, DateTimeField())
++        queryset = Book.objects.annotate(oldest_store_opening=expr).order_by('isbn')
++        self.assertSequenceEqual(queryset.values('isbn', 'oldest_store_opening'), [
++            {'isbn': '013235613', 'oldest_store_opening': datetime.datetime(1945, 4, 25, 16, 24, 14)},
++            {'isbn': '013790395', 'oldest_store_opening': datetime.datetime(2001, 3, 15, 11, 23, 37)},
++            {'isbn': '067232959', 'oldest_store_opening': datetime.datetime(1970, 1, 1)},
++            {'isbn': '155860191', 'oldest_store_opening': datetime.datetime(1945, 4, 25, 16, 24, 14)},
++            {'isbn': '159059725', 'oldest_store_opening': datetime.datetime(2001, 3, 15, 11, 23, 37)},
++            {'isbn': '159059996', 'oldest_store_opening': datetime.datetime(1945, 4, 25, 16, 24, 14)},
++        ])
++
++    def test_aggregation_default_using_datetime_from_database(self):
++        now = timezone.now().astimezone(timezone.utc)
++        expr = Min(
++            'store__original_opening',
++            filter=~Q(store__name='Amazon.com'),
++            default=TruncHour(NowUTC(), output_field=DateTimeField()),
++        )
++        queryset = Book.objects.annotate(oldest_store_opening=expr).order_by('isbn')
++        self.assertSequenceEqual(queryset.values('isbn', 'oldest_store_opening'), [
++            {'isbn': '013235613', 'oldest_store_opening': datetime.datetime(1945, 4, 25, 16, 24, 14)},
++            {'isbn': '013790395', 'oldest_store_opening': datetime.datetime(2001, 3, 15, 11, 23, 37)},
++            {'isbn': '067232959', 'oldest_store_opening': now.replace(minute=0, second=0, microsecond=0, tzinfo=None)},
++            {'isbn': '155860191', 'oldest_store_opening': datetime.datetime(1945, 4, 25, 16, 24, 14)},
++            {'isbn': '159059725', 'oldest_store_opening': datetime.datetime(2001, 3, 15, 11, 23, 37)},
++            {'isbn': '159059996', 'oldest_store_opening': datetime.datetime(1945, 4, 25, 16, 24, 14)},
++        ])
++
++    def test_aggregation_default_using_duration_from_python(self):
++        result = Publisher.objects.filter(num_awards__gt=3).aggregate(
++            value=Sum('duration', default=datetime.timedelta(0)),
++        )
++        self.assertEqual(result['value'], datetime.timedelta(0))
++
++    def test_aggregation_default_using_duration_from_database(self):
++        result = Publisher.objects.filter(num_awards__gt=3).aggregate(
++            value=Sum('duration', default=Now() - Now()),
++        )
++        self.assertEqual(result['value'], datetime.timedelta(0))
++
++    def test_aggregation_default_using_decimal_from_python(self):
++        result = Book.objects.filter(rating__lt=3.0).aggregate(
++            value=Sum('price', default=Decimal('0.00')),
++        )
++        self.assertEqual(result['value'], Decimal('0.00'))
++
++    def test_aggregation_default_using_decimal_from_database(self):
++        result = Book.objects.filter(rating__lt=3.0).aggregate(
++            value=Sum('price', default=Pi()),
++        )
++        self.assertAlmostEqual(result['value'], Decimal.from_float(math.pi), places=6)
++
++    def test_aggregation_default_passed_another_aggregate(self):
++        result = Book.objects.aggregate(
++            value=Sum('price', filter=Q(rating__lt=3.0), default=Avg('pages') / 10.0),
++        )
++        self.assertAlmostEqual(result['value'], Decimal('61.72'), places=2)
+diff --git a/tests/postgres_tests/test_aggregates.py b/tests/postgres_tests/test_aggregates.py
+index d47c242..7ae7b16 100644
+--- a/tests/postgres_tests/test_aggregates.py
++++ b/tests/postgres_tests/test_aggregates.py
+@@ -3,7 +3,8 @@ from django.db.models import (
+ )
+ from django.db.models.fields.json import KeyTextTransform, KeyTransform
+ from django.db.models.functions import Cast, Concat, Substr
+-from django.test.utils import Approximate
++from django.test.utils import Approximate, ignore_warnings
++from django.utils.deprecation import RemovedInDjango50Warning
+ 
+ from . import PostgreSQLTestCase
+ from .models import AggregateTestModel, StatTestModel
+@@ -44,6 +45,7 @@ class TestGeneralAggregate(PostgreSQLTestCase):
+             ),
+         ])
+ 
++    @ignore_warnings(category=RemovedInDjango50Warning)
+     def test_empty_result_set(self):
+         AggregateTestModel.objects.all().delete()
+         tests = [
+@@ -72,6 +74,77 @@ class TestGeneralAggregate(PostgreSQLTestCase):
+                     )
+                     self.assertEqual(values, {'aggregation': expected_result})
+ 
++    def test_default_argument(self):
++        AggregateTestModel.objects.all().delete()
++        tests = [
++            (ArrayAgg('char_field', default=['<empty>']), ['<empty>']),
++            (ArrayAgg('integer_field', default=[0]), [0]),
++            (ArrayAgg('boolean_field', default=[False]), [False]),
++            (BitAnd('integer_field', default=0), 0),
++            (BitOr('integer_field', default=0), 0),
++            (BoolAnd('boolean_field', default=False), False),
++            (BoolOr('boolean_field', default=False), False),
++            (JSONBAgg('integer_field', default=Value('["<empty>"]')), ['<empty>']),
++            (StringAgg('char_field', delimiter=';', default=Value('<empty>')), '<empty>'),
++        ]
++        for aggregation, expected_result in tests:
++            with self.subTest(aggregation=aggregation):
++                # Empty result with non-execution optimization.
++                with self.assertNumQueries(0):
++                    values = AggregateTestModel.objects.none().aggregate(
++                        aggregation=aggregation,
++                    )
++                    self.assertEqual(values, {'aggregation': expected_result})
++                # Empty result when query must be executed.
++                with self.assertNumQueries(1):
++                    values = AggregateTestModel.objects.aggregate(
++                        aggregation=aggregation,
++                    )
++                    self.assertEqual(values, {'aggregation': expected_result})
++
++    def test_convert_value_deprecation(self):
++        AggregateTestModel.objects.all().delete()
++        queryset = AggregateTestModel.objects.all()
++
++        with self.assertWarnsMessage(RemovedInDjango50Warning, ArrayAgg.deprecation_msg):
++            queryset.aggregate(aggregation=ArrayAgg('boolean_field'))
++
++        with self.assertWarnsMessage(RemovedInDjango50Warning, JSONBAgg.deprecation_msg):
++            queryset.aggregate(aggregation=JSONBAgg('integer_field'))
++
++        with self.assertWarnsMessage(RemovedInDjango50Warning, StringAgg.deprecation_msg):
++            queryset.aggregate(aggregation=StringAgg('char_field', delimiter=';'))
++
++        # No warnings raised if default argument provided.
++        self.assertEqual(
++            queryset.aggregate(aggregation=ArrayAgg('boolean_field', default=None)),
++            {'aggregation': None},
++        )
++        self.assertEqual(
++            queryset.aggregate(aggregation=JSONBAgg('integer_field', default=None)),
++            {'aggregation': None},
++        )
++        self.assertEqual(
++            queryset.aggregate(
++                aggregation=StringAgg('char_field', delimiter=';', default=None),
++            ),
++            {'aggregation': None},
++        )
++        self.assertEqual(
++            queryset.aggregate(aggregation=ArrayAgg('boolean_field', default=Value([]))),
++            {'aggregation': []},
++        )
++        self.assertEqual(
++            queryset.aggregate(aggregation=JSONBAgg('integer_field', default=Value('[]'))),
++            {'aggregation': []},
++        )
++        self.assertEqual(
++            queryset.aggregate(
++                aggregation=StringAgg('char_field', delimiter=';', default=Value('')),
++            ),
++            {'aggregation': ''},
++        )
++
+     def test_array_agg_charfield(self):
+         values = AggregateTestModel.objects.aggregate(arrayagg=ArrayAgg('char_field'))
+         self.assertEqual(values, {'arrayagg': ['Foo1', 'Foo2', 'Foo4', 'Foo3']})
+@@ -515,6 +588,37 @@ class TestStatisticsAggregate(PostgreSQLTestCase):
+                     )
+                     self.assertEqual(values, {'aggregation': expected_result})
+ 
++    def test_default_argument(self):
++        StatTestModel.objects.all().delete()
++        tests = [
++            (Corr(y='int2', x='int1', default=0), 0),
++            (CovarPop(y='int2', x='int1', default=0), 0),
++            (CovarPop(y='int2', x='int1', sample=True, default=0), 0),
++            (RegrAvgX(y='int2', x='int1', default=0), 0),
++            (RegrAvgY(y='int2', x='int1', default=0), 0),
++            # RegrCount() doesn't support the default argument.
++            (RegrIntercept(y='int2', x='int1', default=0), 0),
++            (RegrR2(y='int2', x='int1', default=0), 0),
++            (RegrSlope(y='int2', x='int1', default=0), 0),
++            (RegrSXX(y='int2', x='int1', default=0), 0),
++            (RegrSXY(y='int2', x='int1', default=0), 0),
++            (RegrSYY(y='int2', x='int1', default=0), 0),
++        ]
++        for aggregation, expected_result in tests:
++            with self.subTest(aggregation=aggregation):
++                # Empty result with non-execution optimization.
++                with self.assertNumQueries(0):
++                    values = StatTestModel.objects.none().aggregate(
++                        aggregation=aggregation,
++                    )
++                    self.assertEqual(values, {'aggregation': expected_result})
++                # Empty result when query must be executed.
++                with self.assertNumQueries(1):
++                    values = StatTestModel.objects.aggregate(
++                        aggregation=aggregation,
++                    )
++                    self.assertEqual(values, {'aggregation': expected_result})
++
+     def test_corr_general(self):
+         values = StatTestModel.objects.aggregate(corr=Corr(y='int2', x='int1'))
+         self.assertEqual(values, {'corr': -1.0})
+@@ -539,6 +643,11 @@ class TestStatisticsAggregate(PostgreSQLTestCase):
+         values = StatTestModel.objects.aggregate(regrcount=RegrCount(y='int2', x='int1'))
+         self.assertEqual(values, {'regrcount': 3})
+ 
++    def test_regr_count_default(self):
++        msg = 'RegrCount does not allow default.'
++        with self.assertRaisesMessage(TypeError, msg):
++            RegrCount(y='int2', x='int1', default=0)
++
+     def test_regr_intercept_general(self):
+         values = StatTestModel.objects.aggregate(regrintercept=RegrIntercept(y='int2', x='int1'))
+         self.assertEqual(values, {'regrintercept': 4})

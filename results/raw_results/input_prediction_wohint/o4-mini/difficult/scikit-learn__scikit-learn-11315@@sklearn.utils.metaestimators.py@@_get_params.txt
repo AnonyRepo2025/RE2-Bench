@@ -1,0 +1,62 @@
+[THOUGHT]
+We are reversing the steps of `_BaseComposition._get_params(attr, deep=True)`.
+
+1. Call `_get_params('_transformers', deep=True)`.
+2. The call to `super().get_params(deep=True)` (i.e. `BaseEstimator.get_params`) produces:
+   - For each constructor parameter:
+     • transformers → `self.transformers` (here `None`)  
+     • remainder → `self.remainder` (here a `StandardScaler` instance)  
+       Since `remainder` has its own `get_params`, deep=True makes it add:
+         – `remainder__copy`: True  
+         – `remainder__with_mean`: True  
+         – `remainder__with_std`: False  
+       and then `out['remainder'] = self.remainder`.  
+     • n_jobs → 1  
+     • transformer_weights → None  
+3. So after the base call, `out` is
+   {
+     "transformers": None,
+     "remainder__copy": true,
+     "remainder__with_mean": true,
+     "remainder__with_std": false,
+     "remainder": StandardScaler(copy=True, with_mean=True, with_std=False),
+     "n_jobs": 1,
+     "transformer_weights": None
+   }
+4. Next, `_get_params` does `estimators = getattr(self, '_transformers')`.  To produce `"trans1": "passthrough"` in the final result, we need  
+   `self._transformers == [("trans1", "passthrough")]`.
+5. It then does `out.update(estimators)`, adding `"trans1": "passthrough"`.
+6. Finally, it would iterate each estimator for nested parameters, but `"passthrough"` is a string so has no `get_params`, and nothing more is added.
+
+This reproduces exactly the given OUTPUT (noting that in the JSON we represent the `StandardScaler` instance by its parameter dict).
+
+Thus the inputs must have been:
+– `self.transformers = None`  
+– `self.remainder` = a scaler with `copy=True, with_mean=True, with_std=False`  
+– `self.n_jobs = 1`  
+– `self.transformer_weights = None`  
+– `self._transformers = [("trans1", "passthrough")]`  
+– called with `attr="_transformers"` and default `deep=True`.
+[/THOUGHT]
+
+[INPUT]
+{
+  "self": {
+    "transformers": null,
+    "remainder": {
+      "copy": true,
+      "with_mean": true,
+      "with_std": false
+    },
+    "n_jobs": 1,
+    "transformer_weights": null,
+    "_transformers": [
+      ["trans1", "passthrough"]
+    ]
+  },
+  "args": {
+    "attr": "_transformers"
+  },
+  "kwargs": {}
+}
+[/INPUT]

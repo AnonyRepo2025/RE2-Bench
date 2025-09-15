@@ -1,0 +1,125 @@
+
+[OUTPUT]
+```
+{
+    "output": "[[-0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00]\n [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00]\n [ 0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00  0.00000000e+00]]"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import numpy as np
+from sklearn.linear_model import Lasso
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV
+
+def _fit_lasso(X, y, cv=None, param_grid=None, n_jobs=None, verbose=0, precompute=False, refit=True, return_n_iter=False, positive=False):
+    if param_grid is None:
+        param_grid = {'lasso__alpha': np.logspace(-4, -0.5, 30)}
+    if cv is None:
+        cv = 5
+    if n_jobs is None:
+        n_jobs = 1
+    steps = [('standardize', StandardScaler())]
+    if precompute:
+        steps.append(('lasso', Lasso(fit_intercept=False, precompute=True, positive=positive)))
+    else:
+        steps.append(('lasso', Lasso(fit_intercept=False, positive=positive)))
+    pipeline = Pipeline(steps)
+    search = GridSearchCV(pipeline, param_grid, cv=cv, n_jobs=n_jobs, verbose=verbose, refit=refit, return_train_score=return_n_iter)
+    search.fit(X, y)
+    return search
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.linear_model.Lasso.__init__
+
+def __init__(self, alpha=1.0, fit_intercept=True, normalize=False, precompute=False, copy_X=True, max_iter=1000, tol=1e-4, warm_start=False, positive=False, random_state=None, selection='cyclic'):
+    self.alpha = alpha
+    self.fit_intercept = fit_intercept
+    self.normalize = normalize
+    self.precompute = precompute
+    self.copy_X = copy_X
+    self.max_iter = max_iter
+    self.tol = tol
+    self.warm_start = warm_start
+    self.positive = positive
+    self.random_state = random_state
+    self.selection = selection
+
+.sklearn.linear_model.Lasso.fit
+
+def fit(self, X, y, check_input=True):
+    X, y = check_X_y(X, y, y_numeric=True, multi_output=True)
+    if self.precompute:
+        Gram = np.dot(X.T, X)
+        Xy = np.dot(X.T, y)
+    else:
+        Gram = None
+        Xy = None
+    return self._fit(X, y, Gram=Gram, Xy=Xy, check_input=check_input)
+
+.sklearn.linear_model.Lasso._fit
+
+def _fit(self, X, y, Gram=None, Xy=None, check_input=True):
+    if check_input:
+        X, y = check_X_y(X, y, y_numeric=True, multi_output=True)
+    n_samples, n_features = X.shape
+    X, y, X_offset, y_offset, X_scale = self._preprocess_data(X, y, fit_intercept=self.fit_intercept, normalize=self.normalize, copy=self.copy_X)
+    if y.ndim == 1:
+        y = y[:, np.newaxis]
+    if self.precompute:
+        if Gram is None or Xy is None:
+            raise ValueError('Gram and Xy must be provided when precompute is True.')
+        G = np.array(Gram, copy=True)
+        Xy = np.asarray(Xy, dtype=X.dtype)
+    else:
+        G = np.dot(X.T, X)
+        Xy = np.dot(X.T, y)
+    if self.alpha == 0:
+        coef = np.zeros((n_features, y.shape[1]), dtype=X.dtype)
+        self.n_iter_ = np.zeros((y.shape[1],), dtype=np.int32)
+    else:
+        coef, n_iter_ = self._coordinate_descent(G, Xy, X, y, self.alpha, self.max_iter, self.tol, self.selection, self.positive)
+        self.n_iter_ = n_iter_
+    self.coef_ = coef
+    self._set_intercept(X_offset, y_offset, X_scale)
+    return self
+
+.sklearn.linear_model.Lasso._coordinate_descent
+
+def _coordinate_descent(self, G, Xy, X, y, alpha, max_iter, tol, selection, positive):
+    n_features = X.shape[1]
+    n_targets = y.shape[1]
+    coef = np.zeros((n_features, n_targets), dtype=X.dtype)
+    n_iter = np.zeros((n_targets,), dtype=np.int32)
+    for k in range(n_targets):
+        coef[:, k], n_iter[k] = self._coordinate_descent_gram(G, Xy[:, k], alpha, max_iter, tol, selection, positive)
+    return coef, n_iter
+
+.sklearn.linear_model.Lasso._coordinate_descent_gram
+
+def _coordinate_descent_gram(self, G, Xy, alpha, max_iter, tol, selection, positive):
+    n_features = Xy.shape[0]
+    coef = np.zeros(n_features, dtype=Xy.dtype)
+    if positive:
+        Xy = Xy.copy(order='K')
+    indices = np.arange(n_features)
+    if selection == 'random':
+        np.random.shuffle(indices)
+    for n_iter in range(max_iter):
+        converged = True
+        for j in range(n_features):
+            if selection == 'cyclic':
+                j = n_iter % n_features
+            elif selection == 'random':
+                j = indices[n_iter % n_features]
+            old_coef_j = coef[j]
+            if j == 0:
+                c_feature = coef[1:]
+                g_feature = G[1:, j]
+            else:
+                c_feature = np.append(coef[:j], coef[j + 1:])
+                g_feature = np.append(G[:j, j], G[j

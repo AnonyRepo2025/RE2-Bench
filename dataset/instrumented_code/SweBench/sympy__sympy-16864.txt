@@ -1,0 +1,1367 @@
+diff --git a/sympy/core/mod.py b/sympy/core/mod.py
+index 3b916c2..0773f1e 100644
+--- a/sympy/core/mod.py
++++ b/sympy/core/mod.py
+@@ -221,3 +221,7 @@ def _eval_is_nonnegative(self):
+     def _eval_is_nonpositive(self):
+         if self.args[1].is_negative:
+             return True
++
++    def _eval_rewrite_as_floor(self, a, b, **kwargs):
++        from sympy.functions.elementary.integers import floor
++        return a - b*floor(a/b)
+diff --git a/sympy/core/tests/test_arit.py b/sympy/core/tests/test_arit.py
+index 104a894..9f2f052 100644
+--- a/sympy/core/tests/test_arit.py
++++ b/sympy/core/tests/test_arit.py
+@@ -1,6 +1,6 @@
+ from sympy import (Basic, Symbol, sin, cos, exp, sqrt, Rational, Float, re, pi,
+         sympify, Add, Mul, Pow, Mod, I, log, S, Max, symbols, oo, zoo, Integer,
+-        sign, im, nan, Dummy, factorial, comp, refine
++        sign, im, nan, Dummy, factorial, comp, refine, floor
+ )
+ from sympy.core.compatibility import long, range
+ from sympy.core.expr import unchanged
+@@ -1669,6 +1669,10 @@ def test_Mod():
+     assert Mod(8*i/j, 4) == 4*Mod(2*i/j, 1)
+     assert Mod(8*i, 4) == 0
+ 
++    # rewrite
++    assert Mod(x, y).rewrite(floor) == x - y*floor(x/y)
++    assert ((x - Mod(x, y))/y).rewrite(floor) == floor(x/y)
++
+ 
+ def test_Mod_is_integer():
+     p = Symbol('p', integer=True)
+diff --git a/sympy/sets/contains.py b/sympy/sets/contains.py
+index 363d0f5..933e821 100644
+--- a/sympy/sets/contains.py
++++ b/sympy/sets/contains.py
+@@ -1,8 +1,202 @@
+ from __future__ import print_function, division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
+ 
+-from sympy.core import Basic, S
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-16864/sympy/sets/contains.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
++
++from sympy.core import S
+ from sympy.core.relational import Eq, Ne
+ from sympy.logic.boolalg import BooleanFunction
++from sympy.utilities.misc import func_name
+ 
+ 
+ class Contains(BooleanFunction):
+@@ -28,13 +222,12 @@ class Contains(BooleanFunction):
+     .. [1] https://en.wikipedia.org/wiki/Element_%28mathematics%29
+     """
+     @classmethod
++    @inspect_code
+     def eval(cls, x, s):
+         from sympy.sets.sets import Set
+ 
+-        if not isinstance(x, Basic):
+-            raise TypeError
+         if not isinstance(s, Set):
+-            raise TypeError
++            raise TypeError('expecting Set, not %s' % func_name(s))
+ 
+         ret = s.contains(x)
+         if not isinstance(ret, Contains) and (
+diff --git a/sympy/sets/fancysets.py b/sympy/sets/fancysets.py
+index be0ff88..3da73cf 100644
+--- a/sympy/sets/fancysets.py
++++ b/sympy/sets/fancysets.py
+@@ -8,7 +8,7 @@
+ from sympy.core.symbol import Dummy, symbols
+ from sympy.core.sympify import _sympify, sympify, converter
+ from sympy.logic.boolalg import And
+-from sympy.sets.sets import Set, Interval, Union, FiniteSet
++from sympy.sets.sets import Set, Interval, Union, FiniteSet, ProductSet
+ from sympy.utilities.misc import filldedent
+ 
+ 
+@@ -254,7 +254,7 @@ def __new__(cls, flambda, *sets):
+         return Basic.__new__(cls, flambda, *sets)
+ 
+     lamda = property(lambda self: self.args[0])
+-    base_set = property(lambda self: self.args[1])
++    base_set = property(lambda self: ProductSet(self.args[1:]))
+ 
+     def __iter__(self):
+         already_seen = set()
+diff --git a/sympy/sets/handlers/functions.py b/sympy/sets/handlers/functions.py
+index fc66161..d811e87 100644
+--- a/sympy/sets/handlers/functions.py
++++ b/sympy/sets/handlers/functions.py
+@@ -1,11 +1,12 @@
+ from sympy import Set, symbols, exp, log, S, Wild
+ from sympy.core import Expr, Add
+ from sympy.core.function import Lambda, _coeff_isneg, FunctionClass
++from sympy.core.mod import Mod
+ from sympy.logic.boolalg import true
+ from sympy.multipledispatch import dispatch
+ from sympy.sets import (imageset, Interval, FiniteSet, Union, ImageSet,
+                         EmptySet, Intersection, Range)
+-from sympy.sets.fancysets import Integers
++from sympy.sets.fancysets import Integers, Naturals
+ 
+ 
+ _x, _y = symbols("x y")
+@@ -167,9 +168,6 @@ def _set_function(f, self):
+     if not isinstance(expr, Expr):
+         return
+ 
+-    if len(f.variables) > 1:
+-        return
+-
+     n = f.variables[0]
+ 
+     # f(x) + c and f(-x) + c cover the same integers
+@@ -186,7 +184,39 @@ def _set_function(f, self):
+     match = expr.match(a*n + b)
+     if match and match[a]:
+         # canonical shift
+-        expr = match[a]*n + match[b] % match[a]
++        b = match[b]
++        if abs(match[a]) == 1:
++            nonint = []
++            for bi in Add.make_args(b):
++                if not bi.is_integer:
++                    nonint.append(bi)
++            b = Add(*nonint)
++        if b.is_number and match[a].is_real:
++            mod = b % match[a]
++            reps = dict([(m, m.args[0]) for m in mod.atoms(Mod)
++                if not m.args[0].is_real])
++            mod = mod.xreplace(reps)
++            expr = match[a]*n + mod
++        else:
++            expr = match[a]*n + b
+ 
+     if expr != f.expr:
+         return ImageSet(Lambda(n, expr), S.Integers)
++
++
++@dispatch(FunctionUnion, Naturals)
++def _set_function(f, self):
++    expr = f.expr
++    if not isinstance(expr, Expr):
++        return
++
++    x = f.variables[0]
++    if not expr.free_symbols - {x}:
++        step = expr.coeff(x)
++        c = expr.subs(x, 0)
++        if c.is_Integer and step.is_Integer and expr == step*x + c:
++            if self is S.Naturals:
++                c += step
++            if step > 0:
++                return Range(c, S.Infinity, step)
++            return Range(c, S.NegativeInfinity, step)
+diff --git a/sympy/sets/handlers/intersection.py b/sympy/sets/handlers/intersection.py
+index 8c39042..2819e9e 100644
+--- a/sympy/sets/handlers/intersection.py
++++ b/sympy/sets/handlers/intersection.py
+@@ -1,9 +1,203 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-16864/sympy/sets/handlers/intersection.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from sympy import (S, Dummy, Lambda, symbols, Interval, Intersection, Set,
+                    EmptySet, FiniteSet, Union, ComplexRegion, ProductSet)
+ from sympy.multipledispatch import dispatch
+ from sympy.sets.conditionset import ConditionSet
+-from sympy.sets.fancysets import Integers, Naturals, Reals, Range, ImageSet
+-from sympy.sets.sets import UniversalSet, imageset
++from sympy.sets.fancysets import (Integers, Naturals, Reals, Range,
++    ImageSet, Naturals0)
++from sympy.sets.sets import UniversalSet, imageset, ProductSet
+ 
+ 
+ @dispatch(ConditionSet, ConditionSet)
+@@ -14,6 +208,18 @@ def intersection_sets(a, b):
+ def intersection_sets(a, b):
+     return ConditionSet(a.sym, a.condition, Intersection(a.base_set, b))
+ 
++@dispatch(Naturals, Integers)
++def intersection_sets(a, b):
++    return a
++
++@dispatch(Integers, Naturals)
++def intersection_sets(a, b):
++    return b
++
++@dispatch(Naturals, Naturals)
++def intersection_sets(a, b):
++    return a if a is S.Naturals0 else b
++
+ @dispatch(Naturals, Interval)
+ def intersection_sets(a, b):
+     return Intersection(S.Integers, b, Interval(a._inf, S.Infinity))
+@@ -224,6 +430,7 @@ def intersection_sets(a, b):
+     return a
+ 
+ 
++@inspect_code
+ @dispatch(ImageSet, Set)
+ def intersection_sets(self, other):
+     from sympy.solvers.diophantine import diophantine
+@@ -242,19 +449,24 @@ def intersection_sets(self, other):
+             # on the variable name, they are replaced by the dummy variables
+             # below
+             a, b = Dummy('a'), Dummy('b')
+-            f, g = f.subs(n, a), g.subs(m, b)
+-            solns_set = diophantine(f - g)
+-            if solns_set == set():
++            fa, ga = f.subs(n, a), g.subs(m, b)
++            solns = list(diophantine(fa - ga))
++            if not solns:
+                 return EmptySet()
+-            solns = list(diophantine(f - g))
+ 
+             if len(solns) != 1:
+                 return
+-
+-            # since 'a' < 'b', select soln for n
+-            nsol = solns[0][0]
+-            t = nsol.free_symbols.pop()
+-            return imageset(Lambda(n, f.subs(a, nsol.subs(t, n))), S.Integers)
++            nsol = solns[0][0]  # since 'a' < 'b', nsol is first
++            t = nsol.free_symbols.pop()  # diophantine supplied symbol
++            nsol = nsol.subs(t, n)
++            if nsol != n:
++                # if nsol == n and we know were are working with
++                # a base_set of Integers then this was an unevaluated
++                # ImageSet representation of Integers, otherwise
++                # it is a new ImageSet intersection with a subset
++                # of integers
++                nsol = f.subs(n, nsol)
++            return imageset(Lambda(n, nsol), S.Integers)
+ 
+     if other == S.Reals:
+         from sympy.solvers.solveset import solveset_real
+@@ -271,9 +483,24 @@ def intersection_sets(self, other):
+         re, im = f_.as_real_imag()
+         im = expand_complex(im)
+ 
+-        return imageset(Lambda(n_, re),
+-                        self.base_set.intersect(
+-                            solveset_real(im, n_)))
++        re = re.subs(n_, n)
++        im = im.subs(n_, n)
++        ifree = im.free_symbols
++        lam = Lambda(n, re)
++        base = self.base_set
++        if not im:
++            # allow re-evaluation
++            # of self in this case to make
++            # the result canonical
++            pass
++        elif im.is_zero is False:
++            return S.EmptySet
++        elif ifree != {n}:
++            return None
++        else:
++            # univarite imaginary part in same variable
++            base = base.intersect(solveset_real(im, n))
++        return imageset(lam, base)
+ 
+     elif isinstance(other, Interval):
+         from sympy.solvers.solveset import (invert_real, invert_complex,
+diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
+index c0607b7..1054103 100644
+--- a/sympy/sets/sets.py
++++ b/sympy/sets/sets.py
+@@ -1,6 +1,200 @@
+ from __future__ import print_function, division
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sympy__sympy-16864/sympy/sets/sets.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ from itertools import product
++import inspect
+ 
+ from sympy.core.basic import Basic
+ from sympy.core.compatibility import (iterable, with_metaclass,
+@@ -292,6 +486,7 @@ def contains(self, other):
+     def _contains(self, other):
+         raise NotImplementedError("(%s)._contains(%s)" % (self, other))
+ 
++    @inspect_code
+     def is_subset(self, other):
+         """
+         Returns True if 'self' is a subset of 'other'.
+@@ -307,6 +502,9 @@ def is_subset(self, other):
+ 
+         """
+         if isinstance(other, Set):
++            # XXX issue 16873
++            # self might be an unevaluated form of self
++            # so the equality test will fail
+             return self.intersect(other) == self
+         else:
+             raise ValueError("Unknown argument '%s'" % other)
+@@ -1727,6 +1925,7 @@ def reduce(A, B):
+             return SymmetricDifference(A, B, evaluate=False)
+ 
+ 
++@inspect_code
+ def imageset(*args):
+     r"""
+     Return an image of the set under transformation ``f``.
+@@ -1755,7 +1954,7 @@ def imageset(*args):
+     >>> imageset(sin, Interval(-2, 1))
+     ImageSet(Lambda(x, sin(x)), Interval(-2, 1))
+     >>> imageset(lambda y: x + y, Interval(-2, 1))
+-    ImageSet(Lambda(_x, _x + x), Interval(-2, 1))
++    ImageSet(Lambda(y, x + y), Interval(-2, 1))
+ 
+     Expressions applied to the set of Integers are simplified
+     to show as few negatives as possible and linear expressions
+@@ -1785,24 +1984,36 @@ def imageset(*args):
+         f = args[0]
+         set_list = args[1:]
+ 
+-        if isinstance(f, Lambda):
+-            pass
+-        elif (
+-                isinstance(f, FunctionClass) # like cos
+-                or func_name(f) == '<lambda>'
+-                ):
+-            # TODO: should we support a way to sympify `lambda`?
+-            if len(set_list) == 1:
+-                var = _uniquely_named_symbol(Symbol('x'), f(Dummy()))
+-                expr = f(var)
++    if isinstance(f, Lambda):
++        pass
++    elif callable(f):
++        nargs = getattr(f, 'nargs', {})
++        if nargs:
++            if len(nargs) != 1:
++                raise NotImplemented(filldedent('''
++                    This function can take more than 1 arg
++                    but the potentially complicated set input
++                    has not been analyzed at this point to
++                    know its dimensions. TODO
++                    '''))
++            N = nargs.args[0]
++            if N == 1:
++                s = 'x'
+             else:
+-                var = [Symbol('x%i' % (i+1)) for i in range(len(set_list))]
+-                expr = f(*var)
+-            f = Lambda(var, expr)
++                s = [Symbol('x%i' % i) for i in range(1, N + 1)]
+         else:
+-            raise TypeError(filldedent('''
+-        expecting lambda, Lambda, or FunctionClass, not \'%s\'.''' %
+-        func_name(f)))
++            if PY3:
++                s = inspect.signature(f).parameters
++            else:
++                s = inspect.getargspec(f).args
++        dexpr = _sympify(f(*[Dummy() for i in s]))
++        var = [_uniquely_named_symbol(Symbol(i), dexpr) for i in s]
++        expr = f(*var)
++        f = Lambda(var, expr)
++    else:
++        raise TypeError(filldedent('''
++            expecting lambda, Lambda, or FunctionClass,
++            not \'%s\'.''' % func_name(f)))
+ 
+     if any(not isinstance(s, Set) for s in set_list):
+         name = [func_name(s) for s in set_list]
+@@ -1811,8 +2022,14 @@ def imageset(*args):
+ 
+     if len(set_list) == 1:
+         set = set_list[0]
+-        r = set_function(f, set)
+-        if r is None:
++        try:
++            # TypeError if arg count != set dimensions
++            r = set_function(f, set)
++            if r is None:
++                raise TypeError
++            if not r:
++                return r
++        except TypeError:
+             r = ImageSet(f, set)
+         if isinstance(r, ImageSet):
+             f, set = r.args
+diff --git a/sympy/sets/tests/test_contains.py b/sympy/sets/tests/test_contains.py
+index f232e46..4efd8ae 100644
+--- a/sympy/sets/tests/test_contains.py
++++ b/sympy/sets/tests/test_contains.py
+@@ -1,7 +1,8 @@
+ from sympy import Symbol, Contains, S, Interval, FiniteSet, oo, Eq
+-
++from sympy.utilities.pytest import raises
+ 
+ def test_contains_basic():
++    raises(TypeError, lambda: Contains(S.Integers, 1))
+     assert Contains(2, S.Integers) is S.true
+     assert Contains(-2, S.Naturals) is S.false
+ 
+diff --git a/sympy/sets/tests/test_fancysets.py b/sympy/sets/tests/test_fancysets.py
+index d5884d7..eea3900 100644
+--- a/sympy/sets/tests/test_fancysets.py
++++ b/sympy/sets/tests/test_fancysets.py
+@@ -1,11 +1,13 @@
+ from sympy.core.compatibility import range, PY3
++from sympy.core.mod import Mod
+ from sympy.sets.fancysets import (ImageSet, Range, normalize_theta_set,
+                                   ComplexRegion)
+ from sympy.sets.sets import (FiniteSet, Interval, imageset, Union,
+-                             Intersection)
++                             Intersection, ProductSet)
+ from sympy.simplify.simplify import simplify
+ from sympy import (S, Symbol, Lambda, symbols, cos, sin, pi, oo, Basic,
+-                   Rational, sqrt, tan, log, exp, Abs, I, Tuple, eye)
++                   Rational, sqrt, tan, log, exp, Abs, I, Tuple, eye,
++                   Dummy)
+ from sympy.utilities.iterables import cartes
+ from sympy.utilities.pytest import XFAIL, raises
+ from sympy.abc import x, y, t
+@@ -77,6 +79,7 @@ def test_ImageSet():
+     assert Rational(.25) in harmonics
+     assert 0.25 not in harmonics
+     assert Rational(.3) not in harmonics
++    assert (1, 2) not in harmonics
+ 
+     assert harmonics.is_iterable
+ 
+@@ -96,6 +99,9 @@ def test_ImageSet():
+     assert 2/S(100) not in ImageSet(Lambda((x, y), 2/x), c)
+     assert 2/S(3) in ImageSet(Lambda((x, y), 2/x), c)
+ 
++    assert imageset(lambda x, y: x + y, S.Integers, S.Naturals
++        ).base_set == ProductSet(S.Integers, S.Naturals)
++
+ 
+ def test_image_is_ImageSet():
+     assert isinstance(imageset(x, sqrt(sin(x)), Range(5)), ImageSet)
+@@ -338,8 +344,8 @@ def test_Integers_eval_imageset():
+     im = imageset(Lambda(x, -2*x - S(11)/7), S.Integers)
+     assert im == ans
+     y = Symbol('y')
+-    assert imageset(x, 2*x + y, S.Integers) == \
+-        imageset(x, 2*x + y % 2, S.Integers)
++    L = imageset(x, 2*x + y, S.Integers)
++    assert y + 4 in L
+ 
+     _x = symbols('x', negative=True)
+     eq = _x**2 - _x + 1
+@@ -449,8 +455,14 @@ def test_imageset_intersect_real():
+     assert imageset(Lambda(n, n + (n - 1)*(n + 1)*I), S.Integers).intersect(S.Reals) == \
+             FiniteSet(-1, 1)
+ 
+-    s = ImageSet(Lambda(n, -I*(I*(2*pi*n - pi/4) + log(Abs(sqrt(-I))))), S.Integers)
+-    assert s.intersect(S.Reals) == imageset(Lambda(n, 2*n*pi - pi/4), S.Integers)
++    s = ImageSet(
++        Lambda(n, -I*(I*(2*pi*n - pi/4) + log(Abs(sqrt(-I))))),
++        S.Integers)
++    # s is unevaluated, but after intersection the result
++    # should be canonical
++    assert s.intersect(S.Reals) == imageset(
++        Lambda(n, 2*n*pi - pi/4), S.Integers) == ImageSet(
++        Lambda(n, 2*pi*n + 7*pi/4), S.Integers)
+ 
+ 
+ def test_imageset_intersect_interval():
+@@ -498,11 +510,25 @@ def test_ImageSet_simplification():
+     assert imageset(Lambda(n, sin(n)),
+                     imageset(Lambda(m, tan(m)), S.Integers)) == \
+             imageset(Lambda(m, sin(tan(m))), S.Integers)
++    assert imageset(n, 1 + 2*n, S.Naturals) == Range(3, oo, 2)
++    assert imageset(n, 1 + 2*n, S.Naturals0) == Range(1, oo, 2)
++    assert imageset(n, 1 - 2*n, S.Naturals) == Range(-1, -oo, -2)
+ 
+ 
+ def test_ImageSet_contains():
+     from sympy.abc import x
+     assert (2, S.Half) in imageset(x, (x, 1/x), S.Integers)
++    assert imageset(x, x + I*3, S.Integers).intersection(S.Reals) is S.EmptySet
++    i = Dummy(integer=True)
++    q = imageset(x, x + I*y, S.Integers).intersection(S.Reals)
++    assert q.subs(y, I*i).intersection(S.Integers) is S.Integers
++    q = imageset(x, x + I*y/x, S.Integers).intersection(S.Reals)
++    assert q.subs(y, 0) is S.Integers
++    assert q.subs(y, I*i*x).intersection(S.Integers) is S.Integers
++    z = cos(1)**2 + sin(1)**2 - 1
++    q = imageset(x, x + I*z, S.Integers).intersection(S.Reals)
++    assert q is not S.EmptySet
++
+ 
+ 
+ def test_ComplexRegion_contains():
+@@ -753,3 +779,23 @@ def test_issue_11914():
+     assert -3 in cp1.union(cp2)
+     assert -3 in cp2.union(cp1)
+     assert -5 not in cp1.union(cp2)
++
++
++def test_issue_9543():
++    assert ImageSet(Lambda(x, x**2), S.Naturals).is_subset(S.Reals)
++
++
++def test_issue_16871():
++    assert ImageSet(Lambda(x, x), FiniteSet(1)) == {1}
++    assert ImageSet(Lambda(x, x - 3), S.Integers
++        ).intersection(S.Integers) is S.Integers
++
++
++@XFAIL
++def test_issue_16871b():
++    assert ImageSet(Lambda(x, x - 3), S.Integers).is_subset(S.Integers)
++
++
++def test_no_mod_on_imaginary():
++    assert imageset(Lambda(x, 2*x + 3*I), S.Integers
++        ) == ImageSet(Lambda(x, 2*x + I), S.Integers)
+diff --git a/sympy/sets/tests/test_sets.py b/sympy/sets/tests/test_sets.py
+index bdad2c5..df583a9 100644
+--- a/sympy/sets/tests/test_sets.py
++++ b/sympy/sets/tests/test_sets.py
+@@ -20,12 +20,13 @@ def test_imageset():
+     assert imageset(cos, ints) == ImageSet(Lambda(x, cos(x)), ints)
+     def f(x):
+         return cos(x)
+-    raises(TypeError, lambda: imageset(f, ints))
++    assert imageset(f, ints) == imageset(x, cos(x), ints)
+     f = lambda x: cos(x)
+     assert imageset(f, ints) == ImageSet(Lambda(x, cos(x)), ints)
+     assert imageset(x, 1, ints) == FiniteSet(1)
+     assert imageset(x, y, ints) == FiniteSet(y)
+-    assert (str(imageset(lambda y: x + y, Interval(-2, 1)).lamda.expr)
++    clash = Symbol('x', integer=true)
++    assert (str(imageset(lambda x: x + clash, Interval(-2, 1)).lamda.expr)
+         in ('_x + x', 'x + _x'))
+     x1, x2 = symbols("x1, x2")
+     assert imageset(lambda x,y: Add(x,y), Interval(1,2), Interval(2, 3)) == \
+@@ -243,7 +244,14 @@ def test_complement():
+     assert all(pt in notsquare for pt in [(-1, 0), (1.5, .5), (10, 10)])
+ 
+ 
+-def test_intersect():
++def test_intersect1():
++    assert all(S.Integers.intersection(i) is i for i in
++        (S.Naturals, S.Naturals0))
++    assert all(i.intersection(S.Integers) is i for i in
++        (S.Naturals, S.Naturals0))
++    s =  S.Naturals0
++    assert S.Naturals.intersection(s) is s
++    assert s.intersection(S.Naturals) is s
+     x = Symbol('x')
+     assert Interval(0, 2).intersect(Interval(1, 2)) == Interval(1, 2)
+     assert Interval(0, 2).intersect(Interval(1, 2, True)) == \
+@@ -407,6 +415,9 @@ def test_is_subset():
+     assert FiniteSet(1, 2, 3, 4).issubset(Interval(0, 5)) is True
+     assert S.EmptySet.issubset(FiniteSet(1, 2, 3)) is True
+ 
++    assert S.Naturals.is_subset(S.Integers)
++    assert S.Naturals0.is_subset(S.Integers)
++
+ 
+ def test_is_proper_subset():
+     assert Interval(0, 1).is_proper_subset(Interval(0, 2)) is True
+diff --git a/sympy/solvers/solveset.py b/sympy/solvers/solveset.py
+index 18a550b..d79100f 100644
+--- a/sympy/solvers/solveset.py
++++ b/sympy/solvers/solveset.py
+@@ -2318,20 +2318,17 @@ def substitution(system, symbols, result=[{}], known_symbols=[],
+     >>> x, y, z = symbols('x, y, z')
+     >>> from sympy import exp, sin
+     >>> substitution([exp(x) - sin(y), y**2 - 4], [x, y])
+-    {(log(sin(2)), 2), (ImageSet(Lambda(_n, I*(2*_n*pi + pi) +
+-        log(sin(2))), Integers), -2), (ImageSet(Lambda(_n, 2*_n*I*pi +
+-        Mod(log(sin(2)), 2*I*pi)), Integers), 2)}
++    {(ImageSet(Lambda(_n, I*(2*_n*pi + pi) + log(sin(2))), Integers), -2),
++    (ImageSet(Lambda(_n, 2*_n*I*pi + log(sin(2))), Integers), 2)}
+ 
+     >>> eqs = [z**2 + exp(2*x) - sin(y), -3 + exp(-y)]
+     >>> substitution(eqs, [y, z])
+     {(-log(3), -sqrt(-exp(2*x) - sin(log(3)))),
+     (-log(3), sqrt(-exp(2*x) - sin(log(3)))),
+-    (ImageSet(Lambda(_n, 2*_n*I*pi + Mod(-log(3), 2*I*pi)), Integers),
+-    ImageSet(Lambda(_n, -sqrt(-exp(2*x) + sin(2*_n*I*pi +
+-    Mod(-log(3), 2*I*pi)))), Integers)),
+-    (ImageSet(Lambda(_n, 2*_n*I*pi + Mod(-log(3), 2*I*pi)), Integers),
+-    ImageSet(Lambda(_n, sqrt(-exp(2*x) + sin(2*_n*I*pi +
+-        Mod(-log(3), 2*I*pi)))), Integers))}
++    (ImageSet(Lambda(_n, 2*_n*I*pi - log(3)), Integers),
++    ImageSet(Lambda(_n, -sqrt(-exp(2*x) + sin(2*_n*I*pi - log(3)))), Integers)),
++    (ImageSet(Lambda(_n, 2*_n*I*pi - log(3)), Integers),
++    ImageSet(Lambda(_n, sqrt(-exp(2*x) + sin(2*_n*I*pi - log(3)))), Integers))}
+ 
+     """
+ 
+@@ -2933,35 +2930,34 @@ def nonlinsolve(system, *symbols):
+     >>> nonlinsolve([(x+y)**2 - 4, x + y - 2], [x, y])
+     {(2 - y, y)}
+ 
+-    2. If some of the equations are non polynomial equation then `nonlinsolve`
+-    will call `substitution` function and returns real and complex solutions,
++    2. If some of the equations are non-polynomial then `nonlinsolve`
++    will call the `substitution` function and return real and complex solutions,
+     if present.
+ 
+     >>> from sympy import exp, sin
+     >>> nonlinsolve([exp(x) - sin(y), y**2 - 4], [x, y])
+-    {(log(sin(2)), 2), (ImageSet(Lambda(_n, I*(2*_n*pi + pi) +
+-        log(sin(2))), Integers), -2), (ImageSet(Lambda(_n, 2*_n*I*pi +
+-        Mod(log(sin(2)), 2*I*pi)), Integers), 2)}
++    {(ImageSet(Lambda(_n, I*(2*_n*pi + pi) + log(sin(2))), Integers), -2),
++    (ImageSet(Lambda(_n, 2*_n*I*pi + log(sin(2))), Integers), 2)}
+ 
+-    3. If system is Non linear polynomial zero dimensional then it returns
+-    both solution (real and complex solutions, if present using
+-    `solve_poly_system`):
++    3. If system is non-linear polynomial and zero-dimensional then it
++    returns both solution (real and complex solutions, if present) using
++    `solve_poly_system`:
+ 
+     >>> from sympy import sqrt
+     >>> nonlinsolve([x**2 - 2*y**2 -2, x*y - 2], [x, y])
+     {(-2, -1), (2, 1), (-sqrt(2)*I, sqrt(2)*I), (sqrt(2)*I, -sqrt(2)*I)}
+ 
+-    4. `nonlinsolve` can solve some linear(zero or positive dimensional)
+-    system (because it is using `groebner` function to get the
+-    groebner basis and then `substitution` function basis as the new `system`).
+-    But it is not recommended to solve linear system using `nonlinsolve`,
+-    because `linsolve` is better for all kind of linear system.
++    4. `nonlinsolve` can solve some linear (zero or positive dimensional)
++    system (because it uses the `groebner` function to get the
++    groebner basis and then uses the `substitution` function basis as the
++    new `system`). But it is not recommended to solve linear system using
++    `nonlinsolve`, because `linsolve` is better for general linear systems.
+ 
+     >>> nonlinsolve([x + 2*y -z - 3, x - y - 4*z + 9 , y + z - 4], [x, y, z])
+     {(3*z - 5, 4 - z, z)}
+ 
+-    5. System having polynomial equations and only real solution is present
+-    (will be solved using `solve_poly_system`):
++    5. System having polynomial equations and only real solution is
++    solved using `solve_poly_system`:
+ 
+     >>> e1 = sqrt(x**2 + y**2) - 10
+     >>> e2 = sqrt(y**2 + (-x + 10)**2) - 3
+diff --git a/sympy/solvers/tests/test_solveset.py b/sympy/solvers/tests/test_solveset.py
+index 61f15fa..5784214 100644
+--- a/sympy/solvers/tests/test_solveset.py
++++ b/sympy/solvers/tests/test_solveset.py
+@@ -119,31 +119,31 @@ def ireal(x, s=S.Reals):
+                 imageset(Lambda(n, 2*n*pi - acos(y)), S.Integers)))
+ 
+     assert invert_real(cos(exp(x)), y, x) == \
+-        (x, Union(imageset(Lambda(n, log(2*n*pi + Mod(acos(y), 2*pi))), S.Integers), \
+-                imageset(Lambda(n, log(2*n*pi + Mod(-acos(y), 2*pi))), S.Integers)))
++        (x, Union(imageset(Lambda(n, log(2*n*pi + acos(y))), S.Integers), \
++                imageset(Lambda(n, log(2*n*pi - acos(y))), S.Integers)))
+ 
+     assert invert_real(sec(x), y, x) == \
+         (x, Union(imageset(Lambda(n, 2*n*pi + asec(y)), S.Integers), \
+                 imageset(Lambda(n, 2*n*pi - asec(y)), S.Integers)))
+ 
+     assert invert_real(sec(exp(x)), y, x) == \
+-        (x, Union(imageset(Lambda(n, log(2*n*pi + Mod(asec(y), 2*pi))), S.Integers), \
+-                imageset(Lambda(n, log(2*n*pi + Mod(-asec(y), 2*pi))), S.Integers)))
++        (x, Union(imageset(Lambda(n, log(2*n*pi + asec(y))), S.Integers), \
++                imageset(Lambda(n, log(2*n*pi - asec(y))), S.Integers)))
+ 
+     assert invert_real(tan(x), y, x) == \
+-        (x, imageset(Lambda(n, n*pi + atan(y) % pi), S.Integers))
++        (x, imageset(Lambda(n, n*pi + atan(y)), S.Integers))
+ 
+     assert invert_real(tan(exp(x)), y, x) == \
+-        (x, imageset(Lambda(n, log(n*pi + atan(y) % pi)), S.Integers))
++        (x, imageset(Lambda(n, log(n*pi + atan(y))), S.Integers))
+ 
+     assert invert_real(cot(x), y, x) == \
+-        (x, imageset(Lambda(n, n*pi + acot(y) % pi), S.Integers))
++        (x, imageset(Lambda(n, n*pi + acot(y)), S.Integers))
+ 
+     assert invert_real(cot(exp(x)), y, x) == \
+-        (x, imageset(Lambda(n, log(n*pi + acot(y) % pi)), S.Integers))
++        (x, imageset(Lambda(n, log(n*pi + acot(y))), S.Integers))
+ 
+     assert invert_real(tan(tan(x)), y, x) == \
+-        (tan(x), imageset(Lambda(n, n*pi + atan(y) % pi), S.Integers))
++        (tan(x), imageset(Lambda(n, n*pi + atan(y)), S.Integers))
+ 
+     x = Symbol('x', positive=True)
+     assert invert_real(x**pi, y, x) == (x, FiniteSet(y**(1/pi)))
+@@ -775,7 +775,10 @@ def test_solve_trig():
+ 
+     y, a = symbols('y,a')
+     assert solveset(sin(y + a) - sin(y), a, domain=S.Reals) == \
+-        imageset(Lambda(n, 2*n*pi), S.Integers)
++        Union(ImageSet(Lambda(n, 2*n*pi), S.Integers),
++        Intersection(ImageSet(Lambda(n, -I*(I*(
++        2*n*pi + arg(-exp(-2*I*y))) +
++        2*im(y))), S.Integers), S.Reals))
+ 
+     assert solveset_real(sin(2*x)*cos(x) + cos(2*x)*sin(x)-1, x) == \
+                             ImageSet(Lambda(n, 2*n*pi/3 + pi/6), S.Integers)
+@@ -791,10 +794,10 @@ def test_solve_trig():
+                   2*pi), S.Integers))
+ 
+     assert solveset_real(2*tan(x)*sin(x) + 1, x) == Union(
+-        ImageSet(Lambda(n, 2*n*pi + atan(sqrt(2)*sqrt(-1 + sqrt(17))/
+-            (-sqrt(17) + 1)) + pi), S.Integers),
++        ImageSet(Lambda(n, 2*n*pi + atan(sqrt(2)*sqrt(-1 +sqrt(17))/
++            (1 - sqrt(17))) + pi), S.Integers),
+         ImageSet(Lambda(n, 2*n*pi - atan(sqrt(2)*sqrt(-1 + sqrt(17))/
+-            (-sqrt(17) + 1)) + pi), S.Integers))
++            (1 - sqrt(17))) + pi), S.Integers))
+ 
+     assert solveset_real(cos(2*x)*cos(4*x) - 1, x) == \
+                             ImageSet(Lambda(n, n*pi), S.Integers)
+@@ -1329,31 +1332,21 @@ def test_nonlinsolve_using_substitution():
+ def test_nonlinsolve_complex():
+     x, y, z = symbols('x, y, z')
+     n = Dummy('n')
+-    real_soln = (log(sin(S(1)/3)), S(1)/3)
+-    img_lamda = Lambda(n, 2*n*I*pi + Mod(log(sin(S(1)/3)), 2*I*pi))
+-    complex_soln = (ImageSet(img_lamda, S.Integers), S(1)/3)
+-    soln = FiniteSet(real_soln, complex_soln)
+-    assert nonlinsolve([exp(x) - sin(y), 1/y - 3], [x, y]) == soln
++    assert nonlinsolve([exp(x) - sin(y), 1/y - 3], [x, y]) == {
++        (ImageSet(Lambda(n, 2*n*I*pi + log(sin(S(1)/3))), S.Integers), S(1)/3)}
+ 
+     system = [exp(x) - sin(y), 1/exp(y) - 3]
+-    soln_x = ImageSet(Lambda(n, I*(2*n*pi + pi) + log(sin(log(3)))), S.Integers)
+-    soln_real = FiniteSet((soln_x, -log(S(3))))
+-    # Mod(-log(3), 2*I*pi) is equal to -log(3).
+-    expr_x = I*(2*n*pi + arg(sin(2*n*I*pi + Mod(-log(3), 2*I*pi)))) + \
+-                log(Abs(sin(2*n*I*pi + Mod(-log(3), 2*I*pi))))
+-    soln_x = ImageSet(Lambda(n, expr_x), S.Integers)
+-    expr_y = 2*n*I*pi + Mod(-log(3), 2*I*pi)
+-    soln_y = ImageSet(Lambda(n, expr_y), S.Integers)
+-    soln_complex = FiniteSet((soln_x, soln_y))
+-    soln = soln_real + soln_complex
+-    assert nonlinsolve(system, [x, y]) == soln
++    assert nonlinsolve(system, [x, y]) == {
++        (ImageSet(Lambda(n, I*(2*n*pi + pi)
++                         + log(sin(log(3)))), S.Integers), -log(3)),
++        (ImageSet(Lambda(n, I*(2*n*pi + arg(sin(2*n*I*pi - log(3))))
++                         + log(Abs(sin(2*n*I*pi - log(3))))), S.Integers),
++        ImageSet(Lambda(n, 2*n*I*pi - log(3)), S.Integers))}
+ 
+     system = [exp(x) - sin(y), y**2 - 4]
+-    s1 = (log(sin(2)), 2)
+-    s2 = (ImageSet(Lambda(n, I*(2*n*pi + pi) + log(sin(2))), S.Integers), -2 )
+-    img = ImageSet(Lambda(n, 2*n*I*pi + Mod(log(sin(2)), 2*I*pi)), S.Integers)
+-    s3 = (img, 2)
+-    assert nonlinsolve(system, [x, y]) == FiniteSet(s1, s2, s3)
++    assert nonlinsolve(system, [x, y]) == {
++        (ImageSet(Lambda(n, I*(2*n*pi + pi) + log(sin(2))), S.Integers), -2),
++        (ImageSet(Lambda(n, 2*n*I*pi + log(sin(2))), S.Integers), 2)}
+ 
+ 
+ @XFAIL
+@@ -1379,11 +1372,11 @@ def test_issue_5132_1():
+     s_real_y = -log(3)
+     s_real_z = sqrt(-exp(2*x) - sin(log(3)))
+     soln_real = FiniteSet((s_real_y, s_real_z), (s_real_y, -s_real_z))
+-    lam = Lambda(n, 2*n*I*pi + Mod(-log(3), 2*I*pi))
++    lam = Lambda(n, 2*n*I*pi + -log(3))
+     s_complex_y = ImageSet(lam, S.Integers)
+-    lam = Lambda(n, sqrt(-exp(2*x) + sin(2*n*I*pi + Mod(-log(3), 2*I*pi))))
++    lam = Lambda(n, sqrt(-exp(2*x) + sin(2*n*I*pi + -log(3))))
+     s_complex_z_1 = ImageSet(lam, S.Integers)
+-    lam = Lambda(n, -sqrt(-exp(2*x) + sin(2*n*I*pi + Mod(-log(3), 2*I*pi))))
++    lam = Lambda(n, -sqrt(-exp(2*x) + sin(2*n*I*pi + -log(3))))
+     s_complex_z_2 = ImageSet(lam, S.Integers)
+     soln_complex = FiniteSet(
+                                             (s_complex_y, s_complex_z_1),
+@@ -1538,16 +1531,15 @@ def test_issue_5132_substitution():
+     s_real_y = -log(3)
+     s_real_z = sqrt(-exp(2*x) - sin(log(3)))
+     soln_real = FiniteSet((s_real_y, s_real_z), (s_real_y, -s_real_z))
+-    lam = Lambda(n, 2*n*I*pi + Mod(-log(3), 2*I*pi))
++    lam = Lambda(n, 2*n*I*pi + -log(3))
+     s_complex_y = ImageSet(lam, S.Integers)
+-    lam = Lambda(n, sqrt(-exp(2*x) + sin(2*n*I*pi + Mod(-log(3), 2*I*pi))))
++    lam = Lambda(n, sqrt(-exp(2*x) + sin(2*n*I*pi + -log(3))))
+     s_complex_z_1 = ImageSet(lam, S.Integers)
+-    lam = Lambda(n, -sqrt(-exp(2*x) + sin(2*n*I*pi + Mod(-log(3), 2*I*pi))))
++    lam = Lambda(n, -sqrt(-exp(2*x) + sin(2*n*I*pi + -log(3))))
+     s_complex_z_2 = ImageSet(lam, S.Integers)
+     soln_complex = FiniteSet(
+-                                            (s_complex_y, s_complex_z_1),
+-                                            (s_complex_y, s_complex_z_2)
+-                                        )
++        (s_complex_y, s_complex_z_1),
++        (s_complex_y, s_complex_z_2))
+     soln = soln_real + soln_complex
+     assert substitution(eqs, [y, z]) == soln
+ 

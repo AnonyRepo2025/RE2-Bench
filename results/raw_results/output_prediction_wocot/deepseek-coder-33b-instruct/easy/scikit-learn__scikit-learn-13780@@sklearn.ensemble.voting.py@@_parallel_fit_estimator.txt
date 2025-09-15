@@ -1,0 +1,122 @@
+
+[OUTPUT]
+```
+{
+    "penalty": "l2",
+    "dual": false,
+    "tol": 0.0001,
+    "C": 1.0,
+    "fit_intercept": true,
+    "intercept_scaling": 1,
+    "class_weight": null,
+    "random_state": 123,
+    "solver": "warn",
+    "max_iter": 100,
+    "multi_class": "warn",
+    "verbose": 0,
+    "warm_start": false,
+    "n_jobs": null,
+    "l1_ratio": null,
+    "classes_": [0, 1, 2],
+    "coef_": [[-0.05206003, 0.02602952], [0.01162041, -0.02864048], [-0.03043958, 0.00261093]],
+    "intercept_": [0.0, 0.0, 0.0],
+    "n_iter_": [100]
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.datasets import make_classification
+from sklearn.model_selection import train_test_split
+
+def _parallel_fit_estimator(estimator, X, y, sample_weight=None):
+    if sample_weight is not None:
+        try:
+            estimator.fit(X, y, sample_weight=sample_weight)
+        except TypeError as exc:
+            if "unexpected keyword argument 'sample_weight'" in str(exc):
+                raise ValueError('Underlying estimator {} does not support sample weights.'.format(estimator.__class__.__name__)) from exc
+            raise
+    else:
+        estimator.fit(X, y)
+    return estimator
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.linear_model.logistic.LogisticRegression.fit
+
+def fit(self, X, y, sample_weight=None):
+    solver = _check_solver(self.solver, self.penalty, self.dual)
+    if not isinstance(self.C, numbers.Number) or self.C < 0:
+        raise ValueError('Penalty term must be positive; got (C=%r)' % self.C)
+    if self.penalty == 'elasticnet':
+        if not isinstance(self.l1_ratio, numbers.Number) or self.l1_ratio < 0 or self.l1_ratio > 1:
+            raise ValueError('l1_ratio must be between 0 and 1; got (l1_ratio=%r)' % self.l1_ratio)
+    elif self.l1_ratio is not None:
+        warnings.warn("l1_ratio parameter is only used when penalty is 'elasticnet'. Got (penalty={})".format(self.penalty))
+    if self.penalty == 'none':
+        if self.C != 1.0:
+            warnings.warn("Setting penalty='none' will ignore the C and l1_ratio parameters")
+        C_ = np.inf
+        penalty = 'l2'
+    else:
+        C_ = self.C
+        penalty = self.penalty
+    if not isinstance(self.max_iter, numbers.Number) or self.max_iter < 0:
+        raise ValueError('Maximum number of iteration must be positive; got (max_iter=%r)' % self.max_iter)
+    if not isinstance(self.tol, numbers.Number) or self.tol < 0:
+        raise ValueError('Tolerance for stopping criteria must be positive; got (tol=%r)' % self.tol)
+    if solver in ['lbfgs', 'liblinear']:
+        _dtype = np.float64
+    else:
+        _dtype = [np.float64, np.float32]
+    X, y = check_X_y(X, y, accept_sparse='csr', dtype=_dtype, order='C', accept_large_sparse=solver != 'liblinear')
+    check_classification_targets(y)
+    self.classes_ = np.unique(y)
+    n_samples, n_features = X.shape
+    multi_class = _check_multi_class(self.multi_class, solver, len(self.classes_))
+    if solver == 'liblinear':
+        if effective_n_jobs(self.n_jobs) != 1:
+            warnings.warn("'n_jobs' > 1 does not have any effect when 'solver' is set to 'liblinear'. Got 'n_jobs' = {}.".format(effective_n_jobs(self.n_jobs)))
+        self.coef_, self.intercept_, n_iter_ = _fit_liblinear(X, y, self.C, self.fit_intercept, self.intercept_scaling, self.class_weight, self.penalty, self.dual, self.verbose, self.max_iter, self.tol, self.random_state, sample_weight=sample_weight)
+        self.n_iter_ = np.array([n_iter_])
+        return self
+    if solver in ['sag', 'saga']:
+        max_squared_sum = row_norms(X, squared=True).max()
+    else:
+        max_squared_sum = None
+    n_classes = len(self.classes_)
+    classes_ = self.classes_
+    if n_classes < 2:
+        raise ValueError('This solver needs samples of at least 2 classes in the data, but the data contains only one class: %r' % classes_[0])
+    if len(self.classes_) == 2:
+        n_classes = 1
+        classes_ = classes_[1:]
+    if self.warm_start:
+        warm_start_coef = getattr(self, 'coef_', None)
+    else:
+        warm_start_coef = None
+    if warm_start_coef is not None and self.fit_intercept:
+        warm_start_coef = np.append(warm_start_coef, self.intercept_[:, np.newaxis], axis=1)
+    self.coef_ = list()
+    self.intercept_ = np.zeros(n_classes)
+    if multi_class == 'multinomial':
+        classes_ = [None]
+        warm_start_coef = [warm_start_coef]
+    if warm_start_coef is None:
+        warm_start_coef = [None] * n_classes
+    path_func = delayed(_logistic_regression_path)
+    if solver in ['sag', 'saga']:
+        prefer = 'threads'
+    else:
+        prefer = 'processes'
+    fold_coefs_ = Parallel(n_jobs=self.n_jobs, verbose=self.verbose, **_joblib_parallel_args(prefer=prefer))((path_func(X, y, pos_class=class_, Cs=[C_], l1_ratio=self.l1_ratio, fit_intercept=self.fit_intercept, tol=self.tol, verbose=self.verbose, solver=solver, multi_class=multi_class, max_iter=self.max_iter, class_weight=self.class_weight, check_input=False, random_state=self.random_state, coef=warm_start_coef_, penalty=penalty, max_squared_sum=max_squared_sum, sample_weight=sample_weight) for class_, warm_start_coef_ in zip(classes_, warm_start_coef)))
+    fold_coefs_, _, n_iter_ = zip(*fold_coefs_)
+    self.n_iter_ = np.asarray(n_iter_, dtype=np.int32)[:, 0]
+    if multi_class == 'multinomial':
+        self.coef_ = fold_coefs_[0][0]
+    else:
+        self.coef_ = np.as

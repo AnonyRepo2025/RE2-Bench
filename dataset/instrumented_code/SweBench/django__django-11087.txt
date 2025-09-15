@@ -1,0 +1,342 @@
+diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py
+index 3a462f1..6df712a 100644
+--- a/django/db/models/deletion.py
++++ b/django/db/models/deletion.py
+@@ -1,4 +1,198 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-11087/django/db/models/deletion.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from collections import Counter
++from itertools import chain
+ from operator import attrgetter
+ 
+ from django.db import IntegrityError, connections, transaction
+@@ -116,6 +310,14 @@ class Collector:
+             model, {}).setdefault(
+             (field, value), set()).update(objs)
+ 
++    @inspect_code
++    def _has_signal_listeners(self, model):
++        return (
++            signals.pre_delete.has_listeners(model) or
++            signals.post_delete.has_listeners(model)
++        )
++
++    @inspect_code
+     def can_fast_delete(self, objs, from_field=None):
+         """
+         Determine if the objects in the given queryset-like or single object
+@@ -135,9 +337,7 @@ class Collector:
+             model = objs.model
+         else:
+             return False
+-        if (signals.pre_delete.has_listeners(model) or
+-                signals.post_delete.has_listeners(model) or
+-                signals.m2m_changed.has_listeners(model)):
++        if self._has_signal_listeners(model):
+             return False
+         # The use of from_field comes from the need to avoid cascade back to
+         # parent when parent delete is cascading to child.
+@@ -166,6 +366,7 @@ class Collector:
+         else:
+             return [objs]
+ 
++    @inspect_code
+     def collect(self, objs, source=None, nullable=False, collect_related=True,
+                 source_attr=None, reverse_dependency=False, keep_parents=False):
+         """
+@@ -220,8 +421,23 @@ class Collector:
+                     sub_objs = self.related_objects(related, batch)
+                     if self.can_fast_delete(sub_objs, from_field=field):
+                         self.fast_deletes.append(sub_objs)
+-                    elif sub_objs:
+-                        field.remote_field.on_delete(self, field, sub_objs, self.using)
++                    else:
++                        related_model = related.related_model
++                        # Non-referenced fields can be deferred if no signal
++                        # receivers are connected for the related model as
++                        # they'll never be exposed to the user. Skip field
++                        # deferring when some relationships are select_related
++                        # as interactions between both features are hard to
++                        # get right. This should only happen in the rare
++                        # cases where .related_objects is overridden anyway.
++                        if not (sub_objs.query.select_related or self._has_signal_listeners(related_model)):
++                            referenced_fields = set(chain.from_iterable(
++                                (rf.attname for rf in rel.field.foreign_related_fields)
++                                for rel in get_candidate_relations_to_delete(related_model._meta)
++                            ))
++                            sub_objs = sub_objs.only(*tuple(referenced_fields))
++                        if sub_objs:
++                            field.remote_field.on_delete(self, field, sub_objs, self.using)
+             for field in model._meta.private_fields:
+                 if hasattr(field, 'bulk_related_objects'):
+                     # It's something like generic foreign key.
+diff --git a/tests/delete/models.py b/tests/delete/models.py
+index 2fc5ebe..d2cce02 100644
+--- a/tests/delete/models.py
++++ b/tests/delete/models.py
+@@ -126,3 +126,20 @@ class Base(models.Model):
+ 
+ class RelToBase(models.Model):
+     base = models.ForeignKey(Base, models.DO_NOTHING)
++
++
++class Origin(models.Model):
++    pass
++
++
++class Referrer(models.Model):
++    origin = models.ForeignKey(Origin, models.CASCADE)
++    unique_field = models.IntegerField(unique=True)
++    large_field = models.TextField()
++
++
++class SecondReferrer(models.Model):
++    referrer = models.ForeignKey(Referrer, models.CASCADE)
++    other_referrer = models.ForeignKey(
++        Referrer, models.CASCADE, to_field='unique_field', related_name='+'
++    )
+diff --git a/tests/delete/tests.py b/tests/delete/tests.py
+index ed47d06..fe77d7d 100644
+--- a/tests/delete/tests.py
++++ b/tests/delete/tests.py
+@@ -7,7 +7,8 @@ from django.test import TestCase, skipIfDBFeature, skipUnlessDBFeature
+ 
+ from .models import (
+     MR, A, Avatar, Base, Child, HiddenUser, HiddenUserProfile, M, M2MFrom,
+-    M2MTo, MRNull, Parent, R, RChild, S, T, User, create_a, get_default_r,
++    M2MTo, MRNull, Origin, Parent, R, RChild, Referrer, S, T, User, create_a,
++    get_default_r,
+ )
+ 
+ 
+@@ -437,6 +438,39 @@ class DeletionTests(TestCase):
+         with self.assertNumQueries(2):
+             avatar.delete()
+ 
++    def test_only_referenced_fields_selected(self):
++        """
++        Only referenced fields are selected during cascade deletion SELECT
++        unless deletion signals are connected.
++        """
++        origin = Origin.objects.create()
++        expected_sql = str(
++            Referrer.objects.only(
++                # Both fields are referenced by SecondReferrer.
++                'id', 'unique_field',
++            ).filter(origin__in=[origin]).query
++        )
++        with self.assertNumQueries(2) as ctx:
++            origin.delete()
++        self.assertEqual(ctx.captured_queries[0]['sql'], expected_sql)
++
++        def receiver(instance, **kwargs):
++            pass
++
++        # All fields are selected if deletion signals are connected.
++        for signal_name in ('pre_delete', 'post_delete'):
++            with self.subTest(signal=signal_name):
++                origin = Origin.objects.create()
++                signal = getattr(models.signals, signal_name)
++                signal.connect(receiver, sender=Referrer)
++                with self.assertNumQueries(2) as ctx:
++                    origin.delete()
++                self.assertIn(
++                    connection.ops.quote_name('large_field'),
++                    ctx.captured_queries[0]['sql'],
++                )
++                signal.disconnect(receiver, sender=Referrer)
++
+ 
+ class FastDeleteTests(TestCase):
+ 

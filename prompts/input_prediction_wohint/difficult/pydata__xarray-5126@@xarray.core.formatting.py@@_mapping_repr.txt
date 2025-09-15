@@ -1,0 +1,315 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. You only need to predict input variable values, and print input between [INPUT] and [\INPUT]. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT]. 
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import contextlib
+import functools
+from datetime import datetime, timedelta
+from itertools import chain, zip_longest
+from typing import Hashable
+import numpy as np
+import pandas as pd
+from pandas.errors import OutOfBoundsDatetime
+from .duck_array_ops import array_equiv
+from .options import OPTIONS, _get_boolean_with_default
+from .pycompat import dask_array_type, sparse_array_type
+from .utils import is_duck_array
+import sparse
+from .variable import IndexVariable
+_KNOWN_TYPE_REPRS = {np.ndarray: 'np.ndarray'}
+EMPTY_REPR = '    *empty*'
+data_vars_repr = functools.partial(_mapping_repr, title='Data variables', summarizer=summarize_datavar, expand_option_name='display_expand_data_vars')
+attrs_repr = functools.partial(_mapping_repr, title='Attributes', summarizer=summarize_attr, expand_option_name='display_expand_attrs')
+diff_coords_repr = functools.partial(_diff_mapping_repr, title='Coordinates', summarizer=summarize_coord)
+diff_data_vars_repr = functools.partial(_diff_mapping_repr, title='Data variables', summarizer=summarize_datavar)
+diff_attrs_repr = functools.partial(_diff_mapping_repr, title='Attributes', summarizer=summarize_attr)
+
+def _mapping_repr(mapping, title, summarizer, expand_option_name, col_width=None, max_rows=None):
+    if col_width is None:
+        col_width = _calculate_col_width(mapping)
+    if max_rows is None:
+        max_rows = OPTIONS['display_max_rows']
+    summary = [f'{title}:']
+    if mapping:
+        len_mapping = len(mapping)
+        if not _get_boolean_with_default(expand_option_name, default=True):
+            summary = [f'{summary[0]} ({len_mapping})']
+        elif len_mapping > max_rows:
+            summary = [f'{summary[0]} ({max_rows}/{len_mapping})']
+            first_rows = max_rows // 2 + max_rows % 2
+            items = list(mapping.items())
+            summary += [summarizer(k, v, col_width) for k, v in items[:first_rows]]
+            if max_rows > 1:
+                last_rows = max_rows // 2
+                summary += [pretty_print('    ...', col_width) + ' ...']
+                summary += [summarizer(k, v, col_width) for k, v in items[-last_rows:]]
+        else:
+            summary += [summarizer(k, v, col_width) for k, v in mapping.items()]
+    else:
+        summary += [EMPTY_REPR]
+    return '\n'.join(summary)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.xarray.core.formatting._calculate_col_width
+
+def _calculate_col_width(col_items):
+    max_name_length = max((len(str(s)) for s in col_items)) if col_items else 0
+    col_width = max(max_name_length, 7) + 6
+    return col_width
+
+.xarray.core.dataset.DataVariables.__len__
+
+def __len__(self) -> int:
+    return len(self._dataset._variables) - len(self._dataset._coord_names)
+
+.xarray.core.dataset.DataVariables.__iter__
+
+def __iter__(self) -> Iterator[Hashable]:
+    return (key for key in self._dataset._variables if key not in self._dataset._coord_names)
+
+.xarray.core.options._get_boolean_with_default
+
+def _get_boolean_with_default(option, default):
+    global_choice = OPTIONS[option]
+    if global_choice == 'default':
+        return default
+    elif global_choice in [True, False]:
+        return global_choice
+    else:
+        raise ValueError(f"The global option {option} must be one of True, False or 'default'.")
+
+.xarray.core.dataset.DataVariables.__getitem__
+
+def __getitem__(self, key: Hashable) -> 'DataArray':
+    if key not in self._dataset._coord_names:
+        return cast('DataArray', self._dataset[key])
+    raise KeyError(key)
+
+.xarray.core.dataset.Dataset.__getitem__
+
+def __getitem__(self, key: Mapping) -> 'Dataset':
+    ...
+
+.xarray.core.utils.is_dict_like
+
+def is_dict_like(value: Any) -> bool:
+    return hasattr(value, 'keys') and hasattr(value, '__getitem__')
+
+.xarray.core.utils.hashable
+
+def hashable(v: Any) -> bool:
+    try:
+        hash(v)
+    except TypeError:
+        return False
+    return True
+
+.xarray.core.dataset.Dataset._construct_dataarray
+
+def _construct_dataarray(self, name: Hashable) -> 'DataArray':
+    from .dataarray import DataArray
+    try:
+        variable = self._variables[name]
+    except KeyError:
+        _, name, variable = _get_virtual_variable(self._variables, name, self._level_coords, self.dims)
+    needed_dims = set(variable.dims)
+    coords: Dict[Hashable, Variable] = {}
+    for k in self._variables:
+        if k in self._coord_names and set(self.variables[k].dims) <= needed_dims:
+            coords[k] = self.variables[k]
+    if self._indexes is None:
+        indexes = None
+    else:
+        indexes = {k: v for k, v in self._indexes.items() if k in coords}
+    return DataArray(variable, coords, name=name, indexes=indexes, fastpath=True)
+
+.xarray.core.variable.Variable.dims
+
+def dims(self):
+    return self._dims
+
+.xarray.core.dataset.Dataset.variables
+
+def variables(self) -> Mapping[Hashable, Variable]:
+    return Frozen(self._variables)
+
+.xarray.core.utils.Frozen.__init__
+
+def __init__(self, mapping: Mapping[K, V]):
+    self.mapping = mapping
+
+.xarray.core.utils.Frozen.__getitem__
+
+def __getitem__(self, key: K) -> V:
+    return self.mapping[key]
+
+.xarray.core.dataarray.DataArray.__init__
+
+def __init__(self, data: Any=dtypes.NA, coords: Union[Sequence[Tuple], Mapping[Hashable, Any], None]=None, dims: Union[Hashable, Sequence[Hashable], None]=None, name: Hashable=None, attrs: Mapping=None, indexes: Dict[Hashable, pd.Index]=None, fastpath: bool=False):
+    if fastpath:
+        variable = data
+        assert dims is None
+        assert attrs is None
+    else:
+        if coords is None:
+            if isinstance(data, DataArray):
+                coords = data.coords
+            elif isinstance(data, pd.Series):
+                coords = [data.index]
+            elif isinstance(data, pd.DataFrame):
+                coords = [data.index, data.columns]
+            elif isinstance(data, (pd.Index, IndexVariable)):
+                coords = [data]
+            elif isinstance(data, pdcompat.Panel):
+                coords = [data.items, data.major_axis, data.minor_axis]
+        if dims is None:
+            dims = getattr(data, 'dims', getattr(coords, 'dims', None))
+        if name is None:
+            name = getattr(data, 'name', None)
+        if attrs is None and (not isinstance(data, PANDAS_TYPES)):
+            attrs = getattr(data, 'attrs', None)
+        data = _check_data_shape(data, coords, dims)
+        data = as_compatible_data(data)
+        coords, dims = _infer_coords_and_dims(data.shape, coords, dims)
+        variable = Variable(dims, data, attrs, fastpath=True)
+        indexes = dict(_extract_indexes_from_coords(coords))
+    self._variable = variable
+    assert isinstance(coords, dict)
+    self._coords = coords
+    self._name = name
+    self._indexes = indexes
+    self._close = None
+
+.xarray.core.common.AttrAccessMixin.__setattr__
+
+def __setattr__(self, name: str, value: Any) -> None:
+    try:
+        object.__setattr__(self, name, value)
+    except AttributeError as e:
+        if str(e) != '{!r} object has no attribute {!r}'.format(type(self).__name__, name):
+            raise
+        raise AttributeError("cannot set attribute %r on a %r object. Use __setitem__ styleassignment (e.g., `ds['name'] = ...`) instead of assigning variables." % (name, type(self).__name__)) from e
+
+
+[/PYTHON]
+What will be the input of `_mapping_repr`, given the following input:
+[OUTPUT]
+```
+{
+    "output": "Attributes:\n    foo:      bar"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]

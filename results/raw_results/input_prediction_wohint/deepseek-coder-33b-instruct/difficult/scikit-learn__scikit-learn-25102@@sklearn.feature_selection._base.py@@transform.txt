@@ -1,0 +1,166 @@
+1. The `transform` method is called on an instance of a class that inherits from `SelectorMixin`.
+2. The `transform` method calls `_validate_data` to validate the input data.
+3. `_validate_data` checks if the input data is a sparse matrix.
+4. If the input data is a sparse matrix, it calls `_ensure_sparse_format` to ensure that the sparse matrix is in the correct format.
+5. `_ensure_sparse_format` checks if the sparse matrix is in the correct format.
+6. If the sparse matrix is not in the correct format, it calls `_asarray_with_order` to convert the sparse matrix to a dense matrix.
+7. `_asarray_with_order` converts the sparse matrix to a dense matrix.
+8. The input data is a sparse matrix, so it needs to be converted to a dense matrix.
+9. The input data is a sparse matrix with shape [2, 5], indices [1 2 3 4 0 1 2 3 4], indptr [0 4 9], and data [ 2  4  6  8 10 12 14 16 18].
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_get_support_mask": [
+            true,
+            true,
+            true,
+            true,
+            true
+        ]
+    },
+    "X": {
+        "_shape": [
+            2,
+            5
+        ],
+        "maxprint": 50,
+        "indices": "[1 2 3 4 0 1 2 3 4]",
+        "indptr": "[0 4 9]",
+        "data": "[ 2  4  6  8 10 12 14 16 18]"
+    }
+}
+```
+[/INPUT]
+[/PYTHON]
+[PYTHON]
+import numpy as np
+from scipy.sparse import csc_matrix
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.utils.validation import check_is_fitted
+
+class CustomTransformer(BaseEstimator, TransformerMixin):
+
+    def __init__(self, n_components=2):
+        self.n_components = n_components
+
+    def fit(self, X, y=None):
+        self.n_components_ = min(X.shape[1], self.n_components)
+        return self
+
+    def transform(self, X):
+        check_is_fitted(self)
+        return X[:, :self.n_components_]
+
+    def inverse_transform(self, X):
+        check_is_fitted(self)
+        if X.shape[1] < self.n_components_:
+            raise ValueError(f'X has {X.shape[1]} features per sample, but CustomTransformer is expecting {self.n_components_} features.')
+        return X
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.base.BaseEstimator.check_is_fitted
+
+def check_is_fitted(estimator, attributes=None, *, msg=None, all_or_any=all):
+    if msg is None:
+        msg = ("This %(name)s instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator.")
+    if not hasattr(estimator, 'fit'):
+        raise TypeError("%s is not an estimator instance." % (estimator))
+    if attributes is not None:
+        if not isinstance(attributes, (list, tuple)):
+            attributes = [attributes]
+        else:
+            attributes = list(attributes)
+        if not all_or_any([hasattr(estimator, attr) for attr in attributes]):
+            raise NotFittedError(msg % {'name': type(estimator).__name__})
+[/PYTHON]
+[/PYTHON]
+What will be the input of `transform`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import warnings
+from abc import ABCMeta, abstractmethod
+from operator import attrgetter
+import numpy as np
+from scipy.sparse import issparse, csc_matrix
+from ..base import TransformerMixin
+from ..cross_decomposition._pls import _PLS
+from ..utils import check_array, safe_sqr
+from ..utils._tags import _safe_tags
+from ..utils import _safe_indexing
+from ..utils._set_output import _get_output_config
+from ..utils.validation import _check_feature_names_in, check_is_fitted
+
+class SelectorMixin(TransformerMixin, metaclass=ABCMeta):
+
+    def get_support(self, indices=False):
+        mask = self._get_support_mask()
+        return mask if not indices else np.where(mask)[0]
+
+    @abstractmethod
+    def _get_support_mask(self):
+
+    def transform(self, X):
+        output_config_dense = _get_output_config('transform', estimator=self)['dense']
+        preserve_X = hasattr(X, 'iloc') and output_config_dense == 'pandas'
+        X = self._validate_data(X, dtype=None, accept_sparse='csr', force_all_finite=not _safe_tags(self, key='allow_nan'), cast_to_ndarray=not preserve_X, reset=False)
+        return self._transform(X)
+
+    def _transform(self, X):
+        mask = self.get_support()
+        if not mask.any():
+            warnings.warn('No features were selected: either the data is too noisy or the selection test too strict.', UserWarning)
+            if hasattr(X, 'iloc'):
+                return X.iloc[:, :0]
+            return np.empty(0, dtype=X.dtype).reshape((X.shape[0], 0))
+        return _safe_indexing(X, mask, axis=1)
+
+    def inverse_transform(self, X):
+        if issparse(X):
+            X = X.tocsc()
+            it = self.inverse_transform(np.diff(X.indptr).reshape(1, -1))
+            col_nonzeros = it.ravel()
+            indptr = np.concatenate([[0], np.cumsum(col_nonzeros)])
+            Xt = csc_matrix((X.data, X.indices, indptr), shape=(X.shape[0], len(indptr) - 1), dtype=X.dtype)
+            return Xt
+        support = self.get_support()
+        X = check_array(X, dtype=None)
+        if support.sum() != X.shape[1]:
+            raise ValueError('X has a different shape than during fitting

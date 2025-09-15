@@ -1,0 +1,374 @@
+diff --git a/pylint/lint/expand_modules.py b/pylint/lint/expand_modules.py
+index 2c080c8..11927eb 100644
+--- a/pylint/lint/expand_modules.py
++++ b/pylint/lint/expand_modules.py
+@@ -1,5 +1,6 @@
+ import os
+ import sys
++from typing import List, Pattern, Tuple
+ 
+ from astroid import modutils
+ 
+@@ -28,32 +29,33 @@ def get_python_path(filepath: str) -> str:
+             return os.getcwd()
+ 
+ 
+-def _basename_in_ignore_list_re(base_name, ignore_list_re):
+-    """Determines if the basename is matched in a regex ignorelist
+-
+-    :param str base_name: The basename of the file
+-    :param list ignore_list_re: A collection of regex patterns to match against.
+-        Successful matches are ignored.
+-
+-    :returns: `True` if the basename is ignored, `False` otherwise.
+-    :rtype: bool
+-    """
++def _is_in_ignore_list_re(element: str, ignore_list_re: List[Pattern]) -> bool:
++    """determines if the element is matched in a regex ignore-list"""
+     for file_pattern in ignore_list_re:
+-        if file_pattern.match(base_name):
++        if file_pattern.match(element):
+             return True
+     return False
+ 
+ 
+-def expand_modules(files_or_modules, ignore_list, ignore_list_re):
+-    """Take a list of files/modules/packages and return the list of tuple
+-    (file, module name) which have to be actually checked."""
++def expand_modules(
++    files_or_modules: List[str],
++    ignore_list: List[str],
++    ignore_list_re: List[Pattern],
++    ignore_list_paths_re: List[Pattern],
++) -> Tuple[List[dict], List[dict]]:
++    """take a list of files/modules/packages and return the list of tuple
++    (file, module name) which have to be actually checked
++    """
+     result = []
+     errors = []
+     path = sys.path.copy()
++
+     for something in files_or_modules:
+         basename = os.path.basename(something)
+-        if basename in ignore_list or _basename_in_ignore_list_re(
+-            basename, ignore_list_re
++        if (
++            basename in ignore_list
++            or _is_in_ignore_list_re(os.path.basename(something), ignore_list_re)
++            or _is_in_ignore_list_re(something, ignore_list_paths_re)
+         ):
+             continue
+         module_path = get_python_path(something)
+@@ -117,10 +119,11 @@ def expand_modules(files_or_modules, ignore_list, ignore_list_re):
+             ):
+                 if filepath == subfilepath:
+                     continue
+-                if _basename_in_ignore_list_re(
++                if _is_in_ignore_list_re(
+                     os.path.basename(subfilepath), ignore_list_re
+-                ):
++                ) or _is_in_ignore_list_re(subfilepath, ignore_list_paths_re):
+                     continue
++
+                 modpath = _modpath_from_file(
+                     subfilepath, is_namespace, path=additional_search_path
+                 )
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index fc7cee3..6038b03 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pylint-dev__pylint-4516/pylint/lint/pylinter.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # Licensed under the GPL: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ # For details: https://github.com/PyCQA/pylint/blob/master/LICENSE
+ 
+@@ -162,6 +355,7 @@ class PyLinter(
+     msgs = MSGS
+ 
+     @staticmethod
++    @inspect_code
+     def make_options():
+         return (
+             (
+@@ -186,6 +380,17 @@ class PyLinter(
+                     " skipped. The regex matches against base names, not paths.",
+                 },
+             ),
++            (
++                "ignore-paths",
++                {
++                    "type": "regexp_csv",
++                    "metavar": "<pattern>[,<pattern>...]",
++                    "dest": "ignore_list_paths_re",
++                    "default": (),
++                    "help": "Add files or directories matching the regex patterns to the"
++                    " ignore-list. The regex matches against paths.",
++                },
++            ),
+             (
+                 "persistent",
+                 {
+@@ -1043,10 +1248,14 @@ class PyLinter(
+             if self.should_analyze_file(name, filepath, is_argument=is_arg):
+                 yield (name, filepath, descr["basename"])
+ 
++    @inspect_code
+     def _expand_files(self, modules):
+         """get modules and errors from a list of modules and handle errors"""
+         result, errors = expand_modules(
+-            modules, self.config.black_list, self.config.black_list_re
++            modules,
++            self.config.black_list,
++            self.config.black_list_re,
++            self.config.ignore_list_paths_re,
+         )
+         for error in errors:
+             message = modname = error["mod"]
+diff --git a/tests/lint/unittest_expand_modules.py b/tests/lint/unittest_expand_modules.py
+index 99be557..a6618ce 100644
+--- a/tests/lint/unittest_expand_modules.py
++++ b/tests/lint/unittest_expand_modules.py
+@@ -7,19 +7,29 @@ from pathlib import Path
+ 
+ import pytest
+ 
+-from pylint.lint.expand_modules import _basename_in_ignore_list_re, expand_modules
++from pylint.lint.expand_modules import _is_in_ignore_list_re, expand_modules
+ 
+ 
+-def test__basename_in_ignore_list_re_match():
+-    patterns = [re.compile(".*enchilada.*"), re.compile("unittest_.*")]
+-    assert _basename_in_ignore_list_re("unittest_utils.py", patterns)
+-    assert _basename_in_ignore_list_re("cheese_enchiladas.xml", patterns)
++def test__is_in_ignore_list_re_match():
++    patterns = [
++        re.compile(".*enchilada.*"),
++        re.compile("unittest_.*"),
++        re.compile(".*tests/.*"),
++    ]
++    assert _is_in_ignore_list_re("unittest_utils.py", patterns)
++    assert _is_in_ignore_list_re("cheese_enchiladas.xml", patterns)
++    assert _is_in_ignore_list_re("src/tests/whatever.xml", patterns)
+ 
+ 
+-def test__basename_in_ignore_list_re_nomatch():
+-    patterns = [re.compile(".*enchilada.*"), re.compile("unittest_.*")]
+-    assert not _basename_in_ignore_list_re("test_utils.py", patterns)
+-    assert not _basename_in_ignore_list_re("enchilad.py", patterns)
++def test__is_in_ignore_list_re_nomatch():
++    patterns = [
++        re.compile(".*enchilada.*"),
++        re.compile("unittest_.*"),
++        re.compile(".*tests/.*"),
++    ]
++    assert not _is_in_ignore_list_re("test_utils.py", patterns)
++    assert not _is_in_ignore_list_re("enchilad.py", patterns)
++    assert not _is_in_ignore_list_re("src/tests.py", patterns)
+ 
+ 
+ TEST_DIRECTORY = Path(__file__).parent.parent
+@@ -70,8 +80,10 @@ init_of_package = {
+     ],
+ )
+ def test_expand_modules(files_or_modules, expected):
+-    ignore_list, ignore_list_re = [], []
+-    modules, errors = expand_modules(files_or_modules, ignore_list, ignore_list_re)
++    ignore_list, ignore_list_re, ignore_list_paths_re = [], [], []
++    modules, errors = expand_modules(
++        files_or_modules, ignore_list, ignore_list_re, ignore_list_paths_re
++    )
+     modules.sort(key=lambda d: d["name"])
+     assert modules == expected
+     assert not errors

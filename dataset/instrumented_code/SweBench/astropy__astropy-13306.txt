@@ -1,0 +1,308 @@
+diff --git a/astropy/table/tests/test_operations.py b/astropy/table/tests/test_operations.py
+index 89adfe3..e90c389 100644
+--- a/astropy/table/tests/test_operations.py
++++ b/astropy/table/tests/test_operations.py
+@@ -789,6 +789,21 @@ class TestJoin():
+         with pytest.raises(ValueError, match=msg):
+             table.join(t1, t2, keys_left=['a'], keys_right=['a'], join_funcs={})
+ 
++    def test_join_structured_column(self):
++        """Regression tests for gh-13271."""
++        # Two tables with matching names, including a structured column.
++        t1 = Table([np.array([(1., 1), (2., 2)], dtype=[('f', 'f8'), ('i', 'i8')]),
++                    ['one', 'two']], names=['structured', 'string'])
++        t2 = Table([np.array([(2., 2), (4., 4)], dtype=[('f', 'f8'), ('i', 'i8')]),
++                    ['three', 'four']], names=['structured', 'string'])
++        t12 = table.join(t1, t2, ['structured'], join_type='outer')
++        assert t12.pformat() == [
++            'structured [f, i] string_1 string_2',
++            '----------------- -------- --------',
++            '          (1., 1)      one       --',
++            '          (2., 2)      two    three',
++            '          (4., 4)       --     four']
++
+ 
+ class TestSetdiff():
+ 
+@@ -1260,6 +1275,33 @@ class TestVStack():
+         with pytest.raises(ValueError, match='representations are inconsistent'):
+             table.vstack([t1, t3])
+ 
++    def test_vstack_structured_column(self):
++        """Regression tests for gh-13271."""
++        # Two tables with matching names, including a structured column.
++        t1 = Table([np.array([(1., 1), (2., 2)], dtype=[('f', 'f8'), ('i', 'i8')]),
++                    ['one', 'two']], names=['structured', 'string'])
++        t2 = Table([np.array([(3., 3), (4., 4)], dtype=[('f', 'f8'), ('i', 'i8')]),
++                    ['three', 'four']], names=['structured', 'string'])
++        t12 = table.vstack([t1, t2])
++        assert t12.pformat() == [
++            'structured [f, i] string',
++            '----------------- ------',
++            '          (1., 1)    one',
++            '          (2., 2)    two',
++            '          (3., 3)  three',
++            '          (4., 4)   four']
++
++        # One table without the structured column.
++        t3 = t2[('string',)]
++        t13 = table.vstack([t1, t3])
++        assert t13.pformat() == [
++            'structured [f, i] string',
++            '----------------- ------',
++            '         (1.0, 1)    one',
++            '         (2.0, 2)    two',
++            '               --  three',
++            '               --   four']
++
+ 
+ class TestDStack():
+ 
+@@ -1400,6 +1442,29 @@ class TestDStack():
+         assert skycoord_equal(sc1, t12['col0'][:, 0])
+         assert skycoord_equal(sc2, t12['col0'][:, 1])
+ 
++    def test_dstack_structured_column(self):
++        """Regression tests for gh-13271."""
++        # Two tables with matching names, including a structured column.
++        t1 = Table([np.array([(1., 1), (2., 2)], dtype=[('f', 'f8'), ('i', 'i8')]),
++                    ['one', 'two']], names=['structured', 'string'])
++        t2 = Table([np.array([(3., 3), (4., 4)], dtype=[('f', 'f8'), ('i', 'i8')]),
++                    ['three', 'four']], names=['structured', 'string'])
++        t12 = table.dstack([t1, t2])
++        assert t12.pformat() == [
++            'structured [f, i]     string   ',
++            '------------------ ------------',
++            '(1., 1) .. (3., 3) one .. three',
++            '(2., 2) .. (4., 4)  two .. four']
++
++        # One table without the structured column.
++        t3 = t2[('string',)]
++        t13 = table.dstack([t1, t3])
++        assert t13.pformat() == [
++            'structured [f, i]    string   ',
++            '----------------- ------------',
++            '   (1.0, 1) .. -- one .. three',
++            '   (2.0, 2) .. --  two .. four']
++
+ 
+ class TestHStack():
+ 
+diff --git a/astropy/utils/metadata.py b/astropy/utils/metadata.py
+index a2b5ee3..17ec201 100644
+--- a/astropy/utils/metadata.py
++++ b/astropy/utils/metadata.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/astropy__astropy-13306/astropy/utils/metadata.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # Licensed under a 3-clause BSD style license - see LICENSE.rst
+ """
+ This module contains helper functions and classes for handling metadata.
+@@ -33,6 +226,7 @@ class MergeConflictWarning(AstropyWarning):
+ MERGE_STRATEGIES = []
+ 
+ 
++@inspect_code
+ def common_dtype(arrs):
+     """
+     Use numpy to find the common dtype for a list of ndarrays.
+@@ -73,7 +267,7 @@ def common_dtype(arrs):
+                        dtype_bytes_or_chars(arr.dtype)]
+ 
+     arr_common = np.array([arr[0] for arr in arrs])
+-    return arr_common.dtype.str
++    return arr_common.dtype.str if arr_common.dtype.names is None else arr_common.dtype.descr
+ 
+ 
+ class MergeStrategyMeta(type):

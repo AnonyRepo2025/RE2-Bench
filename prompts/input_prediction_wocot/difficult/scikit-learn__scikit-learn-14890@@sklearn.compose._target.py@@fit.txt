@@ -1,0 +1,479 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. The input structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict input variable values to fill out placeholders XXX in the structure, and print input between [INPUT] and [\INPUT]. You should maintain the structure when printing inputs. Do not change anything else.  ONLY print the input, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import warnings
+import numpy as np
+from ..base import BaseEstimator, RegressorMixin, clone
+from ..utils.validation import check_is_fitted
+from ..utils import check_array, safe_indexing
+from ..preprocessing import FunctionTransformer
+from ..linear_model import LinearRegression
+__all__ = ['TransformedTargetRegressor']
+
+class TransformedTargetRegressor(RegressorMixin, BaseEstimator):
+
+    def __init__(self, regressor=None, transformer=None, func=None, inverse_func=None, check_inverse=True):
+        self.regressor = regressor
+        self.transformer = transformer
+        self.func = func
+        self.inverse_func = inverse_func
+        self.check_inverse = check_inverse
+
+    def _fit_transformer(self, y):
+        if self.transformer is not None and (self.func is not None or self.inverse_func is not None):
+            raise ValueError("'transformer' and functions 'func'/'inverse_func' cannot both be set.")
+        elif self.transformer is not None:
+            self.transformer_ = clone(self.transformer)
+        else:
+            if self.func is not None and self.inverse_func is None:
+                raise ValueError("When 'func' is provided, 'inverse_func' must also be provided")
+            self.transformer_ = FunctionTransformer(func=self.func, inverse_func=self.inverse_func, validate=True, check_inverse=self.check_inverse)
+        self.transformer_.fit(y)
+        if self.check_inverse:
+            idx_selected = slice(None, None, max(1, y.shape[0] // 10))
+            y_sel = safe_indexing(y, idx_selected)
+            y_sel_t = self.transformer_.transform(y_sel)
+            if not np.allclose(y_sel, self.transformer_.inverse_transform(y_sel_t)):
+                warnings.warn("The provided functions or transformer are not strictly inverse of each other. If you are sure you want to proceed regardless, set 'check_inverse=False'", UserWarning)
+
+    def fit(self, X, y, **fit_params):
+        y = check_array(y, accept_sparse=False, force_all_finite=True, ensure_2d=False, dtype='numeric')
+        self._training_dim = y.ndim
+        if y.ndim == 1:
+            y_2d = y.reshape(-1, 1)
+        else:
+            y_2d = y
+        self._fit_transformer(y_2d)
+        y_trans = self.transformer_.transform(y_2d)
+        if y_trans.ndim == 2 and y_trans.shape[1] == 1:
+            y_trans = y_trans.squeeze(axis=1)
+        if self.regressor is None:
+            from ..linear_model import LinearRegression
+            self.regressor_ = LinearRegression()
+        else:
+            self.regressor_ = clone(self.regressor)
+        self.regressor_.fit(X, y_trans, **fit_params)
+        return self
+
+    def predict(self, X):
+        check_is_fitted(self)
+        pred = self.regressor_.predict(X)
+        if pred.ndim == 1:
+            pred_trans = self.transformer_.inverse_transform(pred.reshape(-1, 1))
+        else:
+            pred_trans = self.transformer_.inverse_transform(pred)
+        if self._training_dim == 1 and pred_trans.ndim == 2 and (pred_trans.shape[1] == 1):
+            pred_trans = pred_trans.squeeze(axis=1)
+        return pred_trans
+
+    def _more_tags(self):
+        return {'poor_score': True, 'no_validation': True}
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, warn_on_dtype=None, estimator=None):
+    if warn_on_dtype is not None:
+        warnings.warn("'warn_on_dtype' is deprecated in version 0.21 and will be removed in 0.23. Don't set `warn_on_dtype` to remove this warning.", DeprecationWarning, stacklevel=2)
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        dtypes_orig = np.array(array.dtypes)
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = np.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {!r} instead'.format(force_all_finite))
+    if estimator is not None:
+        if isinstance(estimator, str):
+            estimator_name = estimator
+        else:
+            estimator_name = estimator.__class__.__name__
+    else:
+        estimator_name = 'Estimator'
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse, dtype=dtype, copy=copy, force_all_finite=force_all_finite, accept_large_sparse=accept_large_sparse)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings.simplefilter('error', ComplexWarning)
+                array = np.asarray(array, dtype=dtype, order=order)
+            except ComplexWarning:
+                raise ValueError('Complex data not supported\n{}\n'.format(array))
+        _ensure_no_complex_data(array)
+        if ensure_2d:
+            if array.ndim == 0:
+                raise ValueError('Expected 2D array, got scalar array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+            if array.ndim == 1:
+                raise ValueError('Expected 2D array, got 1D array instead:\narray={}.\nReshape your data either using array.reshape(-1, 1) if your data has a single feature or array.reshape(1, -1) if it contains a single sample.'.format(array))
+        if dtype_numeric and np.issubdtype(array.dtype, np.flexible):
+            warnings.warn("Beginning in version 0.22, arrays of bytes/strings will be converted to decimal numbers if dtype='numeric'. It is recommended that you convert the array to a float dtype before using it in scikit-learn, for example by using your_array = your_array.astype(np.float64).", FutureWarning, stacklevel=2)
+        if dtype_numeric and array.dtype.kind == 'O':
+            array = array.astype(np.float64)
+        if not allow_nd and array.ndim >= 3:
+            raise ValueError('Found array with dim %d. %s expected <= 2.' % (array.ndim, estimator_name))
+        if force_all_finite:
+            _assert_all_finite(array, allow_nan=force_all_finite == 'allow-nan')
+    if ensure_min_samples > 0:
+        n_samples = _num_samples(array)
+        if n_samples < ensure_min_samples:
+            raise ValueError('Found array with %d sample(s) (shape=%s) while a minimum of %d is required%s.' % (n_samples, array.shape, ensure_min_samples, context))
+    if ensure_min_features > 0 and array.ndim == 2:
+        n_features = array.shape[1]
+        if n_features < ensure_min_features:
+            raise ValueError('Found array with %d feature(s) (shape=%s) while a minimum of %d is required%s.' % (n_features, array.shape, ensure_min_features, context))
+    if warn_on_dtype and dtype_orig is not None and (array.dtype != dtype_orig):
+        msg = 'Data with input dtype %s was converted to %s%s.' % (dtype_orig, array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=2)
+    if copy and np.may_share_memory(array, array_orig):
+        array = np.array(array, dtype=dtype, order=order)
+    if warn_on_dtype and dtypes_orig is not None and ({array.dtype} != set(dtypes_orig)):
+        msg = 'Data with input dtype %s were all converted to %s%s.' % (', '.join(map(str, sorted(set(dtypes_orig)))), array.dtype, context)
+        warnings.warn(msg, DataConversionWarning, stacklevel=3)
+    return array
+
+.sklearn.utils.validation._ensure_no_complex_data
+
+def _ensure_no_complex_data(array):
+    if hasattr(array, 'dtype') and array.dtype is not None and hasattr(array.dtype, 'kind') and (array.dtype.kind == 'c'):
+        raise ValueError('Complex data not supported\n{}\n'.format(array))
+
+.sklearn.utils.validation._assert_all_finite
+
+def _assert_all_finite(X, allow_nan=False):
+    from .extmath import _safe_accumulator_op
+    if _get_config()['assume_finite']:
+        return
+    X = np.asanyarray(X)
+    is_float = X.dtype.kind in 'fc'
+    if is_float and np.isfinite(_safe_accumulator_op(np.sum, X)):
+        pass
+    elif is_float:
+        msg_err = 'Input contains {} or a value too large for {!r}.'
+        if allow_nan and np.isinf(X).any() or (not allow_nan and (not np.isfinite(X).all())):
+            type_err = 'infinity' if allow_nan else 'NaN, infinity'
+            raise ValueError(msg_err.format(type_err, X.dtype))
+    elif X.dtype == np.dtype('object') and (not allow_nan):
+        if _object_dtype_isnan(X).any():
+            raise ValueError('Input contains NaN')
+
+.sklearn._config.get_config
+
+def get_config():
+    return _global_config.copy()
+
+.sklearn.utils.extmath._safe_accumulator_op
+
+def _safe_accumulator_op(op, x, *args, **kwargs):
+    if np.issubdtype(x.dtype, np.floating) and x.dtype.itemsize < 8:
+        result = op(x, *args, **kwargs, dtype=np.float64)
+    else:
+        result = op(x, *args, **kwargs)
+    return result
+
+.sklearn.utils.validation._num_samples
+
+def _num_samples(x):
+    message = 'Expected sequence or array-like, got %s' % type(x)
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError(message)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError(message)
+    if hasattr(x, 'shape') and x.shape is not None:
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        if isinstance(x.shape[0], numbers.Integral):
+            return x.shape[0]
+    try:
+        return len(x)
+    except TypeError:
+        raise TypeError(message)
+
+.sklearn.preprocessing._function_transformer.FunctionTransformer.__init__
+
+def __init__(self, func=None, inverse_func=None, validate=False, accept_sparse=False, check_inverse=True, kw_args=None, inv_kw_args=None):
+    self.func = func
+    self.inverse_func = inverse_func
+    self.validate = validate
+    self.accept_sparse = accept_sparse
+    self.check_inverse = check_inverse
+    self.kw_args = kw_args
+    self.inv_kw_args = inv_kw_args
+
+.sklearn.preprocessing._function_transformer.FunctionTransformer.fit
+
+def fit(self, X, y=None):
+    X = self._check_input(X)
+    if self.check_inverse and (not (self.func is None or self.inverse_func is None)):
+        self._check_inverse_transform(X)
+    return self
+
+.sklearn.preprocessing._function_transformer.FunctionTransformer._check_input
+
+def _check_input(self, X):
+    if self.validate:
+        return check_array(X, accept_sparse=self.accept_sparse)
+    return X
+
+.sklearn.preprocessing._function_transformer.FunctionTransformer._check_inverse_transform
+
+def _check_inverse_transform(self, X):
+    idx_selected = slice(None, None, max(1, X.shape[0] // 100))
+    X_round_trip = self.inverse_transform(self.transform(X[idx_selected]))
+    if not _allclose_dense_sparse(X[idx_selected], X_round_trip):
+        warnings.warn("The provided functions are not strictly inverse of each other. If you are sure you want to proceed regardless, set 'check_inverse=False'.", UserWarning)
+
+.sklearn.preprocessing._function_transformer.FunctionTransformer.transform
+
+def transform(self, X):
+    return self._transform(X, func=self.func, kw_args=self.kw_args)
+
+.sklearn.preprocessing._function_transformer.FunctionTransformer._transform
+
+def _transform(self, X, func=None, kw_args=None):
+    X = self._check_input(X)
+    if func is None:
+        func = _identity
+    return func(X, **kw_args if kw_args else {})
+
+.sklearn.preprocessing._function_transformer.FunctionTransformer.inverse_transform
+
+def inverse_transform(self, X):
+    return self._transform(X, func=self.inverse_func, kw_args=self.inv_kw_args)
+
+.sklearn.utils.validation._allclose_dense_sparse
+
+def _allclose_dense_sparse(x, y, rtol=1e-07, atol=1e-09):
+    if sp.issparse(x) and sp.issparse(y):
+        x = x.tocsr()
+        y = y.tocsr()
+        x.sum_duplicates()
+        y.sum_duplicates()
+        return np.array_equal(x.indices, y.indices) and np.array_equal(x.indptr, y.indptr) and np.allclose(x.data, y.data, rtol=rtol, atol=atol)
+    elif not sp.issparse(x) and (not sp.issparse(y)):
+        return np.allclose(x, y, rtol=rtol, atol=atol)
+    raise ValueError('Can only compare two sparse matrices, not a sparse matrix and an array')
+
+.sklearn.utils.__init__.safe_indexing
+
+def safe_indexing(X, indices, axis=0):
+    if indices is None:
+        return X
+    if axis not in (0, 1):
+        raise ValueError("'axis' should be either 0 (to index rows) or 1 (to index  column). Got {} instead.".format(axis))
+    indices_dtype = _determine_key_type(indices)
+    if axis == 0 and indices_dtype == 'str':
+        raise ValueError("String indexing is not supported with 'axis=0'")
+    if axis == 1 and X.ndim != 2:
+        raise ValueError("'X' should be a 2D NumPy array, 2D sparse matrix or pandas dataframe when indexing the columns (i.e. 'axis=1'). Got {} instead with {} dimension(s).".format(type(X), X.ndim))
+    if axis == 1 and indices_dtype == 'str' and (not hasattr(X, 'loc')):
+        raise ValueError('Specifying the columns using strings is only supported for pandas DataFrames')
+    if hasattr(X, 'iloc'):
+        return _pandas_indexing(X, indices, indices_dtype, axis=axis)
+    elif hasattr(X, 'shape'):
+        return _array_indexing(X, indices, indices_dtype, axis=axis)
+    else:
+        return _list_indexing(X, indices, indices_dtype)
+
+
+[/PYTHON]
+What will be the input of `fit`, given the following output:
+[OUTPUT]
+```
+{
+    "regressor": {
+        "fit_intercept": true,
+        "normalize": false,
+        "copy_X": true,
+        "n_jobs": null
+    },
+    "transformer": null,
+    "func": "\"<function sqrt>\"",
+    "inverse_func": "\"<function log>\"",
+    "check_inverse": true,
+    "_training_dim": 1,
+    "transformer_": {
+        "func": "\"<function sqrt>\"",
+        "inverse_func": "\"<function log>\"",
+        "validate": true,
+        "accept_sparse": false,
+        "check_inverse": true,
+        "kw_args": null,
+        "inv_kw_args": null
+    },
+    "regressor_": {
+        "fit_intercept": true,
+        "normalize": false,
+        "copy_X": true,
+        "n_jobs": null,
+        "coef_": "[ 0.66831236  0.88151655  0.0896103   1.69534334  0.66810795 -0.22097491\n  0.00907926  0.02448389 -0.10621791 -0.10341338]",
+        "_residues": 14.59733465995465,
+        "rank_": 10,
+        "singular_": "[3.66672097 3.48198824 3.30230582 3.14859511 2.82964905 2.62216475\n 2.55959394 2.41632038 2.29722735 2.09752549]",
+        "intercept_": 1.9022401109532499
+    }
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "regressor": {
+            "fit_intercept": XXX,
+            "normalize": XXX,
+            "copy_X": XXX,
+            "n_jobs": XXX
+        },
+        "transformer": XXX,
+        "func": XXX,
+        "inverse_func": XXX,
+        "check_inverse": XXX
+    },
+    "args": {
+        "X": XXX,
+        "y": XXX
+    },
+    "kwargs": {}
+}
+```
+[/STRUCTURE]

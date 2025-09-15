@@ -1,0 +1,125 @@
+
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "y_true": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        "y_pred": [
+            [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+        ]
+    },
+    "kwargs": {
+        "eps": "auto"
+    }
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[EXAMPLE]
+[PYTHON]
+import numpy as np
+from scipy.special import xlogy
+from sklearn.metrics import log_loss
+
+def custom_log_loss(y_true, y_pred, eps=1e-15):
+    y_pred = np.clip(y_pred, eps, 1 - eps)
+    loss = -xlogy(y_true, y_pred).sum(axis=1)
+    return loss.mean()
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.metrics.log_loss
+
+def log_loss(y_true, y_pred, *, eps=1e-15, normalize=True, sample_weight=None, labels=None):
+    y_pred = check_array(y_pred, ensure_2d=False, dtype=[np.float64, np.float32, np.float16])
+    check_consistent_length(y_pred, y_true, sample_weight)
+    lb = LabelBinarizer()
+    if labels is not None:
+        lb.fit(labels)
+    else:
+        lb.fit(y_true)
+    transformed_labels = lb.transform(y_true)
+    y_pred = np.clip(y_pred, eps, 1 - eps)
+    if y_pred.ndim == 1:
+        y_pred = y_pred[:, np.newaxis]
+    if y_pred.shape[1] == 1:
+        y_pred = np.append(1 - y_pred, y_pred, axis=1)
+    transformed_labels = check_array(transformed_labels)
+    y_pred_sum = y_pred.sum(axis=1)
+    y_pred = y_pred / y_pred_sum[:, np.newaxis]
+    loss = -xlogy(transformed_labels, y_pred).sum(axis=1)
+    return _weighted_sum(loss, sample_weight, normalize)
+
+.sklearn.utils.validation.check_array
+
+def check_array(array, accept_sparse=False, *, accept_large_sparse=True, dtype='numeric', order=None, copy=False, force_all_finite=True, ensure_2d=True, allow_nd=False, ensure_min_samples=1, ensure_min_features=1, estimator=None, input_name=''):
+    if isinstance(array, np.matrix):
+        raise TypeError('np.matrix is not supported. Please convert to a numpy array with np.asarray. For more information see: https://numpy.org/doc/stable/reference/generated/numpy.matrix.html')
+    xp, is_array_api = get_namespace(array)
+    array_orig = array
+    dtype_numeric = isinstance(dtype, str) and dtype == 'numeric'
+    dtype_orig = getattr(array, 'dtype', None)
+    if not hasattr(dtype_orig, 'kind'):
+        dtype_orig = None
+    dtypes_orig = None
+    pandas_requires_conversion = False
+    if hasattr(array, 'dtypes') and hasattr(array.dtypes, '__array__'):
+        with suppress(ImportError):
+            from pandas.api.types import is_sparse
+            if not hasattr(array, 'sparse') and array.dtypes.apply(is_sparse).any():
+                warnings.warn('pandas.DataFrame with sparse columns found.It will be converted to a dense numpy array.')
+        dtypes_orig = list(array.dtypes)
+        pandas_requires_conversion = any((_pandas_dtype_needs_early_conversion(i) for i in dtypes_orig))
+        if all((isinstance(dtype_iter, np.dtype) for dtype_iter in dtypes_orig)):
+            dtype_orig = np.result_type(*dtypes_orig)
+    elif hasattr(array, 'iloc') and hasattr(array, 'dtype'):
+        pandas_requires_conversion = _pandas_dtype_needs_early_conversion(array.dtype)
+        if isinstance(array.dtype, np.dtype):
+            dtype_orig = array.dtype
+        else:
+            dtype_orig = None
+    if dtype_numeric:
+        if dtype_orig is not None and dtype_orig.kind == 'O':
+            dtype = xp.float64
+        else:
+            dtype = None
+    if isinstance(dtype, (list, tuple)):
+        if dtype_orig is not None and dtype_orig in dtype:
+            dtype = None
+        else:
+            dtype = dtype[0]
+    if pandas_requires_conversion:
+        new_dtype = dtype_orig if dtype is None else dtype
+        array = array.astype(new_dtype)
+        dtype = None
+    if force_all_finite not in (True, False, 'allow-nan'):
+        raise ValueError('force_all_finite should be a bool or "allow-nan". Got {force_all_finite} instead')
+    estimator_name = _check_estimator_name(estimator)
+    context = ' by %s' % estimator_name if estimator is not None else ''
+    if hasattr(array, 'sparse') and array.ndim > 1:
+        with suppress(ImportError):
+            from pandas.api.types import is_sparse
+            if array.dtypes.apply(is_sparse).all():
+                array = array.sparse.to_coo()
+                if array.dtype == np.dtype('object'):
+                    unique_dtypes = set([dt.subtype.name for dt in array_orig.dtypes])
+                    if len(unique_dtypes) > 1:
+                        raise ValueError('Pandas DataFrame with mixed sparse extension arrays generated a sparse matrix with object dtype which can not be converted to a scipy sparse matrix.Sparse extension arrays should all have the same numeric type.')
+    if sp.issparse(array):
+        _ensure_no_complex_data(array)
+        array = _ensure_sparse_format(array, accept_sparse=accept_sparse, dtype=dtype, copy=copy, force_all_finite=force_all_finite, accept_large_sparse=accept_large_sparse, estimator_name=estimator_name, input_name=input_name)
+    else:
+        with warnings.catch_warnings():
+            try:
+                warnings

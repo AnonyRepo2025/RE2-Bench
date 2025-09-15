@@ -1,0 +1,1714 @@
+diff --git a/sklearn/calibration.py b/sklearn/calibration.py
+index 31f8b67..4f6dced 100644
+--- a/sklearn/calibration.py
++++ b/sklearn/calibration.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-25969/sklearn/calibration.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """Calibration of predicted probabilities."""
+ 
+ # Author: Alexandre Gramfort <alexandre.gramfort@telecom-paristech.fr>
+@@ -30,16 +223,16 @@ from .preprocessing import label_binarize, LabelEncoder
+ from .utils import (
+     column_or_1d,
+     indexable,
+-    check_matplotlib_support,
+     _safe_indexing,
+ )
+-from .utils._response import _get_response_values_binary
+ 
+-from .utils.multiclass import check_classification_targets, type_of_target
++from .utils.multiclass import check_classification_targets
+ from .utils.parallel import delayed, Parallel
+ from .utils._param_validation import StrOptions, HasMethods, Hidden
++from .utils._plotting import _BinaryClassifierCurveDisplayMixin
+ from .utils.validation import (
+     _check_fit_params,
++    _check_pos_label_consistency,
+     _check_sample_weight,
+     _num_samples,
+     check_consistent_length,
+@@ -48,7 +241,6 @@ from .utils.validation import (
+ from .isotonic import IsotonicRegression
+ from .svm import LinearSVC
+ from .model_selection import check_cv, cross_val_predict
+-from .metrics._base import _check_pos_label_consistency
+ 
+ 
+ class CalibratedClassifierCV(ClassifierMixin, MetaEstimatorMixin, BaseEstimator):
+@@ -1013,7 +1205,7 @@ def calibration_curve(
+     return prob_true, prob_pred
+ 
+ 
+-class CalibrationDisplay:
++class CalibrationDisplay(_BinaryClassifierCurveDisplayMixin):
+     """Calibration curve (also known as reliability diagram) visualization.
+ 
+     It is recommended to use
+@@ -1096,6 +1288,7 @@ class CalibrationDisplay:
+         self.estimator_name = estimator_name
+         self.pos_label = pos_label
+ 
++    @inspect_code
+     def plot(self, *, ax=None, name=None, ref_line=True, **kwargs):
+         """Plot visualization.
+ 
+@@ -1124,13 +1317,8 @@ class CalibrationDisplay:
+         display : :class:`~sklearn.calibration.CalibrationDisplay`
+             Object that stores computed values.
+         """
+-        check_matplotlib_support("CalibrationDisplay.plot")
+-        import matplotlib.pyplot as plt
++        self.ax_, self.figure_, name = self._validate_plot_params(ax=ax, name=name)
+ 
+-        if ax is None:
+-            fig, ax = plt.subplots()
+-
+-        name = self.estimator_name if name is None else name
+         info_pos_label = (
+             f"(Positive class: {self.pos_label})" if self.pos_label is not None else ""
+         )
+@@ -1141,23 +1329,24 @@ class CalibrationDisplay:
+         line_kwargs.update(**kwargs)
+ 
+         ref_line_label = "Perfectly calibrated"
+-        existing_ref_line = ref_line_label in ax.get_legend_handles_labels()[1]
++        existing_ref_line = ref_line_label in self.ax_.get_legend_handles_labels()[1]
+         if ref_line and not existing_ref_line:
+-            ax.plot([0, 1], [0, 1], "k:", label=ref_line_label)
+-        self.line_ = ax.plot(self.prob_pred, self.prob_true, "s-", **line_kwargs)[0]
++            self.ax_.plot([0, 1], [0, 1], "k:", label=ref_line_label)
++        self.line_ = self.ax_.plot(self.prob_pred, self.prob_true, "s-", **line_kwargs)[
++            0
++        ]
+ 
+         # We always have to show the legend for at least the reference line
+-        ax.legend(loc="lower right")
++        self.ax_.legend(loc="lower right")
+ 
+         xlabel = f"Mean predicted probability {info_pos_label}"
+         ylabel = f"Fraction of positives {info_pos_label}"
+-        ax.set(xlabel=xlabel, ylabel=ylabel)
++        self.ax_.set(xlabel=xlabel, ylabel=ylabel)
+ 
+-        self.ax_ = ax
+-        self.figure_ = ax.figure
+         return self
+ 
+     @classmethod
++    @inspect_code
+     def from_estimator(
+         cls,
+         estimator,
+@@ -1260,15 +1449,15 @@ class CalibrationDisplay:
+         >>> disp = CalibrationDisplay.from_estimator(clf, X_test, y_test)
+         >>> plt.show()
+         """
+-        method_name = f"{cls.__name__}.from_estimator"
+-        check_matplotlib_support(method_name)
+-
+-        check_is_fitted(estimator)
+-        y_prob, pos_label = _get_response_values_binary(
+-            estimator, X, response_method="predict_proba", pos_label=pos_label
++        y_prob, pos_label, name = cls._validate_and_get_response_values(
++            estimator,
++            X,
++            y,
++            response_method="predict_proba",
++            pos_label=pos_label,
++            name=name,
+         )
+ 
+-        name = name if name is not None else estimator.__class__.__name__
+         return cls.from_predictions(
+             y,
+             y_prob,
+@@ -1378,26 +1567,19 @@ class CalibrationDisplay:
+         >>> disp = CalibrationDisplay.from_predictions(y_test, y_prob)
+         >>> plt.show()
+         """
+-        method_name = f"{cls.__name__}.from_predictions"
+-        check_matplotlib_support(method_name)
+-
+-        target_type = type_of_target(y_true)
+-        if target_type != "binary":
+-            raise ValueError(
+-                f"The target y is not binary. Got {target_type} type of target."
+-            )
++        pos_label_validated, name = cls._validate_from_predictions_params(
++            y_true, y_prob, sample_weight=None, pos_label=pos_label, name=name
++        )
+ 
+         prob_true, prob_pred = calibration_curve(
+             y_true, y_prob, n_bins=n_bins, strategy=strategy, pos_label=pos_label
+         )
+-        name = "Classifier" if name is None else name
+-        pos_label = _check_pos_label_consistency(pos_label, y_true)
+ 
+         disp = cls(
+             prob_true=prob_true,
+             prob_pred=prob_pred,
+             y_prob=y_prob,
+             estimator_name=name,
+-            pos_label=pos_label,
++            pos_label=pos_label_validated,
+         )
+         return disp.plot(ax=ax, ref_line=ref_line, **kwargs)
+diff --git a/sklearn/metrics/_base.py b/sklearn/metrics/_base.py
+index dd0258f..53ff14b 100644
+--- a/sklearn/metrics/_base.py
++++ b/sklearn/metrics/_base.py
+@@ -197,55 +197,3 @@ def _average_multiclass_ovo_score(binary_metric, y_true, y_score, average="macro
+         pair_scores[ix] = (a_true_score + b_true_score) / 2
+ 
+     return np.average(pair_scores, weights=prevalence)
+-
+-
+-def _check_pos_label_consistency(pos_label, y_true):
+-    """Check if `pos_label` need to be specified or not.
+-
+-    In binary classification, we fix `pos_label=1` if the labels are in the set
+-    {-1, 1} or {0, 1}. Otherwise, we raise an error asking to specify the
+-    `pos_label` parameters.
+-
+-    Parameters
+-    ----------
+-    pos_label : int, str or None
+-        The positive label.
+-    y_true : ndarray of shape (n_samples,)
+-        The target vector.
+-
+-    Returns
+-    -------
+-    pos_label : int
+-        If `pos_label` can be inferred, it will be returned.
+-
+-    Raises
+-    ------
+-    ValueError
+-        In the case that `y_true` does not have label in {-1, 1} or {0, 1},
+-        it will raise a `ValueError`.
+-    """
+-    # ensure binary classification if pos_label is not specified
+-    # classes.dtype.kind in ('O', 'U', 'S') is required to avoid
+-    # triggering a FutureWarning by calling np.array_equal(a, b)
+-    # when elements in the two arrays are not comparable.
+-    classes = np.unique(y_true)
+-    if pos_label is None and (
+-        classes.dtype.kind in "OUS"
+-        or not (
+-            np.array_equal(classes, [0, 1])
+-            or np.array_equal(classes, [-1, 1])
+-            or np.array_equal(classes, [0])
+-            or np.array_equal(classes, [-1])
+-            or np.array_equal(classes, [1])
+-        )
+-    ):
+-        classes_repr = ", ".join(repr(c) for c in classes)
+-        raise ValueError(
+-            f"y_true takes value in {{{classes_repr}}} and pos_label is not "
+-            "specified: either make y_true take value in {0, 1} or "
+-            "{-1, 1} or pass pos_label explicitly."
+-        )
+-    elif pos_label is None:
+-        pos_label = 1
+-
+-    return pos_label
+diff --git a/sklearn/metrics/_classification.py b/sklearn/metrics/_classification.py
+index 67c34e9..8e203a4 100644
+--- a/sklearn/metrics/_classification.py
++++ b/sklearn/metrics/_classification.py
+@@ -40,13 +40,11 @@ from ..utils import column_or_1d
+ from ..utils.extmath import _nanaverage
+ from ..utils.multiclass import unique_labels
+ from ..utils.multiclass import type_of_target
+-from ..utils.validation import _num_samples
++from ..utils.validation import _check_pos_label_consistency, _num_samples
+ from ..utils.sparsefuncs import count_nonzero
+ from ..utils._param_validation import StrOptions, Options, Interval, validate_params
+ from ..exceptions import UndefinedMetricWarning
+ 
+-from ._base import _check_pos_label_consistency
+-
+ 
+ def _check_zero_division(zero_division):
+     if isinstance(zero_division, str) and zero_division == "warn":
+diff --git a/sklearn/metrics/_plot/det_curve.py b/sklearn/metrics/_plot/det_curve.py
+index f9832fe..fddd998 100644
+--- a/sklearn/metrics/_plot/det_curve.py
++++ b/sklearn/metrics/_plot/det_curve.py
+@@ -1,13 +1,203 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-25969/sklearn/metrics/_plot/det_curve.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import scipy as sp
+ 
+ from .. import det_curve
+-from .._base import _check_pos_label_consistency
++from ...utils._plotting import _BinaryClassifierCurveDisplayMixin
+ 
+-from ...utils import check_matplotlib_support
+-from ...utils._response import _get_response_values_binary
+ 
+-
+-class DetCurveDisplay:
++class DetCurveDisplay(_BinaryClassifierCurveDisplayMixin):
+     """DET curve visualization.
+ 
+     It is recommend to use :func:`~sklearn.metrics.DetCurveDisplay.from_estimator`
+@@ -163,15 +353,13 @@ class DetCurveDisplay:
+         <...>
+         >>> plt.show()
+         """
+-        check_matplotlib_support(f"{cls.__name__}.from_estimator")
+-
+-        name = estimator.__class__.__name__ if name is None else name
+-
+-        y_pred, pos_label = _get_response_values_binary(
++        y_pred, pos_label, name = cls._validate_and_get_response_values(
+             estimator,
+             X,
+-            response_method,
++            y,
++            response_method=response_method,
+             pos_label=pos_label,
++            name=name,
+         )
+ 
+         return cls.from_predictions(
+@@ -185,6 +373,7 @@ class DetCurveDisplay:
+         )
+ 
+     @classmethod
++    @inspect_code
+     def from_predictions(
+         cls,
+         y_true,
+@@ -259,7 +448,10 @@ class DetCurveDisplay:
+         <...>
+         >>> plt.show()
+         """
+-        check_matplotlib_support(f"{cls.__name__}.from_predictions")
++        pos_label_validated, name = cls._validate_from_predictions_params(
++            y_true, y_pred, sample_weight=sample_weight, pos_label=pos_label, name=name
++        )
++
+         fpr, fnr, _ = det_curve(
+             y_true,
+             y_pred,
+@@ -267,18 +459,16 @@ class DetCurveDisplay:
+             sample_weight=sample_weight,
+         )
+ 
+-        pos_label = _check_pos_label_consistency(pos_label, y_true)
+-        name = "Classifier" if name is None else name
+-
+         viz = DetCurveDisplay(
+             fpr=fpr,
+             fnr=fnr,
+             estimator_name=name,
+-            pos_label=pos_label,
++            pos_label=pos_label_validated,
+         )
+ 
+         return viz.plot(ax=ax, name=name, **kwargs)
+ 
++    @inspect_code
+     def plot(self, ax=None, *, name=None, **kwargs):
+         """Plot visualization.
+ 
+@@ -300,18 +490,12 @@ class DetCurveDisplay:
+         display : :class:`~sklearn.metrics.plot.DetCurveDisplay`
+             Object that stores computed values.
+         """
+-        check_matplotlib_support("DetCurveDisplay.plot")
++        self.ax_, self.figure_, name = self._validate_plot_params(ax=ax, name=name)
+ 
+-        name = self.estimator_name if name is None else name
+         line_kwargs = {} if name is None else {"label": name}
+         line_kwargs.update(**kwargs)
+ 
+-        import matplotlib.pyplot as plt
+-
+-        if ax is None:
+-            _, ax = plt.subplots()
+-
+-        (self.line_,) = ax.plot(
++        (self.line_,) = self.ax_.plot(
+             sp.stats.norm.ppf(self.fpr),
+             sp.stats.norm.ppf(self.fnr),
+             **line_kwargs,
+@@ -322,10 +506,10 @@ class DetCurveDisplay:
+ 
+         xlabel = "False Positive Rate" + info_pos_label
+         ylabel = "False Negative Rate" + info_pos_label
+-        ax.set(xlabel=xlabel, ylabel=ylabel)
++        self.ax_.set(xlabel=xlabel, ylabel=ylabel)
+ 
+         if "label" in line_kwargs:
+-            ax.legend(loc="lower right")
++            self.ax_.legend(loc="lower right")
+ 
+         ticks = [0.001, 0.01, 0.05, 0.20, 0.5, 0.80, 0.95, 0.99, 0.999]
+         tick_locations = sp.stats.norm.ppf(ticks)
+@@ -333,13 +517,11 @@ class DetCurveDisplay:
+             "{:.0%}".format(s) if (100 * s).is_integer() else "{:.1%}".format(s)
+             for s in ticks
+         ]
+-        ax.set_xticks(tick_locations)
+-        ax.set_xticklabels(tick_labels)
+-        ax.set_xlim(-3, 3)
+-        ax.set_yticks(tick_locations)
+-        ax.set_yticklabels(tick_labels)
+-        ax.set_ylim(-3, 3)
+-
+-        self.ax_ = ax
+-        self.figure_ = ax.figure
++        self.ax_.set_xticks(tick_locations)
++        self.ax_.set_xticklabels(tick_labels)
++        self.ax_.set_xlim(-3, 3)
++        self.ax_.set_yticks(tick_locations)
++        self.ax_.set_yticklabels(tick_labels)
++        self.ax_.set_ylim(-3, 3)
++
+         return self
+diff --git a/sklearn/metrics/_plot/precision_recall_curve.py b/sklearn/metrics/_plot/precision_recall_curve.py
+index 209f4dd..62ea98b 100644
+--- a/sklearn/metrics/_plot/precision_recall_curve.py
++++ b/sklearn/metrics/_plot/precision_recall_curve.py
+@@ -1,13 +1,202 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-25969/sklearn/metrics/_plot/precision_recall_curve.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from .. import average_precision_score
+ from .. import precision_recall_curve
+-from .._base import _check_pos_label_consistency
+-from .._classification import check_consistent_length
++from ...utils._plotting import _BinaryClassifierCurveDisplayMixin
+ 
+-from ...utils import check_matplotlib_support
+-from ...utils._response import _get_response_values_binary
+ 
+-
+-class PrecisionRecallDisplay:
++class PrecisionRecallDisplay(_BinaryClassifierCurveDisplayMixin):
+     """Precision Recall visualization.
+ 
+     It is recommend to use
+@@ -107,6 +296,7 @@ class PrecisionRecallDisplay:
+         self.average_precision = average_precision
+         self.pos_label = pos_label
+ 
++    @inspect_code
+     def plot(self, ax=None, *, name=None, **kwargs):
+         """Plot visualization.
+ 
+@@ -141,9 +331,7 @@ class PrecisionRecallDisplay:
+         `drawstyle="default"`. However, the curve will not be strictly
+         consistent with the reported average precision.
+         """
+-        check_matplotlib_support("PrecisionRecallDisplay.plot")
+-
+-        name = self.estimator_name if name is None else name
++        self.ax_, self.figure_, name = self._validate_plot_params(ax=ax, name=name)
+ 
+         line_kwargs = {"drawstyle": "steps-post"}
+         if self.average_precision is not None and name is not None:
+@@ -154,25 +342,18 @@ class PrecisionRecallDisplay:
+             line_kwargs["label"] = name
+         line_kwargs.update(**kwargs)
+ 
+-        import matplotlib.pyplot as plt
+-
+-        if ax is None:
+-            fig, ax = plt.subplots()
+-
+-        (self.line_,) = ax.plot(self.recall, self.precision, **line_kwargs)
++        (self.line_,) = self.ax_.plot(self.recall, self.precision, **line_kwargs)
+         info_pos_label = (
+             f" (Positive label: {self.pos_label})" if self.pos_label is not None else ""
+         )
+ 
+         xlabel = "Recall" + info_pos_label
+         ylabel = "Precision" + info_pos_label
+-        ax.set(xlabel=xlabel, ylabel=ylabel)
++        self.ax_.set(xlabel=xlabel, ylabel=ylabel)
+ 
+         if "label" in line_kwargs:
+-            ax.legend(loc="lower left")
++            self.ax_.legend(loc="lower left")
+ 
+-        self.ax_ = ax
+-        self.figure_ = ax.figure
+         return self
+ 
+     @classmethod
+@@ -273,18 +454,15 @@ class PrecisionRecallDisplay:
+         <...>
+         >>> plt.show()
+         """
+-        method_name = f"{cls.__name__}.from_estimator"
+-        check_matplotlib_support(method_name)
+-
+-        y_pred, pos_label = _get_response_values_binary(
++        y_pred, pos_label, name = cls._validate_and_get_response_values(
+             estimator,
+             X,
+-            response_method,
++            y,
++            response_method=response_method,
+             pos_label=pos_label,
++            name=name,
+         )
+ 
+-        name = name if name is not None else estimator.__class__.__name__
+-
+         return cls.from_predictions(
+             y,
+             y_pred,
+@@ -297,6 +475,7 @@ class PrecisionRecallDisplay:
+         )
+ 
+     @classmethod
++    @inspect_code
+     def from_predictions(
+         cls,
+         y_true,
+@@ -382,10 +561,9 @@ class PrecisionRecallDisplay:
+         <...>
+         >>> plt.show()
+         """
+-        check_matplotlib_support(f"{cls.__name__}.from_predictions")
+-
+-        check_consistent_length(y_true, y_pred, sample_weight)
+-        pos_label = _check_pos_label_consistency(pos_label, y_true)
++        pos_label, name = cls._validate_from_predictions_params(
++            y_true, y_pred, sample_weight=sample_weight, pos_label=pos_label, name=name
++        )
+ 
+         precision, recall, _ = precision_recall_curve(
+             y_true,
+@@ -398,8 +576,6 @@ class PrecisionRecallDisplay:
+             y_true, y_pred, pos_label=pos_label, sample_weight=sample_weight
+         )
+ 
+-        name = name if name is not None else "Classifier"
+-
+         viz = PrecisionRecallDisplay(
+             precision=precision,
+             recall=recall,
+diff --git a/sklearn/metrics/_plot/roc_curve.py b/sklearn/metrics/_plot/roc_curve.py
+index e715885..53dbde9 100644
+--- a/sklearn/metrics/_plot/roc_curve.py
++++ b/sklearn/metrics/_plot/roc_curve.py
+@@ -1,12 +1,202 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-25969/sklearn/metrics/_plot/roc_curve.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from .. import auc
+ from .. import roc_curve
+-from .._base import _check_pos_label_consistency
++from ...utils._plotting import _BinaryClassifierCurveDisplayMixin
+ 
+-from ...utils import check_matplotlib_support
+-from ...utils._response import _get_response_values_binary
+ 
+-
+-class RocCurveDisplay:
++class RocCurveDisplay(_BinaryClassifierCurveDisplayMixin):
+     """ROC Curve visualization.
+ 
+     It is recommend to use
+@@ -86,6 +276,7 @@ class RocCurveDisplay:
+         self.roc_auc = roc_auc
+         self.pos_label = pos_label
+ 
++    @inspect_code
+     def plot(
+         self,
+         ax=None,
+@@ -128,9 +319,7 @@ class RocCurveDisplay:
+         display : :class:`~sklearn.metrics.plot.RocCurveDisplay`
+             Object that stores computed values.
+         """
+-        check_matplotlib_support("RocCurveDisplay.plot")
+-
+-        name = self.estimator_name if name is None else name
++        self.ax_, self.figure_, name = self._validate_plot_params(ax=ax, name=name)
+ 
+         line_kwargs = {}
+         if self.roc_auc is not None and name is not None:
+@@ -151,30 +340,25 @@ class RocCurveDisplay:
+         if chance_level_kw is not None:
+             chance_level_line_kw.update(**chance_level_kw)
+ 
+-        import matplotlib.pyplot as plt
+-
+-        if ax is None:
+-            fig, ax = plt.subplots()
+-
+-        (self.line_,) = ax.plot(self.fpr, self.tpr, **line_kwargs)
++        (self.line_,) = self.ax_.plot(self.fpr, self.tpr, **line_kwargs)
+         info_pos_label = (
+             f" (Positive label: {self.pos_label})" if self.pos_label is not None else ""
+         )
+ 
+         xlabel = "False Positive Rate" + info_pos_label
+         ylabel = "True Positive Rate" + info_pos_label
+-        ax.set(xlabel=xlabel, ylabel=ylabel)
++        self.ax_.set(xlabel=xlabel, ylabel=ylabel)
+ 
+         if plot_chance_level:
+-            (self.chance_level_,) = ax.plot((0, 1), (0, 1), **chance_level_line_kw)
++            (self.chance_level_,) = self.ax_.plot(
++                (0, 1), (0, 1), **chance_level_line_kw
++            )
+         else:
+             self.chance_level_ = None
+ 
+-        if "label" in line_kwargs:
+-            ax.legend(loc="lower right")
++        if "label" in line_kwargs or "label" in chance_level_line_kw:
++            self.ax_.legend(loc="lower right")
+ 
+-        self.ax_ = ax
+-        self.figure_ = ax.figure
+         return self
+ 
+     @classmethod
+@@ -277,15 +461,13 @@ class RocCurveDisplay:
+         <...>
+         >>> plt.show()
+         """
+-        check_matplotlib_support(f"{cls.__name__}.from_estimator")
+-
+-        name = estimator.__class__.__name__ if name is None else name
+-
+-        y_pred, pos_label = _get_response_values_binary(
++        y_pred, pos_label, name = cls._validate_and_get_response_values(
+             estimator,
+             X,
++            y,
+             response_method=response_method,
+             pos_label=pos_label,
++            name=name,
+         )
+ 
+         return cls.from_predictions(
+@@ -302,6 +484,7 @@ class RocCurveDisplay:
+         )
+ 
+     @classmethod
++    @inspect_code
+     def from_predictions(
+         cls,
+         y_true,
+@@ -396,7 +579,9 @@ class RocCurveDisplay:
+         <...>
+         >>> plt.show()
+         """
+-        check_matplotlib_support(f"{cls.__name__}.from_predictions")
++        pos_label_validated, name = cls._validate_from_predictions_params(
++            y_true, y_pred, sample_weight=sample_weight, pos_label=pos_label, name=name
++        )
+ 
+         fpr, tpr, _ = roc_curve(
+             y_true,
+@@ -407,11 +592,12 @@ class RocCurveDisplay:
+         )
+         roc_auc = auc(fpr, tpr)
+ 
+-        name = "Classifier" if name is None else name
+-        pos_label = _check_pos_label_consistency(pos_label, y_true)
+-
+         viz = RocCurveDisplay(
+-            fpr=fpr, tpr=tpr, roc_auc=roc_auc, estimator_name=name, pos_label=pos_label
++            fpr=fpr,
++            tpr=tpr,
++            roc_auc=roc_auc,
++            estimator_name=name,
++            pos_label=pos_label_validated,
+         )
+ 
+         return viz.plot(
+diff --git a/sklearn/metrics/_plot/tests/test_common_curve_display.py b/sklearn/metrics/_plot/tests/test_common_curve_display.py
+index 2773089..fde87e2 100644
+--- a/sklearn/metrics/_plot/tests/test_common_curve_display.py
++++ b/sklearn/metrics/_plot/tests/test_common_curve_display.py
+@@ -1,3 +1,4 @@
++import numpy as np
+ import pytest
+ 
+ from sklearn.base import ClassifierMixin, clone
+@@ -7,8 +8,9 @@ from sklearn.exceptions import NotFittedError
+ from sklearn.linear_model import LogisticRegression
+ from sklearn.pipeline import make_pipeline
+ from sklearn.preprocessing import StandardScaler
+-from sklearn.tree import DecisionTreeClassifier
++from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+ 
++from sklearn.calibration import CalibrationDisplay
+ from sklearn.metrics import (
+     DetCurveDisplay,
+     PrecisionRecallDisplay,
+@@ -28,18 +30,57 @@ def data_binary(data):
+ 
+ 
+ @pytest.mark.parametrize(
+-    "Display", [DetCurveDisplay, PrecisionRecallDisplay, RocCurveDisplay]
++    "Display",
++    [CalibrationDisplay, DetCurveDisplay, PrecisionRecallDisplay, RocCurveDisplay],
+ )
+-def test_display_curve_error_non_binary(pyplot, data, Display):
++def test_display_curve_error_classifier(pyplot, data, data_binary, Display):
+     """Check that a proper error is raised when only binary classification is
+     supported."""
+     X, y = data
++    X_binary, y_binary = data_binary
+     clf = DecisionTreeClassifier().fit(X, y)
+ 
++    # Case 1: multiclass classifier with multiclass target
+     msg = "Expected 'estimator' to be a binary classifier. Got 3 classes instead."
+     with pytest.raises(ValueError, match=msg):
+         Display.from_estimator(clf, X, y)
+ 
++    # Case 2: multiclass classifier with binary target
++    with pytest.raises(ValueError, match=msg):
++        Display.from_estimator(clf, X_binary, y_binary)
++
++    # Case 3: binary classifier with multiclass target
++    clf = DecisionTreeClassifier().fit(X_binary, y_binary)
++    msg = "The target y is not binary. Got multiclass type of target."
++    with pytest.raises(ValueError, match=msg):
++        Display.from_estimator(clf, X, y)
++
++
++@pytest.mark.parametrize(
++    "Display",
++    [CalibrationDisplay, DetCurveDisplay, PrecisionRecallDisplay, RocCurveDisplay],
++)
++def test_display_curve_error_regression(pyplot, data_binary, Display):
++    """Check that we raise an error with regressor."""
++
++    # Case 1: regressor
++    X, y = data_binary
++    regressor = DecisionTreeRegressor().fit(X, y)
++
++    msg = "Expected 'estimator' to be a binary classifier. Got DecisionTreeRegressor"
++    with pytest.raises(ValueError, match=msg):
++        Display.from_estimator(regressor, X, y)
++
++    # Case 2: regression target
++    classifier = DecisionTreeClassifier().fit(X, y)
++    # Force `y_true` to be seen as a regression problem
++    y = y + 0.5
++    msg = "The target y is not binary. Got continuous type of target."
++    with pytest.raises(ValueError, match=msg):
++        Display.from_estimator(classifier, X, y)
++    with pytest.raises(ValueError, match=msg):
++        Display.from_predictions(y, regressor.fit(X, y).predict(X))
++
+ 
+ @pytest.mark.parametrize(
+     "response_method, msg",
+@@ -148,3 +189,36 @@ def test_display_curve_not_fitted_errors(pyplot, data_binary, clf, Display):
+     disp = Display.from_estimator(model, X, y)
+     assert model.__class__.__name__ in disp.line_.get_label()
+     assert disp.estimator_name == model.__class__.__name__
++
++
++@pytest.mark.parametrize(
++    "Display", [DetCurveDisplay, PrecisionRecallDisplay, RocCurveDisplay]
++)
++def test_display_curve_n_samples_consistency(pyplot, data_binary, Display):
++    """Check the error raised when `y_pred` or `sample_weight` have inconsistent
++    length."""
++    X, y = data_binary
++    classifier = DecisionTreeClassifier().fit(X, y)
++
++    msg = "Found input variables with inconsistent numbers of samples"
++    with pytest.raises(ValueError, match=msg):
++        Display.from_estimator(classifier, X[:-2], y)
++    with pytest.raises(ValueError, match=msg):
++        Display.from_estimator(classifier, X, y[:-2])
++    with pytest.raises(ValueError, match=msg):
++        Display.from_estimator(classifier, X, y, sample_weight=np.ones(X.shape[0] - 2))
++
++
++@pytest.mark.parametrize(
++    "Display", [DetCurveDisplay, PrecisionRecallDisplay, RocCurveDisplay]
++)
++def test_display_curve_error_pos_label(pyplot, data_binary, Display):
++    """Check consistence of error message when `pos_label` should be specified."""
++    X, y = data_binary
++    y = y + 10
++
++    classifier = DecisionTreeClassifier().fit(X, y)
++    y_pred = classifier.predict_proba(X)[:, -1]
++    msg = r"y_true takes value in {10, 11} and pos_label is not specified"
++    with pytest.raises(ValueError, match=msg):
++        Display.from_predictions(y, y_pred)
+diff --git a/sklearn/metrics/_plot/tests/test_precision_recall_display.py b/sklearn/metrics/_plot/tests/test_precision_recall_display.py
+index e7e1917..7d963d8 100644
+--- a/sklearn/metrics/_plot/tests/test_precision_recall_display.py
++++ b/sklearn/metrics/_plot/tests/test_precision_recall_display.py
+@@ -9,7 +9,6 @@ from sklearn.metrics import average_precision_score, precision_recall_curve
+ from sklearn.model_selection import train_test_split
+ from sklearn.pipeline import make_pipeline
+ from sklearn.preprocessing import StandardScaler
+-from sklearn.svm import SVC, SVR
+ from sklearn.utils import shuffle
+ 
+ from sklearn.metrics import PrecisionRecallDisplay
+@@ -21,48 +20,6 @@ pytestmark = pytest.mark.filterwarnings(
+ )
+ 
+ 
+-def test_precision_recall_display_validation(pyplot):
+-    """Check that we raise the proper error when validating parameters."""
+-    X, y = make_classification(
+-        n_samples=100, n_informative=5, n_classes=5, random_state=0
+-    )
+-
+-    with pytest.raises(NotFittedError):
+-        PrecisionRecallDisplay.from_estimator(SVC(), X, y)
+-
+-    regressor = SVR().fit(X, y)
+-    y_pred_regressor = regressor.predict(X)
+-    classifier = SVC(probability=True).fit(X, y)
+-    y_pred_classifier = classifier.predict_proba(X)[:, -1]
+-
+-    err_msg = "Expected 'estimator' to be a binary classifier. Got SVR instead."
+-    with pytest.raises(ValueError, match=err_msg):
+-        PrecisionRecallDisplay.from_estimator(regressor, X, y)
+-
+-    err_msg = "Expected 'estimator' to be a binary classifier."
+-    with pytest.raises(ValueError, match=err_msg):
+-        PrecisionRecallDisplay.from_estimator(classifier, X, y)
+-
+-    err_msg = "{} format is not supported"
+-    with pytest.raises(ValueError, match=err_msg.format("continuous")):
+-        # Force `y_true` to be seen as a regression problem
+-        PrecisionRecallDisplay.from_predictions(y + 0.5, y_pred_classifier, pos_label=1)
+-    with pytest.raises(ValueError, match=err_msg.format("multiclass")):
+-        PrecisionRecallDisplay.from_predictions(y, y_pred_regressor, pos_label=1)
+-
+-    err_msg = "Found input variables with inconsistent numbers of samples"
+-    with pytest.raises(ValueError, match=err_msg):
+-        PrecisionRecallDisplay.from_predictions(y, y_pred_classifier[::2])
+-
+-    X, y = make_classification(n_classes=2, n_samples=50, random_state=0)
+-    y += 10
+-    classifier.fit(X, y)
+-    y_pred_classifier = classifier.predict_proba(X)[:, -1]
+-    err_msg = r"y_true takes value in {10, 11} and pos_label is not specified"
+-    with pytest.raises(ValueError, match=err_msg):
+-        PrecisionRecallDisplay.from_predictions(y, y_pred_classifier)
+-
+-
+ @pytest.mark.parametrize("constructor_name", ["from_estimator", "from_predictions"])
+ @pytest.mark.parametrize("response_method", ["predict_proba", "decision_function"])
+ @pytest.mark.parametrize("drop_intermediate", [True, False])
+diff --git a/sklearn/metrics/_ranking.py b/sklearn/metrics/_ranking.py
+index 6693a63..c45994d 100644
+--- a/sklearn/metrics/_ranking.py
++++ b/sklearn/metrics/_ranking.py
+@@ -29,7 +29,7 @@ from scipy.stats import rankdata
+ 
+ from ..utils import assert_all_finite
+ from ..utils import check_consistent_length
+-from ..utils.validation import _check_sample_weight
++from ..utils.validation import _check_pos_label_consistency, _check_sample_weight
+ from ..utils import column_or_1d, check_array
+ from ..utils.multiclass import type_of_target
+ from ..utils.extmath import stable_cumsum
+@@ -39,11 +39,7 @@ from ..exceptions import UndefinedMetricWarning
+ from ..preprocessing import label_binarize
+ from ..utils._encode import _encode, _unique
+ 
+-from ._base import (
+-    _average_binary_score,
+-    _average_multiclass_ovo_score,
+-    _check_pos_label_consistency,
+-)
++from ._base import _average_binary_score, _average_multiclass_ovo_score
+ 
+ 
+ @validate_params({"x": ["array-like"], "y": ["array-like"]})
+diff --git a/sklearn/tests/test_calibration.py b/sklearn/tests/test_calibration.py
+index fff774c..679ec6e 100644
+--- a/sklearn/tests/test_calibration.py
++++ b/sklearn/tests/test_calibration.py
+@@ -25,7 +25,7 @@ from sklearn.ensemble import (
+     RandomForestClassifier,
+     VotingClassifier,
+ )
+-from sklearn.linear_model import LogisticRegression, LinearRegression
++from sklearn.linear_model import LogisticRegression
+ from sklearn.tree import DecisionTreeClassifier
+ from sklearn.svm import LinearSVC
+ from sklearn.pipeline import Pipeline, make_pipeline
+@@ -595,42 +595,6 @@ def iris_data_binary(iris_data):
+     return X[y < 2], y[y < 2]
+ 
+ 
+-def test_calibration_display_validation(pyplot, iris_data, iris_data_binary):
+-    X, y = iris_data
+-    X_binary, y_binary = iris_data_binary
+-
+-    reg = LinearRegression().fit(X, y)
+-    msg = "Expected 'estimator' to be a binary classifier. Got LinearRegression"
+-    with pytest.raises(ValueError, match=msg):
+-        CalibrationDisplay.from_estimator(reg, X, y)
+-
+-    clf = LinearSVC().fit(X_binary, y_binary)
+-    msg = "has none of the following attributes: predict_proba."
+-    with pytest.raises(AttributeError, match=msg):
+-        CalibrationDisplay.from_estimator(clf, X, y)
+-
+-    clf = LogisticRegression()
+-    with pytest.raises(NotFittedError):
+-        CalibrationDisplay.from_estimator(clf, X, y)
+-
+-
+-@pytest.mark.parametrize("constructor_name", ["from_estimator", "from_predictions"])
+-def test_calibration_display_non_binary(pyplot, iris_data, constructor_name):
+-    X, y = iris_data
+-    clf = DecisionTreeClassifier()
+-    clf.fit(X, y)
+-    y_prob = clf.predict_proba(X)
+-
+-    if constructor_name == "from_estimator":
+-        msg = "to be a binary classifier. Got 3 classes instead."
+-        with pytest.raises(ValueError, match=msg):
+-            CalibrationDisplay.from_estimator(clf, X, y)
+-    else:
+-        msg = "The target y is not binary. Got multiclass type of target."
+-        with pytest.raises(ValueError, match=msg):
+-            CalibrationDisplay.from_predictions(y, y_prob)
+-
+-
+ @pytest.mark.parametrize("n_bins", [5, 10])
+ @pytest.mark.parametrize("strategy", ["uniform", "quantile"])
+ def test_calibration_display_compute(pyplot, iris_data_binary, n_bins, strategy):
+diff --git a/sklearn/utils/validation.py b/sklearn/utils/validation.py
+index 2ae5c6a..dd9693e 100644
+--- a/sklearn/utils/validation.py
++++ b/sklearn/utils/validation.py
+@@ -2145,3 +2145,55 @@ def _check_monotonic_cst(estimator, monotonic_cst=None):
+                 f"X has {estimator.n_features_in_} features."
+             )
+     return monotonic_cst
++
++
++def _check_pos_label_consistency(pos_label, y_true):
++    """Check if `pos_label` need to be specified or not.
++
++    In binary classification, we fix `pos_label=1` if the labels are in the set
++    {-1, 1} or {0, 1}. Otherwise, we raise an error asking to specify the
++    `pos_label` parameters.
++
++    Parameters
++    ----------
++    pos_label : int, str or None
++        The positive label.
++    y_true : ndarray of shape (n_samples,)
++        The target vector.
++
++    Returns
++    -------
++    pos_label : int
++        If `pos_label` can be inferred, it will be returned.
++
++    Raises
++    ------
++    ValueError
++        In the case that `y_true` does not have label in {-1, 1} or {0, 1},
++        it will raise a `ValueError`.
++    """
++    # ensure binary classification if pos_label is not specified
++    # classes.dtype.kind in ('O', 'U', 'S') is required to avoid
++    # triggering a FutureWarning by calling np.array_equal(a, b)
++    # when elements in the two arrays are not comparable.
++    classes = np.unique(y_true)
++    if pos_label is None and (
++        classes.dtype.kind in "OUS"
++        or not (
++            np.array_equal(classes, [0, 1])
++            or np.array_equal(classes, [-1, 1])
++            or np.array_equal(classes, [0])
++            or np.array_equal(classes, [-1])
++            or np.array_equal(classes, [1])
++        )
++    ):
++        classes_repr = ", ".join(repr(c) for c in classes)
++        raise ValueError(
++            f"y_true takes value in {{{classes_repr}}} and pos_label is not "
++            "specified: either make y_true take value in {0, 1} or "
++            "{-1, 1} or pass pos_label explicitly."
++        )
++    elif pos_label is None:
++        pos_label = 1
++
++    return pos_label

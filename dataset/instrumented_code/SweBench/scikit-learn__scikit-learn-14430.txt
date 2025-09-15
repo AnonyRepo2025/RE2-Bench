@@ -1,0 +1,408 @@
+diff --git a/sklearn/feature_extraction/tests/test_text.py b/sklearn/feature_extraction/tests/test_text.py
+index 59ddcb5..2bc1ad2 100644
+--- a/sklearn/feature_extraction/tests/test_text.py
++++ b/sklearn/feature_extraction/tests/test_text.py
+@@ -480,7 +480,12 @@ def test_vectorizer():
+ 
+     # ascii preprocessor?
+     v3.set_params(strip_accents='ascii', lowercase=False)
+-    assert v3.build_preprocessor() == strip_accents_ascii
++    processor = v3.build_preprocessor()
++    text = ("J'ai mangé du kangourou  ce midi, "
++            "c'était pas très bon.")
++    expected = strip_accents_ascii(text)
++    result = processor(text)
++    assert expected == result
+ 
+     # error on bad strip_accents param
+     v3.set_params(strip_accents='_gabbledegook_', preprocessor=None)
+@@ -884,6 +889,25 @@ def test_pickling_vectorizer():
+                 orig.fit_transform(JUNK_FOOD_DOCS).toarray())
+ 
+ 
++@pytest.mark.parametrize('factory', [
++    CountVectorizer.build_analyzer,
++    CountVectorizer.build_preprocessor,
++    CountVectorizer.build_tokenizer,
++])
++def test_pickling_built_processors(factory):
++    """Tokenizers cannot be pickled
++    https://github.com/scikit-learn/scikit-learn/issues/12833
++    """
++    vec = CountVectorizer()
++    function = factory(vec)
++    text = ("J'ai mangé du kangourou  ce midi, "
++            "c'était pas très bon.")
++    roundtripped_function = pickle.loads(pickle.dumps(function))
++    expected = function(text)
++    result = roundtripped_function(text)
++    assert result == expected
++
++
+ def test_countvectorizer_vocab_sets_when_pickling():
+     # ensure that vocabulary of type set is coerced to a list to
+     # preserve iteration ordering after deserialization
+diff --git a/sklearn/feature_extraction/text.py b/sklearn/feature_extraction/text.py
+index b19431e..31e8f69 100644
+--- a/sklearn/feature_extraction/text.py
++++ b/sklearn/feature_extraction/text.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-14430/sklearn/feature_extraction/text.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # -*- coding: utf-8 -*-
+ # Authors: Olivier Grisel <olivier.grisel@ensta.org>
+ #          Mathieu Blondel <mathieu@mblondel.org>
+@@ -15,6 +208,7 @@ build feature vectors from text documents.
+ import array
+ from collections import defaultdict
+ from collections.abc import Mapping
++from functools import partial
+ import numbers
+ from operator import itemgetter
+ import re
+@@ -44,6 +238,73 @@ __all__ = ['HashingVectorizer',
+            'strip_tags']
+ 
+ 
++@inspect_code
++def _preprocess(doc, accent_function=None, lower=False):
++    """Chain together an optional series of text preprocessing steps to
++    apply to a document.
++
++    Parameters
++    ----------
++    doc: str
++        The string to preprocess
++    accent_function: callable
++        Function for handling accented characters. Common strategies include
++        normalizing and removing.
++    lower: bool
++        Whether to use str.lower to lowercase all fo the text
++
++    Returns
++    -------
++    doc: str
++        preprocessed string
++    """
++    if lower:
++        doc = doc.lower()
++    if accent_function is not None:
++        doc = accent_function(doc)
++    return doc
++
++
++def _analyze(doc, analyzer=None, tokenizer=None, ngrams=None,
++             preprocessor=None, decoder=None, stop_words=None):
++    """Chain together an optional series of text processing steps to go from
++    a single document to ngrams, with or without tokenizing or preprocessing.
++
++    If analyzer is used, only the decoder argument is used, as the analyzer is
++    intended to replace the preprocessor, tokenizer, and ngrams steps.
++
++    Parameters
++    ----------
++    analyzer: callable
++    tokenizer: callable
++    ngrams: callable
++    preprocessor: callable
++    decoder: callable
++    stop_words: list
++
++    Returns
++    -------
++    ngrams: list
++        A sequence of tokens, possibly with pairs, triples, etc.
++    """
++
++    if decoder is not None:
++        doc = decoder(doc)
++    if analyzer is not None:
++        doc = analyzer(doc)
++    else:
++        if preprocessor is not None:
++            doc = preprocessor(doc)
++        if tokenizer is not None:
++            doc = tokenizer(doc)
++        if ngrams is not None:
++            if stop_words is not None:
++                doc = ngrams(doc, stop_words)
++            else:
++                doc = ngrams(doc)
++    return doc
++
++
+ def strip_accents_unicode(s):
+     """Transform accentuated unicode symbols into their simple counterpart
+ 
+@@ -227,21 +488,15 @@ class VectorizerMixin:
+                     break
+         return ngrams
+ 
++    @inspect_code
+     def build_preprocessor(self):
+         """Return a function to preprocess the text before tokenization"""
+         if self.preprocessor is not None:
+             return self.preprocessor
+ 
+-        # unfortunately python functools package does not have an efficient
+-        # `compose` function that would have allowed us to chain a dynamic
+-        # number of functions. However the cost of a lambda call is a few
+-        # hundreds of nanoseconds which is negligible when compared to the
+-        # cost of tokenizing a string of 1000 chars for instance.
+-        noop = lambda x: x
+-
+         # accent stripping
+         if not self.strip_accents:
+-            strip_accents = noop
++            strip_accents = None
+         elif callable(self.strip_accents):
+             strip_accents = self.strip_accents
+         elif self.strip_accents == 'ascii':
+@@ -252,17 +507,16 @@ class VectorizerMixin:
+             raise ValueError('Invalid value for "strip_accents": %s' %
+                              self.strip_accents)
+ 
+-        if self.lowercase:
+-            return lambda x: strip_accents(x.lower())
+-        else:
+-            return strip_accents
++        return partial(
++            _preprocess, accent_function=strip_accents, lower=self.lowercase
++        )
+ 
+     def build_tokenizer(self):
+         """Return a function that splits a string into a sequence of tokens"""
+         if self.tokenizer is not None:
+             return self.tokenizer
+         token_pattern = re.compile(self.token_pattern)
+-        return lambda doc: token_pattern.findall(doc)
++        return token_pattern.findall
+ 
+     def get_stop_words(self):
+         """Build or fetch the effective stop words list"""
+@@ -335,24 +589,28 @@ class VectorizerMixin:
+         if callable(self.analyzer):
+             if self.input in ['file', 'filename']:
+                 self._validate_custom_analyzer()
+-            return lambda doc: self.analyzer(self.decode(doc))
++            return partial(
++                _analyze, analyzer=self.analyzer, decoder=self.decode
++            )
+ 
+         preprocess = self.build_preprocessor()
+ 
+         if self.analyzer == 'char':
+-            return lambda doc: self._char_ngrams(preprocess(self.decode(doc)))
++            return partial(_analyze, ngrams=self._char_ngrams,
++                           preprocessor=preprocess, decoder=self.decode)
+ 
+         elif self.analyzer == 'char_wb':
+-            return lambda doc: self._char_wb_ngrams(
+-                preprocess(self.decode(doc)))
++            return partial(_analyze, ngrams=self._char_wb_ngrams,
++                           preprocessor=preprocess, decoder=self.decode)
+ 
+         elif self.analyzer == 'word':
+             stop_words = self.get_stop_words()
+             tokenize = self.build_tokenizer()
+             self._check_stop_words_consistency(stop_words, preprocess,
+                                                tokenize)
+-            return lambda doc: self._word_ngrams(
+-                tokenize(preprocess(self.decode(doc))), stop_words)
++            return partial(_analyze, ngrams=self._word_ngrams,
++                           tokenizer=tokenize, preprocessor=preprocess,
++                           decoder=self.decode, stop_words=stop_words)
+ 
+         else:
+             raise ValueError('%s is not a valid tokenization scheme/analyzer' %

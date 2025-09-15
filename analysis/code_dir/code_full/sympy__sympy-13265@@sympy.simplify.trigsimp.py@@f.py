@@ -1,0 +1,224 @@
+def as_powers_dict(self):
+    d = defaultdict(int)
+    for term in self.args:
+        b, e = term.as_base_exp()
+        d[b] += e
+    return d
+
+def args(self):
+    return self._args
+
+def as_base_exp(self):
+    return (self, S.One)
+
+def __hash__(self):
+    return super(NumberSymbol, self).__hash__()
+
+def __hash__(self):
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+def __radd__(self, other):
+    if global_evaluate[0]:
+        if isinstance(other, integer_types):
+            return Integer(other + self.p)
+        elif isinstance(other, Rational):
+            return Rational(other.p + self.p * other.q, other.q, 1)
+        return Rational.__radd__(self, other)
+    return Rational.__radd__(self, other)
+
+def __new__(cls, i):
+    if isinstance(i, string_types):
+        i = i.replace(' ', '')
+    try:
+        ival = int(i)
+    except TypeError:
+        raise TypeError('Integer can only work with integer expressions.')
+    try:
+        return _intcache[ival]
+    except KeyError:
+        obj = Expr.__new__(cls)
+        obj.p = ival
+        _intcache[ival] = obj
+        return obj
+
+def __hash__(self):
+    return hash(self.p)
+
+def as_base_exp(self):
+    return (self, S.One)
+
+def as_base_exp(self):
+    b, e = self.args
+    if b.is_Rational and b.p == 1 and (b.q != 1):
+        return (Integer(b.q), -e)
+    return (b, e)
+
+def __sympifyit_wrapper(a, b):
+    try:
+        if not hasattr(b, '_op_priority'):
+            b = sympify(b, strict=True)
+        return func(a, b)
+    except SympifyError:
+        return retval
+
+def binary_op_wrapper(self, other):
+    if hasattr(other, '_op_priority'):
+        if other._op_priority > self._op_priority:
+            try:
+                f = getattr(other, method_name)
+            except AttributeError:
+                pass
+            else:
+                return f(self)
+    return func(self, other)
+
+def __div__(self, other):
+    return Mul(self, Pow(other, S.NegativeOne))
+
+def __new__(cls, b, e, evaluate=None):
+    if evaluate is None:
+        evaluate = global_evaluate[0]
+    from sympy.functions.elementary.exponential import exp_polar
+    b = _sympify(b)
+    e = _sympify(e)
+    if evaluate:
+        if e is S.Zero:
+            return S.One
+        elif e is S.One:
+            return b
+        elif (b.is_Symbol or b.is_number) and (e.is_Symbol or e.is_number) and e.is_integer and _coeff_isneg(b):
+            if e.is_even:
+                b = -b
+            elif e.is_odd:
+                return -Pow(-b, e)
+        if S.NaN in (b, e):
+            return S.NaN
+        elif b is S.One:
+            if abs(e).is_infinite:
+                return S.NaN
+            return S.One
+        else:
+            if not e.is_Atom and b is not S.Exp1 and (b.func is not exp_polar):
+                from sympy import numer, denom, log, sign, im, factor_terms
+                c, ex = factor_terms(e, sign=False).as_coeff_Mul()
+                den = denom(ex)
+                if den.func is log and den.args[0] == b:
+                    return S.Exp1 ** (c * numer(ex))
+                elif den.is_Add:
+                    s = sign(im(b))
+                    if s.is_Number and s and (den == log(-factor_terms(b, sign=False)) + s * S.ImaginaryUnit * S.Pi):
+                        return S.Exp1 ** (c * numer(ex))
+            obj = b._eval_power(e)
+            if obj is not None:
+                return obj
+    obj = Expr.__new__(cls, b, e)
+    obj = cls._exec_constructor_postprocessors(obj)
+    if not isinstance(obj, Pow):
+        return obj
+    obj.is_commutative = b.is_commutative and e.is_commutative
+    return obj
+
+def _sympify(a):
+    return sympify(a, strict=True)
+
+
+
+from __future__ import print_function, division
+from collections import defaultdict
+from sympy.core.cache import cacheit
+from sympy.core import sympify, Basic, S, Expr, expand_mul, factor_terms, Mul, Dummy, igcd, FunctionClass, Add, symbols, Wild, expand
+from sympy.core.compatibility import reduce, iterable
+from sympy.core.numbers import I, Integer
+from sympy.core.function import count_ops, _mexpand
+from sympy.functions.elementary.trigonometric import TrigonometricFunction
+from sympy.functions.elementary.hyperbolic import HyperbolicFunction
+from sympy.functions import sin, cos, exp, cosh, tanh, sinh, tan, cot, coth
+from sympy.strategies.core import identity
+from sympy.strategies.tree import greedy
+from sympy.polys import Poly
+from sympy.polys.polyerrors import PolificationFailed
+from sympy.polys.polytools import groebner
+from sympy.polys.domains import ZZ
+from sympy.polys import factor, cancel, parallel_poly_from_expr
+from sympy.utilities.misc import debug
+from sympy.simplify.ratsimp import ratsimpmodprime
+from sympy.simplify.fu import fu
+from sympy.simplify.fu import hyper_as_trig, TR2i
+from sympy.simplify.simplify import bottom_up
+from sympy.simplify.fu import TR10i
+from sympy.simplify.fu import hyper_as_trig
+from sympy.simplify.simplify import bottom_up
+from sympy.simplify.fu import TR1, TR2, TR3, TR2i, TR10, L, TR10i, TR8, TR6, TR15, TR16, TR111, TR5, TRmorrie, TR11, TR14, TR22, TR12
+from sympy.core.compatibility import _nodes
+_trigs = (TrigonometricFunction, HyperbolicFunction)
+_trigpat = None
+_idn = lambda x: x
+_midn = lambda x: -x
+_one = lambda x: S.One
+
+def exptrigsimp(expr):
+    from sympy.simplify.fu import hyper_as_trig, TR2i
+    from sympy.simplify.simplify import bottom_up
+
+    def exp_trig(e):
+        choices = [e]
+        if e.has(*_trigs):
+            choices.append(e.rewrite(exp))
+        choices.append(e.rewrite(cos))
+        return min(*choices, key=count_ops)
+    newexpr = bottom_up(expr, exp_trig)
+
+    def f(rv):
+        if not rv.is_Mul:
+            return rv
+        rvd = rv.as_powers_dict()
+        newd = rvd.copy()
+
+        def signlog(expr, sign=1):
+            if expr is S.Exp1:
+                return (sign, 1)
+            elif isinstance(expr, exp):
+                return (sign, expr.args[0])
+            elif sign == 1:
+                return signlog(-expr, sign=-1)
+            else:
+                return (None, None)
+        ee = rvd[S.Exp1]
+        for k in rvd:
+            if k.is_Add and len(k.args) == 2:
+                c = k.args[0]
+                sign, x = signlog(k.args[1] / c)
+                if not x:
+                    continue
+                m = rvd[k]
+                newd[k] -= m
+                if ee == -x * m / 2:
+                    newd[S.Exp1] -= ee
+                    ee = 0
+                    if sign == 1:
+                        newd[2 * c * cosh(x / 2)] += m
+                    else:
+                        newd[-2 * c * sinh(x / 2)] += m
+                elif newd[1 - sign * S.Exp1 ** x] == -m:
+                    del newd[1 - sign * S.Exp1 ** x]
+                    if sign == 1:
+                        newd[-c / tanh(x / 2)] += m
+                    else:
+                        newd[-c * tanh(x / 2)] += m
+                else:
+                    newd[1 + sign * S.Exp1 ** x] += m
+                    newd[c] += m
+        return Mul(*[k ** newd[k] for k in newd])
+    newexpr = bottom_up(newexpr, f)
+    if newexpr.has(HyperbolicFunction):
+        e, f = hyper_as_trig(newexpr)
+        newexpr = f(TR2i(e))
+    if newexpr.has(TrigonometricFunction):
+        newexpr = TR2i(newexpr)
+    if not (newexpr.has(I) and (not expr.has(I))):
+        expr = newexpr
+    return expr

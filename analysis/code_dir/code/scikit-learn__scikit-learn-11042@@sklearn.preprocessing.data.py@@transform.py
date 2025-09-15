@@ -1,0 +1,100 @@
+from __future__ import division
+from itertools import chain, combinations
+import numbers
+import warnings
+from itertools import combinations_with_replacement as combinations_w_r
+from distutils.version import LooseVersion
+import numpy as np
+from scipy import sparse
+from scipy import stats
+from ..base import BaseEstimator, TransformerMixin
+from ..externals import six
+from ..externals.six import string_types
+from ..utils import check_array
+from ..utils.extmath import row_norms
+from ..utils.extmath import _incremental_mean_and_var
+from ..utils.fixes import _argmax, nanpercentile
+from ..utils.sparsefuncs_fast import inplace_csr_row_normalize_l1, inplace_csr_row_normalize_l2
+from ..utils.sparsefuncs import inplace_column_scale, mean_variance_axis, incr_mean_variance_axis, min_max_axis
+from ..utils.validation import check_is_fitted, check_random_state, FLOAT_DTYPES
+from .label import LabelEncoder
+BOUNDS_THRESHOLD = 1e-07
+zip = six.moves.zip
+map = six.moves.map
+range = six.moves.range
+__all__ = ['Binarizer', 'KernelCenterer', 'MinMaxScaler', 'MaxAbsScaler', 'Normalizer', 'OneHotEncoder', 'RobustScaler', 'StandardScaler', 'QuantileTransformer', 'PowerTransformer', 'add_dummy_feature', 'binarize', 'normalize', 'scale', 'robust_scale', 'maxabs_scale', 'minmax_scale', 'quantile_transform', 'power_transform']
+
+class OneHotEncoder(BaseEstimator, TransformerMixin):
+
+    def __init__(self, n_values='auto', categorical_features='all', dtype=np.float64, sparse=True, handle_unknown='error'):
+        self.n_values = n_values
+        self.categorical_features = categorical_features
+        self.dtype = dtype
+        self.sparse = sparse
+        self.handle_unknown = handle_unknown
+
+    def fit(self, X, y=None):
+        self.fit_transform(X)
+        return self
+
+    def _fit_transform(self, X):
+        X = check_array(X, dtype=np.int)
+        if np.any(X < 0):
+            raise ValueError('X needs to contain only non-negative integers.')
+        n_samples, n_features = X.shape
+        if isinstance(self.n_values, six.string_types) and self.n_values == 'auto':
+            n_values = np.max(X, axis=0) + 1
+        elif isinstance(self.n_values, numbers.Integral):
+            if (np.max(X, axis=0) >= self.n_values).any():
+                raise ValueError('Feature out of bounds for n_values=%d' % self.n_values)
+            n_values = np.empty(n_features, dtype=np.int)
+            n_values.fill(self.n_values)
+        else:
+            try:
+                n_values = np.asarray(self.n_values, dtype=int)
+            except (ValueError, TypeError):
+                raise TypeError("Wrong type for parameter `n_values`. Expected 'auto', int or array of ints, got %r" % type(X))
+            if n_values.ndim < 1 or n_values.shape[0] != X.shape[1]:
+                raise ValueError('Shape mismatch: if n_values is an array, it has to be of shape (n_features,).')
+        self.n_values_ = n_values
+        n_values = np.hstack([[0], n_values])
+        indices = np.cumsum(n_values)
+        self.feature_indices_ = indices
+        column_indices = (X + indices[:-1]).ravel()
+        row_indices = np.repeat(np.arange(n_samples, dtype=np.int32), n_features)
+        data = np.ones(n_samples * n_features)
+        out = sparse.coo_matrix((data, (row_indices, column_indices)), shape=(n_samples, indices[-1]), dtype=self.dtype).tocsr()
+        if isinstance(self.n_values, six.string_types) and self.n_values == 'auto':
+            mask = np.array(out.sum(axis=0)).ravel() != 0
+            active_features = np.where(mask)[0]
+            out = out[:, active_features]
+            self.active_features_ = active_features
+        return out if self.sparse else out.toarray()
+
+    def fit_transform(self, X, y=None):
+        return _transform_selected(X, self._fit_transform, self.dtype, self.categorical_features, copy=True)
+
+    def _transform(self, X):
+        X = check_array(X, dtype=np.int)
+        if np.any(X < 0):
+            raise ValueError('X needs to contain only non-negative integers.')
+        n_samples, n_features = X.shape
+        indices = self.feature_indices_
+        if n_features != indices.shape[0] - 1:
+            raise ValueError('X has different shape than during fitting. Expected %d, got %d.' % (indices.shape[0] - 1, n_features))
+        mask = (X < self.n_values_).ravel()
+        if np.any(~mask):
+            if self.handle_unknown not in ['error', 'ignore']:
+                raise ValueError('handle_unknown should be either error or unknown got %s' % self.handle_unknown)
+            if self.handle_unknown == 'error':
+                raise ValueError('unknown categorical feature present %s during transform.' % X.ravel()[~mask])
+        column_indices = (X + indices[:-1]).ravel()[mask]
+        row_indices = np.repeat(np.arange(n_samples, dtype=np.int32), n_features)[mask]
+        data = np.ones(np.sum(mask))
+        out = sparse.coo_matrix((data, (row_indices, column_indices)), shape=(n_samples, indices[-1]), dtype=self.dtype).tocsr()
+        if isinstance(self.n_values, six.string_types) and self.n_values == 'auto':
+            out = out[:, self.active_features_]
+        return out if self.sparse else out.toarray()
+
+    def transform(self, X):
+        return _transform_selected(X, self._transform, self.dtype, self.categorical_features, copy=True)

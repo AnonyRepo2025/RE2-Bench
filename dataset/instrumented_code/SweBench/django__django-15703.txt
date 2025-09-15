@@ -1,0 +1,585 @@
+diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
+index 75a3b8b..91a4e14 100644
+--- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -615,6 +615,14 @@ class AlterIndexTogether(AlterTogetherOptionOperation):
+ 
+     option_name = "index_together"
+ 
++    system_check_deprecated_details = {
++        "msg": (
++            "AlterIndexTogether is deprecated. Support for it (except in historical "
++            "migrations) will be removed in Django 5.1."
++        ),
++        "id": "migrations.W001",
++    }
++
+     def __init__(self, name, index_together):
+         super().__init__(name, index_together)
+ 
+diff --git a/django/db/models/options.py b/django/db/models/options.py
+index 3caad38..0a89e42 100644
+--- a/django/db/models/options.py
++++ b/django/db/models/options.py
+@@ -1,6 +1,200 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-15703/django/db/models/options.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import bisect
+ import copy
+ import inspect
++import warnings
+ from collections import defaultdict
+ 
+ from django.apps import apps
+@@ -10,6 +204,7 @@ from django.db import connections
+ from django.db.models import AutoField, Manager, OrderWrt, UniqueConstraint
+ from django.db.models.query_utils import PathInfo
+ from django.utils.datastructures import ImmutableList, OrderedSet
++from django.utils.deprecation import RemovedInDjango51Warning
+ from django.utils.functional import cached_property
+ from django.utils.module_loading import import_string
+ from django.utils.text import camel_case_to_spaces, format_lazy
+@@ -166,6 +361,7 @@ class Options:
+         # Don't go through get_app_config to avoid triggering imports.
+         return self.apps.app_configs.get(self.app_label)
+ 
++    @inspect_code
+     def contribute_to_class(self, cls, name):
+         from django.db import connection
+         from django.db.backends.utils import truncate_name
+@@ -200,6 +396,12 @@ class Options:
+ 
+             self.unique_together = normalize_together(self.unique_together)
+             self.index_together = normalize_together(self.index_together)
++            if self.index_together:
++                warnings.warn(
++                    f"'index_together' is deprecated. Use 'Meta.indexes' in "
++                    f"{self.label!r} instead.",
++                    RemovedInDjango51Warning,
++                )
+             # App label/class name interpolation for names of constraints and
+             # indexes.
+             if not getattr(cls._meta, "abstract", False):
+diff --git a/tests/check_framework/test_migrations.py b/tests/check_framework/test_migrations.py
+index 0b00690..e41a68f 100644
+--- a/tests/check_framework/test_migrations.py
++++ b/tests/check_framework/test_migrations.py
+@@ -1,7 +1,11 @@
++from unittest.mock import ANY
++
+ from django.core import checks
++from django.core.checks.migrations import check_migration_operations
+ from django.db import migrations
+ from django.db.migrations.operations.base import Operation
+ from django.test import TestCase
++from django.test.utils import override_settings
+ 
+ 
+ class DeprecatedMigrationOperationTests(TestCase):
+@@ -50,6 +54,23 @@ class DeprecatedMigrationOperationTests(TestCase):
+             ],
+         )
+ 
++    @override_settings(
++        INSTALLED_APPS=["check_framework.migrations_test_apps.index_together_app"]
++    )
++    def tests_check_alter_index_together(self):
++        errors = check_migration_operations()
++        self.assertEqual(
++            errors,
++            [
++                checks.Warning(
++                    "AlterIndexTogether is deprecated. Support for it (except in "
++                    "historical migrations) will be removed in Django 5.1.",
++                    obj=ANY,
++                    id="migrations.W001",
++                )
++            ],
++        )
++
+ 
+ class RemovedMigrationOperationTests(TestCase):
+     def test_default_operation(self):
+diff --git a/tests/indexes/tests.py b/tests/indexes/tests.py
+index fb7796d..8fdaec2 100644
+--- a/tests/indexes/tests.py
++++ b/tests/indexes/tests.py
+@@ -16,11 +16,13 @@ from django.db.models.functions import Lower
+ from django.test import (
+     TestCase,
+     TransactionTestCase,
++    ignore_warnings,
+     skipIfDBFeature,
+     skipUnlessDBFeature,
+ )
+ from django.test.utils import isolate_apps, override_settings
+ from django.utils import timezone
++from django.utils.deprecation import RemovedInDjango51Warning
+ 
+ from .models import Article, ArticleTranslation, IndexedArticle2
+ 
+@@ -78,6 +80,7 @@ class SchemaIndexesTests(TestCase):
+             index_sql[0],
+         )
+ 
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     @isolate_apps("indexes")
+     def test_index_together_single_list(self):
+         class IndexTogetherSingleList(Model):
+diff --git a/tests/invalid_models_tests/test_models.py b/tests/invalid_models_tests/test_models.py
+index 08aca62..5a5aecc 100644
+--- a/tests/invalid_models_tests/test_models.py
++++ b/tests/invalid_models_tests/test_models.py
+@@ -5,8 +5,9 @@ from django.core.checks.model_checks import _check_lazy_references
+ from django.db import connection, connections, models
+ from django.db.models.functions import Abs, Lower, Round
+ from django.db.models.signals import post_init
+-from django.test import SimpleTestCase, TestCase, skipUnlessDBFeature
++from django.test import SimpleTestCase, TestCase, ignore_warnings, skipUnlessDBFeature
+ from django.test.utils import isolate_apps, override_settings, register_lookup
++from django.utils.deprecation import RemovedInDjango51Warning
+ 
+ 
+ class EmptyRouter:
+@@ -29,6 +30,7 @@ def get_max_column_name_length():
+ 
+ 
+ @isolate_apps("invalid_models_tests")
++@ignore_warnings(category=RemovedInDjango51Warning)
+ class IndexTogetherTests(SimpleTestCase):
+     def test_non_iterable(self):
+         class Model(models.Model):
+diff --git a/tests/migrations/test_autodetector.py b/tests/migrations/test_autodetector.py
+index 09da03c..4911e41 100644
+--- a/tests/migrations/test_autodetector.py
++++ b/tests/migrations/test_autodetector.py
+@@ -12,8 +12,9 @@ from django.db.migrations.graph import MigrationGraph
+ from django.db.migrations.loader import MigrationLoader
+ from django.db.migrations.questioner import MigrationQuestioner
+ from django.db.migrations.state import ModelState, ProjectState
+-from django.test import SimpleTestCase, TestCase, override_settings
++from django.test import SimpleTestCase, TestCase, ignore_warnings, override_settings
+ from django.test.utils import isolate_lru_cache
++from django.utils.deprecation import RemovedInDjango51Warning
+ 
+ from .models import FoodManager, FoodQuerySet
+ 
+@@ -4588,6 +4589,7 @@ class AutodetectorTests(BaseAutodetectorTests):
+         self.assertOperationAttributes(changes, "testapp", 0, 0, name="Book")
+ 
+ 
++@ignore_warnings(category=RemovedInDjango51Warning)
+ class AutodetectorIndexTogetherTests(BaseAutodetectorTests):
+     book_index_together = ModelState(
+         "otherapp",
+diff --git a/tests/migrations/test_base.py b/tests/migrations/test_base.py
+index cf9dd02..3f1559b 100644
+--- a/tests/migrations/test_base.py
++++ b/tests/migrations/test_base.py
+@@ -255,7 +255,7 @@ class OperationTestBase(MigrationTestBase):
+         unique_together=False,
+         options=False,
+         db_table=None,
+-        index_together=False,
++        index_together=False,  # RemovedInDjango51Warning.
+         constraints=None,
+         indexes=None,
+     ):
+@@ -263,6 +263,7 @@ class OperationTestBase(MigrationTestBase):
+         # Make the "current" state.
+         model_options = {
+             "swappable": "TEST_SWAP_MODEL",
++            # RemovedInDjango51Warning.
+             "index_together": [["weight", "pink"]] if index_together else [],
+             "unique_together": [["pink", "weight"]] if unique_together else [],
+         }
+diff --git a/tests/migrations/test_operations.py b/tests/migrations/test_operations.py
+index 890af77..d60f5cd 100644
+--- a/tests/migrations/test_operations.py
++++ b/tests/migrations/test_operations.py
+@@ -5,8 +5,14 @@ from django.db.migrations.operations.fields import FieldOperation
+ from django.db.migrations.state import ModelState, ProjectState
+ from django.db.models.functions import Abs
+ from django.db.transaction import atomic
+-from django.test import SimpleTestCase, override_settings, skipUnlessDBFeature
++from django.test import (
++    SimpleTestCase,
++    ignore_warnings,
++    override_settings,
++    skipUnlessDBFeature,
++)
+ from django.test.utils import CaptureQueriesContext
++from django.utils.deprecation import RemovedInDjango51Warning
+ 
+ from .models import FoodManager, FoodQuerySet, UnicodeModel
+ from .test_base import OperationTestBase
+@@ -2485,6 +2491,7 @@ class OperationTests(OperationTestBase):
+             atomic=connection.features.supports_atomic_references_rename,
+         )
+ 
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_rename_field(self):
+         """
+         Tests the RenameField operation.
+@@ -2556,6 +2563,7 @@ class OperationTests(OperationTestBase):
+         self.assertColumnExists("test_rnflut_pony", "pink")
+         self.assertColumnNotExists("test_rnflut_pony", "blue")
+ 
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_rename_field_index_together(self):
+         project_state = self.set_up_test_model("test_rnflit", index_together=True)
+         operation = migrations.RenameField("Pony", "pink", "blue")
+@@ -3062,6 +3070,7 @@ class OperationTests(OperationTestBase):
+         with self.assertRaisesMessage(ValueError, msg):
+             migrations.RenameIndex("Pony", new_name="new_idx_name")
+ 
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_rename_index_unnamed_index(self):
+         app_label = "test_rninui"
+         project_state = self.set_up_test_model(app_label, index_together=True)
+@@ -3157,6 +3166,7 @@ class OperationTests(OperationTestBase):
+         self.assertIsNot(old_model, new_model)
+         self.assertEqual(new_model._meta.indexes[0].name, "new_pony_pink_idx")
+ 
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_rename_index_state_forwards_unnamed_index(self):
+         app_label = "test_rnidsfui"
+         project_state = self.set_up_test_model(app_label, index_together=True)
+@@ -3291,6 +3301,7 @@ class OperationTests(OperationTestBase):
+         # Ensure the index is still there
+         self.assertIndexExists("test_alflin_pony", ["pink"])
+ 
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_alter_index_together(self):
+         """
+         Tests the AlterIndexTogether operation.
+@@ -3343,6 +3354,7 @@ class OperationTests(OperationTestBase):
+             definition[2], {"name": "Pony", "index_together": {("pink", "weight")}}
+         )
+ 
++    # RemovedInDjango51Warning.
+     def test_alter_index_together_remove(self):
+         operation = migrations.AlterIndexTogether("Pony", None)
+         self.assertEqual(
+@@ -3350,6 +3362,7 @@ class OperationTests(OperationTestBase):
+         )
+ 
+     @skipUnlessDBFeature("allows_multiple_constraints_on_same_fields")
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_alter_index_together_remove_with_unique_together(self):
+         app_label = "test_alintoremove_wunto"
+         table_name = "%s_pony" % app_label
+diff --git a/tests/migrations/test_optimizer.py b/tests/migrations/test_optimizer.py
+index 6485009..014f291 100644
+--- a/tests/migrations/test_optimizer.py
++++ b/tests/migrations/test_optimizer.py
+@@ -211,6 +211,7 @@ class OptimizerTests(SimpleTestCase):
+             migrations.AlterUniqueTogether("Foo", [["a", "b"]])
+         )
+ 
++    # RemovedInDjango51Warning.
+     def test_create_alter_index_delete_model(self):
+         self._test_create_alter_foo_delete_model(
+             migrations.AlterIndexTogether("Foo", [["a", "b"]])
+@@ -248,6 +249,7 @@ class OptimizerTests(SimpleTestCase):
+             migrations.AlterUniqueTogether("Foo", [["a", "c"]]),
+         )
+ 
++    # RemovedInDjango51Warning.
+     def test_alter_alter_index_model(self):
+         self._test_alter_alter_model(
+             migrations.AlterIndexTogether("Foo", [["a", "b"]]),
+@@ -1055,6 +1057,7 @@ class OptimizerTests(SimpleTestCase):
+             migrations.AlterUniqueTogether("Foo", [["a", "b"]])
+         )
+ 
++    # RemovedInDjango51Warning.
+     def test_create_alter_index_field(self):
+         self._test_create_alter_foo_field(
+             migrations.AlterIndexTogether("Foo", [["a", "b"]])
+diff --git a/tests/migrations/test_state.py b/tests/migrations/test_state.py
+index 25f3252..aad24eb 100644
+--- a/tests/migrations/test_state.py
++++ b/tests/migrations/test_state.py
+@@ -13,8 +13,9 @@ from django.db.migrations.state import (
+     ProjectState,
+     get_related_models_recursive,
+ )
+-from django.test import SimpleTestCase, override_settings
++from django.test import SimpleTestCase, ignore_warnings, override_settings
+ from django.test.utils import isolate_apps
++from django.utils.deprecation import RemovedInDjango51Warning
+ 
+ from .models import (
+     FoodManager,
+@@ -30,6 +31,9 @@ class StateTests(SimpleTestCase):
+     Tests state construction, rendering and modification by operations.
+     """
+ 
++    # RemovedInDjango51Warning, when deprecation ends, only remove
++    # Meta.index_together from inline models.
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_create(self):
+         """
+         Tests making a ProjectState from an Apps
+@@ -46,7 +50,7 @@ class StateTests(SimpleTestCase):
+                 app_label = "migrations"
+                 apps = new_apps
+                 unique_together = ["name", "bio"]
+-                index_together = ["bio", "age"]
++                index_together = ["bio", "age"]  # RemovedInDjango51Warning.
+ 
+         class AuthorProxy(Author):
+             class Meta:
+@@ -140,7 +144,7 @@ class StateTests(SimpleTestCase):
+             author_state.options,
+             {
+                 "unique_together": {("name", "bio")},
+-                "index_together": {("bio", "age")},
++                "index_together": {("bio", "age")},  # RemovedInDjango51Warning.
+                 "indexes": [],
+                 "constraints": [],
+             },
+diff --git a/tests/schema/tests.py b/tests/schema/tests.py
+index 7651b69..2868f59 100644
+--- a/tests/schema/tests.py
++++ b/tests/schema/tests.py
+@@ -53,8 +53,14 @@ from django.db.models.fields.json import KeyTextTransform
+ from django.db.models.functions import Abs, Cast, Collate, Lower, Random, Upper
+ from django.db.models.indexes import IndexExpression
+ from django.db.transaction import TransactionManagementError, atomic
+-from django.test import TransactionTestCase, skipIfDBFeature, skipUnlessDBFeature
++from django.test import (
++    TransactionTestCase,
++    ignore_warnings,
++    skipIfDBFeature,
++    skipUnlessDBFeature,
++)
+ from django.test.utils import CaptureQueriesContext, isolate_apps, register_lookup
++from django.utils.deprecation import RemovedInDjango51Warning
+ 
+ from .fields import CustomManyToManyField, InheritedManyToManyField, MediumBlobField
+ from .models import (
+@@ -2888,6 +2894,7 @@ class SchemaTests(TransactionTestCase):
+             with self.assertRaises(DatabaseError):
+                 editor.add_constraint(Author, constraint)
+ 
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_index_together(self):
+         """
+         Tests removing and adding index_together constraints on a model.
+@@ -2931,6 +2938,7 @@ class SchemaTests(TransactionTestCase):
+             False,
+         )
+ 
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_index_together_with_fk(self):
+         """
+         Tests removing and adding index_together constraints that include
+@@ -2949,6 +2957,7 @@ class SchemaTests(TransactionTestCase):
+         with connection.schema_editor() as editor:
+             editor.alter_index_together(Book, [["author", "title"]], [])
+ 
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     @isolate_apps("schema")
+     def test_create_index_together(self):
+         """
+@@ -2978,6 +2987,7 @@ class SchemaTests(TransactionTestCase):
+         )
+ 
+     @skipUnlessDBFeature("allows_multiple_constraints_on_same_fields")
++    @ignore_warnings(category=RemovedInDjango51Warning)
+     @isolate_apps("schema")
+     def test_remove_index_together_does_not_remove_meta_indexes(self):
+         class AuthorWithIndexedNameAndBirthday(Model):

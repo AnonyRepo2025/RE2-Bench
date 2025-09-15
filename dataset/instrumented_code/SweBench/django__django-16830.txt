@@ -1,0 +1,419 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 0c4a5dd..2fb7e2c 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-16830/django/db/models/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import copy
+ import inspect
+ import warnings
+@@ -832,6 +1025,27 @@ class Model(AltersData, metaclass=ModelBase):
+ 
+     asave.alters_data = True
+ 
++    @classmethod
++    def _validate_force_insert(cls, force_insert):
++        if force_insert is False:
++            return ()
++        if force_insert is True:
++            return (cls,)
++        if not isinstance(force_insert, tuple):
++            raise TypeError("force_insert must be a bool or tuple.")
++        for member in force_insert:
++            if not isinstance(member, ModelBase):
++                raise TypeError(
++                    f"Invalid force_insert member. {member!r} must be a model subclass."
++                )
++            if not issubclass(cls, member):
++                raise TypeError(
++                    f"Invalid force_insert member. {member.__qualname__} must be a "
++                    f"base of {cls.__qualname__}."
++                )
++        return force_insert
++
++    @inspect_code
+     def save_base(
+         self,
+         raw=False,
+@@ -873,7 +1087,11 @@ class Model(AltersData, metaclass=ModelBase):
+         with context_manager:
+             parent_inserted = False
+             if not raw:
+-                parent_inserted = self._save_parents(cls, using, update_fields)
++                # Validate force insert only when parents are inserted.
++                force_insert = self._validate_force_insert(force_insert)
++                parent_inserted = self._save_parents(
++                    cls, using, update_fields, force_insert
++                )
+             updated = self._save_table(
+                 raw,
+                 cls,
+@@ -900,7 +1118,10 @@ class Model(AltersData, metaclass=ModelBase):
+ 
+     save_base.alters_data = True
+ 
+-    def _save_parents(self, cls, using, update_fields, updated_parents=None):
++    @inspect_code
++    def _save_parents(
++        self, cls, using, update_fields, force_insert, updated_parents=None
++    ):
+         """Save all the parents of cls using values from self."""
+         meta = cls._meta
+         inserted = False
+@@ -919,13 +1140,14 @@ class Model(AltersData, metaclass=ModelBase):
+                     cls=parent,
+                     using=using,
+                     update_fields=update_fields,
++                    force_insert=force_insert,
+                     updated_parents=updated_parents,
+                 )
+                 updated = self._save_table(
+                     cls=parent,
+                     using=using,
+                     update_fields=update_fields,
+-                    force_insert=parent_inserted,
++                    force_insert=parent_inserted or issubclass(parent, force_insert),
+                 )
+                 if not updated:
+                     inserted = True
+diff --git a/tests/extra_regress/models.py b/tests/extra_regress/models.py
+index 2122bae..4111d43 100644
+--- a/tests/extra_regress/models.py
++++ b/tests/extra_regress/models.py
+@@ -10,7 +10,7 @@ class RevisionableModel(models.Model):
+     title = models.CharField(blank=True, max_length=255)
+     when = models.DateTimeField(default=datetime.datetime.now)
+ 
+-    def save(self, *args, force_insert=None, force_update=None, **kwargs):
++    def save(self, *args, force_insert=False, force_update=False, **kwargs):
+         super().save(
+             *args, force_insert=force_insert, force_update=force_update, **kwargs
+         )
+diff --git a/tests/force_insert_update/models.py b/tests/force_insert_update/models.py
+index 586be12..b95b197 100644
+--- a/tests/force_insert_update/models.py
++++ b/tests/force_insert_update/models.py
+@@ -30,3 +30,13 @@ class SubSubCounter(SubCounter):
+ class WithCustomPK(models.Model):
+     name = models.IntegerField(primary_key=True)
+     value = models.IntegerField()
++
++
++class OtherSubCounter(Counter):
++    other_counter_ptr = models.OneToOneField(
++        Counter, primary_key=True, parent_link=True, on_delete=models.CASCADE
++    )
++
++
++class DiamondSubSubCounter(SubCounter, OtherSubCounter):
++    pass
+diff --git a/tests/force_insert_update/tests.py b/tests/force_insert_update/tests.py
+index e2fefd3..cc223cf 100644
+--- a/tests/force_insert_update/tests.py
++++ b/tests/force_insert_update/tests.py
+@@ -1,9 +1,11 @@
+-from django.db import DatabaseError, IntegrityError, transaction
++from django.db import DatabaseError, IntegrityError, models, transaction
+ from django.test import TestCase
+ 
+ from .models import (
+     Counter,
++    DiamondSubSubCounter,
+     InheritedCounter,
++    OtherSubCounter,
+     ProxyCounter,
+     SubCounter,
+     SubSubCounter,
+@@ -76,6 +78,29 @@ class InheritanceTests(TestCase):
+ 
+ 
+ class ForceInsertInheritanceTests(TestCase):
++    def test_force_insert_not_bool_or_tuple(self):
++        msg = "force_insert must be a bool or tuple."
++        with self.assertRaisesMessage(TypeError, msg), transaction.atomic():
++            Counter().save(force_insert=1)
++        with self.assertRaisesMessage(TypeError, msg), transaction.atomic():
++            Counter().save(force_insert="test")
++        with self.assertRaisesMessage(TypeError, msg), transaction.atomic():
++            Counter().save(force_insert=[])
++
++    def test_force_insert_not_model(self):
++        msg = f"Invalid force_insert member. {object!r} must be a model subclass."
++        with self.assertRaisesMessage(TypeError, msg), transaction.atomic():
++            Counter().save(force_insert=(object,))
++        instance = Counter()
++        msg = f"Invalid force_insert member. {instance!r} must be a model subclass."
++        with self.assertRaisesMessage(TypeError, msg), transaction.atomic():
++            Counter().save(force_insert=(instance,))
++
++    def test_force_insert_not_base(self):
++        msg = "Invalid force_insert member. SubCounter must be a base of Counter."
++        with self.assertRaisesMessage(TypeError, msg):
++            Counter().save(force_insert=(SubCounter,))
++
+     def test_force_insert_false(self):
+         with self.assertNumQueries(3):
+             obj = SubCounter.objects.create(pk=1, value=0)
+@@ -87,6 +112,10 @@ class ForceInsertInheritanceTests(TestCase):
+             SubCounter(pk=obj.pk, value=2).save(force_insert=False)
+         obj.refresh_from_db()
+         self.assertEqual(obj.value, 2)
++        with self.assertNumQueries(2):
++            SubCounter(pk=obj.pk, value=3).save(force_insert=())
++        obj.refresh_from_db()
++        self.assertEqual(obj.value, 3)
+ 
+     def test_force_insert_false_with_existing_parent(self):
+         parent = Counter.objects.create(pk=1, value=1)
+@@ -96,13 +125,59 @@ class ForceInsertInheritanceTests(TestCase):
+     def test_force_insert_parent(self):
+         with self.assertNumQueries(3):
+             SubCounter(pk=1, value=1).save(force_insert=True)
++        # Force insert a new parent and don't UPDATE first.
++        with self.assertNumQueries(2):
++            SubCounter(pk=2, value=1).save(force_insert=(Counter,))
++        with self.assertNumQueries(2):
++            SubCounter(pk=3, value=1).save(force_insert=(models.Model,))
+ 
+     def test_force_insert_with_grandparent(self):
+         with self.assertNumQueries(4):
+             SubSubCounter(pk=1, value=1).save(force_insert=True)
++        # Force insert parents on all levels and don't UPDATE first.
++        with self.assertNumQueries(3):
++            SubSubCounter(pk=2, value=1).save(force_insert=(models.Model,))
++        with self.assertNumQueries(3):
++            SubSubCounter(pk=3, value=1).save(force_insert=(Counter,))
++        # Force insert only the last parent.
++        with self.assertNumQueries(4):
++            SubSubCounter(pk=4, value=1).save(force_insert=(SubCounter,))
+ 
+     def test_force_insert_with_existing_grandparent(self):
+         # Force insert only the last child.
+         grandparent = Counter.objects.create(pk=1, value=1)
+         with self.assertNumQueries(4):
+             SubSubCounter(pk=grandparent.pk, value=1).save(force_insert=True)
++        # Force insert a parent, and don't force insert a grandparent.
++        grandparent = Counter.objects.create(pk=2, value=1)
++        with self.assertNumQueries(3):
++            SubSubCounter(pk=grandparent.pk, value=1).save(force_insert=(SubCounter,))
++        # Force insert parents on all levels, grandparent conflicts.
++        grandparent = Counter.objects.create(pk=3, value=1)
++        with self.assertRaises(IntegrityError), transaction.atomic():
++            SubSubCounter(pk=grandparent.pk, value=1).save(force_insert=(Counter,))
++
++    def test_force_insert_diamond_mti(self):
++        # Force insert all parents.
++        with self.assertNumQueries(4):
++            DiamondSubSubCounter(pk=1, value=1).save(
++                force_insert=(Counter, SubCounter, OtherSubCounter)
++            )
++        with self.assertNumQueries(4):
++            DiamondSubSubCounter(pk=2, value=1).save(force_insert=(models.Model,))
++        # Force insert parents, and don't force insert a common grandparent.
++        with self.assertNumQueries(5):
++            DiamondSubSubCounter(pk=3, value=1).save(
++                force_insert=(SubCounter, OtherSubCounter)
++            )
++        grandparent = Counter.objects.create(pk=4, value=1)
++        with self.assertNumQueries(4):
++            DiamondSubSubCounter(pk=grandparent.pk, value=1).save(
++                force_insert=(SubCounter, OtherSubCounter),
++            )
++        # Force insert all parents, grandparent conflicts.
++        grandparent = Counter.objects.create(pk=5, value=1)
++        with self.assertRaises(IntegrityError), transaction.atomic():
++            DiamondSubSubCounter(pk=grandparent.pk, value=1).save(
++                force_insert=(models.Model,)
++            )

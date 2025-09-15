@@ -1,0 +1,429 @@
+diff --git a/astropy/io/ascii/tests/test_ecsv.py b/astropy/io/ascii/tests/test_ecsv.py
+index 0e63b5c..ae395fd 100644
+--- a/astropy/io/ascii/tests/test_ecsv.py
++++ b/astropy/io/ascii/tests/test_ecsv.py
+@@ -267,15 +267,10 @@ def assert_objects_equal(obj1, obj2, attrs, compare_class=True):
+     if compare_class:
+         assert obj1.__class__ is obj2.__class__
+ 
+-    # For a column that is a native astropy Column, ignore the specified
+-    # `attrs`. This happens for a mixin like Quantity that is stored in a
+-    # `Table` (not QTable).
+-    if isinstance(obj1, Column):
+-        attrs = []
+-
+     assert obj1.shape == obj2.shape
+ 
+-    info_attrs = ['info.name', 'info.format', 'info.unit', 'info.description']
++    info_attrs = ['info.name', 'info.format', 'info.unit', 'info.description',
++                  'info.dtype']
+     for attr in attrs + info_attrs:
+         a1 = obj1
+         a2 = obj2
+@@ -416,7 +411,12 @@ def test_ecsv_mixins_per_column(table_cls, name_col, ndim):
+ 
+     for colname in t.colnames:
+         assert len(t2[colname].shape) == ndim
+-        compare = ['data'] if colname in ('c1', 'c2') else compare_attrs[colname]
++        if colname in ('c1', 'c2'):
++            compare = ['data']
++        else:
++            # Storing Longitude as Column loses wrap_angle.
++            compare = [attr for attr in compare_attrs[colname]
++                       if not (attr == 'wrap_angle' and table_cls is Table)]
+         assert_objects_equal(t[colname], t2[colname], compare)
+ 
+     # Special case to make sure Column type doesn't leak into Time class data
+diff --git a/astropy/io/fits/tests/test_connect.py b/astropy/io/fits/tests/test_connect.py
+index a18876e..611652c 100644
+--- a/astropy/io/fits/tests/test_connect.py
++++ b/astropy/io/fits/tests/test_connect.py
+@@ -18,6 +18,7 @@ from astropy.table import Table, QTable, Column
+ from astropy.table.table_helpers import simple_table
+ from astropy.units import allclose as quantity_allclose
+ from astropy.units.format.fits import UnitScaleError
++from astropy.utils.compat import NUMPY_LT_1_22
+ from astropy.utils.data import get_pkg_data_filename
+ from astropy.utils.exceptions import (AstropyUserWarning,
+                                       AstropyDeprecationWarning)
+@@ -723,7 +724,8 @@ def assert_objects_equal(obj1, obj2, attrs, compare_class=True):
+     if compare_class:
+         assert obj1.__class__ is obj2.__class__
+ 
+-    info_attrs = ['info.name', 'info.format', 'info.unit', 'info.description', 'info.meta']
++    info_attrs = ['info.name', 'info.format', 'info.unit', 'info.description', 'info.meta',
++                  'info.dtype']
+     for attr in attrs + info_attrs:
+         a1 = obj1
+         a2 = obj2
+@@ -745,6 +747,15 @@ def assert_objects_equal(obj1, obj2, attrs, compare_class=True):
+ 
+         if isinstance(a1, np.ndarray) and a1.dtype.kind == 'f':
+             assert quantity_allclose(a1, a2, rtol=1e-15)
++        elif isinstance(a1, np.dtype):
++            # FITS does not perfectly preserve dtype: byte order can change, and
++            # unicode gets stored as bytes.  So, we just check safe casting, to
++            # ensure we do not, e.g., accidentally change integer to float, etc.
++            if NUMPY_LT_1_22 and a1.names:
++                # For old numpy, can_cast does not deal well with structured dtype.
++                assert a1.names == a2.names
++            else:
++                assert np.can_cast(a2, a1, casting='safe')
+         else:
+             assert np.all(a1 == a2)
+ 
+diff --git a/astropy/io/misc/tests/test_hdf5.py b/astropy/io/misc/tests/test_hdf5.py
+index a082081..8bd0d82 100644
+--- a/astropy/io/misc/tests/test_hdf5.py
++++ b/astropy/io/misc/tests/test_hdf5.py
+@@ -13,6 +13,7 @@ from astropy.utils.exceptions import AstropyUserWarning
+ from astropy.utils.data import get_pkg_data_filename
+ from astropy.utils.misc import _NOT_OVERWRITING_MSG_MATCH
+ from astropy.io.misc.hdf5 import meta_path
++from astropy.utils.compat import NUMPY_LT_1_22
+ from astropy.utils.compat.optional_deps import HAS_H5PY  # noqa
+ if HAS_H5PY:
+     import h5py
+@@ -651,7 +652,8 @@ def assert_objects_equal(obj1, obj2, attrs, compare_class=True):
+     if compare_class:
+         assert obj1.__class__ is obj2.__class__
+ 
+-    info_attrs = ['info.name', 'info.format', 'info.unit', 'info.description', 'info.meta']
++    info_attrs = ['info.name', 'info.format', 'info.unit', 'info.description', 'info.meta',
++                  'info.dtype']
+     for attr in attrs + info_attrs:
+         a1 = obj1
+         a2 = obj2
+@@ -673,6 +675,15 @@ def assert_objects_equal(obj1, obj2, attrs, compare_class=True):
+ 
+         if isinstance(a1, np.ndarray) and a1.dtype.kind == 'f':
+             assert quantity_allclose(a1, a2, rtol=1e-15)
++        elif isinstance(a1, np.dtype):
++            # HDF5 does not perfectly preserve dtype: byte order can change, and
++            # unicode gets stored as bytes.  So, we just check safe casting, to
++            # ensure we do not, e.g., accidentally change integer to float, etc.
++            if NUMPY_LT_1_22 and a1.names:
++                # For old numpy, can_cast does not deal well with structured dtype.
++                assert a1.names == a2.names
++            else:
++                assert np.can_cast(a2, a1, casting='safe')
+         else:
+             assert np.all(a1 == a2)
+ 
+diff --git a/astropy/io/tests/mixin_columns.py b/astropy/io/tests/mixin_columns.py
+index a9b4a45..4a3a03b 100644
+--- a/astropy/io/tests/mixin_columns.py
++++ b/astropy/io/tests/mixin_columns.py
+@@ -45,10 +45,10 @@ su = table.Column([(1, (1.5, 1.6)),
+                    (2, (2.5, 2.6))],
+                   name='su',
+                   dtype=[('i', np.int64),
+-                         ('f', [('p0', np.float64), ('p1', np.float64)])])
+-su2 = table.Column([(['d', 'c'], [1.6, 1.5]),
+-                    (['b', 'a'], [2.5, 2.6])],
+-                   dtype=[('s', 'U1', (2,)), ('f', 'f8', (2,))])
++                         ('f', [('p1', np.float64), ('p0', np.float64)])])
++su2 = table.Column([(['snake', 'c'], [1.6, 1.5]),
++                    (['eal', 'a'], [2.5, 2.6])],
++                   dtype=[('name', 'U5', (2,)), ('f', 'f8', (2,))])
+ 
+ # NOTE: for testing, the name of the column "x" for the
+ # Quantity is important since it tests the fix for #10215
+@@ -113,7 +113,7 @@ compare_attrs = {
+             'differentials.s.d_lat', 'differentials.s.d_distance'],
+     'obj': [],
+     'su': ['i', 'f.p0', 'f.p1'],
+-    'su2': ['s', 'f'],
++    'su2': ['name', 'f'],
+ }
+ non_trivial_names = {
+     'cr': ['cr.x', 'cr.y', 'cr.z'],
+@@ -139,8 +139,8 @@ non_trivial_names = {
+             'srd.differentials.s.d_lon_coslat',
+             'srd.differentials.s.d_lat',
+             'srd.differentials.s.d_distance'],
+-    'su': ['su.i', 'su.f.p0', 'su.f.p1'],
+-    'su2': ['su2.s', 'su2.f'],
++    'su': ['su.i', 'su.f.p1', 'su.f.p0'],
++    'su2': ['su2.name', 'su2.f'],
+     'tm': ['tm.jd1', 'tm.jd2'],
+     'tm2': ['tm2.jd1', 'tm2.jd2'],
+     'tm3': ['tm3.jd1', 'tm3.jd2',
+diff --git a/astropy/table/serialize.py b/astropy/table/serialize.py
+index 31adabd..2e70045 100644
+--- a/astropy/table/serialize.py
++++ b/astropy/table/serialize.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/astropy__astropy-13234/astropy/table/serialize.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # Licensed under a 3-clause BSD style license - see LICENSE.rst
+ from importlib import import_module
+ from copy import deepcopy
+@@ -293,14 +486,18 @@ def _construct_mixin_from_obj_attrs_and_info(obj_attrs, info):
+     # untrusted code by only importing known astropy classes.
+     cls_full_name = obj_attrs.pop('__class__', None)
+     if cls_full_name is None:
+-        cls = SerializedColumn
+-    elif cls_full_name not in __construct_mixin_classes:
++        # We're dealing with a SerializedColumn holding columns, stored in
++        # obj_attrs. For this case, info holds the name (and nothing else).
++        mixin = SerializedColumn(obj_attrs)
++        mixin.info.name = info['name']
++        return mixin
++
++    if cls_full_name not in __construct_mixin_classes:
+         raise ValueError(f'unsupported class for construct {cls_full_name}')
+-    else:
+-        mod_name, _, cls_name = cls_full_name.rpartition('.')
+-        module = import_module(mod_name)
+-        cls = getattr(module, cls_name)
+ 
++    mod_name, _, cls_name = cls_full_name.rpartition('.')
++    module = import_module(mod_name)
++    cls = getattr(module, cls_name)
+     for attr, value in info.items():
+         if attr in cls.info.attrs_from_parent:
+             obj_attrs[attr] = value
+@@ -338,11 +535,16 @@ class _TableLite(OrderedDict):
+         return self.values()
+ 
+ 
++@inspect_code
+ def _construct_mixin_from_columns(new_name, obj_attrs, out):
+     data_attrs_map = {}
+     for name, val in obj_attrs.items():
+         if isinstance(val, SerializedColumn):
+-            if 'name' in val:
++            # A SerializedColumn can just link to a serialized column using a name
++            # (e.g., time.jd1), or itself be a mixin (e.g., coord.obstime).  Note
++            # that in principle a mixin could have include a column called 'name',
++            # hence we check whether the value is actually a string (see gh-13232).
++            if 'name' in val and isinstance(val['name'], str):
+                 data_attrs_map[val['name']] = name
+             else:
+                 out_name = f'{new_name}.{name}'
+@@ -352,24 +554,26 @@ def _construct_mixin_from_columns(new_name, obj_attrs, out):
+     for name in data_attrs_map.values():
+         del obj_attrs[name]
+ 
+-    # Get the index where to add new column
+-    idx = min(out.colnames.index(name) for name in data_attrs_map)
++    # The order of data_attrs_map may not match the actual order, as it is set
++    # by the yaml description.  So, sort names by position in the serialized table.
++    # Keep the index of the first column, so we can insert the new one there later.
++    names = sorted(data_attrs_map, key=out.colnames.index)
++    idx = out.colnames.index(names[0])
+ 
+     # Name is the column name in the table (e.g. "coord.ra") and
+     # data_attr is the object attribute name  (e.g. "ra").  A different
+     # example would be a formatted time object that would have (e.g.)
+     # "time_col" and "value", respectively.
+-    for name, data_attr in data_attrs_map.items():
+-        obj_attrs[data_attr] = out[name]
++    for name in names:
++        obj_attrs[data_attrs_map[name]] = out[name]
+         del out[name]
+ 
+     info = obj_attrs.pop('__info__', {})
+-    if len(data_attrs_map) == 1:
++    if len(names) == 1:
+         # col is the first and only serialized column; in that case, use info
+         # stored on the column. First step is to get that first column which
+         # has been moved from `out` to `obj_attrs` above.
+-        data_attr = next(iter(data_attrs_map.values()))
+-        col = obj_attrs[data_attr]
++        col = obj_attrs[data_attrs_map[name]]
+ 
+         # Now copy the relevant attributes
+         for attr, nontrivial in (('unit', lambda x: x not in (None, '')),

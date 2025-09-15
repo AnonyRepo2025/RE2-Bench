@@ -1,0 +1,66 @@
+diff --git a/sphinx/ext/autodoc/preserve_defaults.py b/sphinx/ext/autodoc/preserve_defaults.py
+index 6c4ee8f..93de022 100644
+--- a/sphinx/ext/autodoc/preserve_defaults.py
++++ b/sphinx/ext/autodoc/preserve_defaults.py
+@@ -7,6 +7,7 @@ and keep them not evaluated for readability.
+ import ast
+ import inspect
+ import sys
++from inspect import Parameter
+ from typing import Any, Dict, List, Optional
+ 
+ from sphinx.application import Sphinx
+@@ -96,8 +97,18 @@ def update_defvalue(app: Sphinx, obj: Any, bound_method: bool) -> None:
+                         if value is None:
+                             value = ast_unparse(default)  # type: ignore
+                         parameters[i] = param.replace(default=DefaultValue(value))
++
++            if bound_method and inspect.ismethod(obj):
++                # classmethods
++                cls = inspect.Parameter('cls', Parameter.POSITIONAL_OR_KEYWORD)
++                parameters.insert(0, cls)
++
+             sig = sig.replace(parameters=parameters)
+-            obj.__signature__ = sig
++            if bound_method and inspect.ismethod(obj):
++                # classmethods can't be assigned __signature__ attribute.
++                obj.__dict__['__signature__'] = sig
++            else:
++                obj.__signature__ = sig
+     except (AttributeError, TypeError):
+         # failed to update signature (ex. built-in or extension types)
+         pass
+diff --git a/tests/roots/test-ext-autodoc/target/preserve_defaults.py b/tests/roots/test-ext-autodoc/target/preserve_defaults.py
+index fc83cf4..0cc3b4e 100644
+--- a/tests/roots/test-ext-autodoc/target/preserve_defaults.py
++++ b/tests/roots/test-ext-autodoc/target/preserve_defaults.py
+@@ -22,3 +22,9 @@ class Class:
+              now: datetime = datetime.now(), color: int = 0xFFFFFF,
+              *, kwarg1, kwarg2 = 0xFFFFFF) -> None:
+         """docstring"""
++
++    @classmethod
++    def clsmeth(cls, name: str = CONSTANT, sentinel: Any = SENTINEL,
++                now: datetime = datetime.now(), color: int = 0xFFFFFF,
++                *, kwarg1, kwarg2 = 0xFFFFFF) -> None:
++        """docstring"""
+diff --git a/tests/test_ext_autodoc_preserve_defaults.py b/tests/test_ext_autodoc_preserve_defaults.py
+index fe62c92..ba5ff6e 100644
+--- a/tests/test_ext_autodoc_preserve_defaults.py
++++ b/tests/test_ext_autodoc_preserve_defaults.py
+@@ -28,6 +28,15 @@ def test_preserve_defaults(app):
+         '   docstring',
+         '',
+         '',
++        '   .. py:method:: Class.clsmeth(name: str = CONSTANT, sentinel: ~typing.Any = '
++        'SENTINEL, now: ~datetime.datetime = datetime.now(), color: int = %s, *, '
++        'kwarg1, kwarg2=%s) -> None' % (color, color),
++        '      :module: target.preserve_defaults',
++        '      :classmethod:',
++        '',
++        '      docstring',
++        '',
++        '',
+         '   .. py:method:: Class.meth(name: str = CONSTANT, sentinel: ~typing.Any = '
+         'SENTINEL, now: ~datetime.datetime = datetime.now(), color: int = %s, *, '
+         'kwarg1, kwarg2=%s) -> None' % (color, color),

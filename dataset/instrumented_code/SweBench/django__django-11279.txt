@@ -1,0 +1,517 @@
+diff --git a/django/db/models/options.py b/django/db/models/options.py
+index fea65f7..e52e402 100644
+--- a/django/db/models/options.py
++++ b/django/db/models/options.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-11279/django/db/models/options.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import copy
+ import inspect
+ from bisect import bisect
+@@ -146,6 +339,7 @@ class Options:
+     def installed(self):
+         return self.app_config is not None
+ 
++    @inspect_code
+     def contribute_to_class(self, cls, name):
+         from django.db import connection
+         from django.db.backends.utils import truncate_name
+@@ -180,6 +374,12 @@ class Options:
+ 
+             self.unique_together = normalize_together(self.unique_together)
+             self.index_together = normalize_together(self.index_together)
++            # App label/class name interpolation for names of constraints and
++            # indexes.
++            if not getattr(cls._meta, 'abstract', False):
++                for attr_name in {'constraints', 'indexes'}:
++                    objs = getattr(self, attr_name, [])
++                    setattr(self, attr_name, self._format_names_with_class(cls, objs))
+ 
+             # verbose_name_plural is a special case because it uses a 's'
+             # by default.
+@@ -201,6 +401,19 @@ class Options:
+             self.db_table = "%s_%s" % (self.app_label, self.model_name)
+             self.db_table = truncate_name(self.db_table, connection.ops.max_name_length())
+ 
++    @inspect_code
++    def _format_names_with_class(self, cls, objs):
++        """App label/class name interpolation for object names."""
++        new_objs = []
++        for obj in objs:
++            obj = obj.clone()
++            obj.name = obj.name % {
++                'app_label': cls._meta.app_label.lower(),
++                'class': cls.__name__.lower(),
++            }
++            new_objs.append(obj)
++        return new_objs
++
+     def _prepare(self, model):
+         if self.order_with_respect_to:
+             # The app registry will not be ready at this point, so we cannot
+diff --git a/tests/check_framework/test_model_checks.py b/tests/check_framework/test_model_checks.py
+index 0cbc0af..79177e3 100644
+--- a/tests/check_framework/test_model_checks.py
++++ b/tests/check_framework/test_model_checks.py
+@@ -131,6 +131,22 @@ class IndexNameTests(SimpleTestCase):
+             ),
+         ])
+ 
++    def test_no_collision_abstract_model_interpolation(self):
++        class AbstractModel(models.Model):
++            name = models.CharField(max_length=20)
++
++            class Meta:
++                indexes = [models.Index(fields=['name'], name='%(app_label)s_%(class)s_foo')]
++                abstract = True
++
++        class Model1(AbstractModel):
++            pass
++
++        class Model2(AbstractModel):
++            pass
++
++        self.assertEqual(checks.run_checks(app_configs=self.apps.get_app_configs()), [])
++
+     @modify_settings(INSTALLED_APPS={'append': 'basic'})
+     @isolate_apps('basic', 'check_framework', kwarg_name='apps')
+     def test_collision_across_apps(self, apps):
+@@ -154,6 +170,23 @@ class IndexNameTests(SimpleTestCase):
+             ),
+         ])
+ 
++    @modify_settings(INSTALLED_APPS={'append': 'basic'})
++    @isolate_apps('basic', 'check_framework', kwarg_name='apps')
++    def test_no_collision_across_apps_interpolation(self, apps):
++        index = models.Index(fields=['id'], name='%(app_label)s_%(class)s_foo')
++
++        class Model1(models.Model):
++            class Meta:
++                app_label = 'basic'
++                constraints = [index]
++
++        class Model2(models.Model):
++            class Meta:
++                app_label = 'check_framework'
++                constraints = [index]
++
++        self.assertEqual(checks.run_checks(app_configs=apps.get_app_configs()), [])
++
+ 
+ @isolate_apps('check_framework', attr_name='apps')
+ @override_system_checks([checks.model_checks.check_all_models])
+@@ -214,6 +247,22 @@ class ConstraintNameTests(TestCase):
+             ),
+         ])
+ 
++    def test_no_collision_abstract_model_interpolation(self):
++        class AbstractModel(models.Model):
++            class Meta:
++                constraints = [
++                    models.CheckConstraint(check=models.Q(id__gt=0), name='%(app_label)s_%(class)s_foo'),
++                ]
++                abstract = True
++
++        class Model1(AbstractModel):
++            pass
++
++        class Model2(AbstractModel):
++            pass
++
++        self.assertEqual(checks.run_checks(app_configs=self.apps.get_app_configs()), [])
++
+     @modify_settings(INSTALLED_APPS={'append': 'basic'})
+     @isolate_apps('basic', 'check_framework', kwarg_name='apps')
+     def test_collision_across_apps(self, apps):
+@@ -236,3 +285,20 @@ class ConstraintNameTests(TestCase):
+                 id='models.E032',
+             ),
+         ])
++
++    @modify_settings(INSTALLED_APPS={'append': 'basic'})
++    @isolate_apps('basic', 'check_framework', kwarg_name='apps')
++    def test_no_collision_across_apps_interpolation(self, apps):
++        constraint = models.CheckConstraint(check=models.Q(id__gt=0), name='%(app_label)s_%(class)s_foo')
++
++        class Model1(models.Model):
++            class Meta:
++                app_label = 'basic'
++                constraints = [constraint]
++
++        class Model2(models.Model):
++            class Meta:
++                app_label = 'check_framework'
++                constraints = [constraint]
++
++        self.assertEqual(checks.run_checks(app_configs=apps.get_app_configs()), [])
+diff --git a/tests/constraints/models.py b/tests/constraints/models.py
+index f316b95..fb6ef62 100644
+--- a/tests/constraints/models.py
++++ b/tests/constraints/models.py
+@@ -13,6 +13,10 @@ class Product(models.Model):
+                 check=models.Q(price__gt=models.F('discounted_price')),
+                 name='price_gt_discounted_price',
+             ),
++            models.CheckConstraint(
++                check=models.Q(price__gt=0),
++                name='%(app_label)s_%(class)s_price_gt_0',
++            ),
+             models.UniqueConstraint(fields=['name', 'color'], name='name_color_uniq'),
+             models.UniqueConstraint(
+                 fields=['name'],
+@@ -20,3 +24,20 @@ class Product(models.Model):
+                 condition=models.Q(color__isnull=True),
+             ),
+         ]
++
++
++class AbstractModel(models.Model):
++    age = models.IntegerField()
++
++    class Meta:
++        abstract = True
++        constraints = [
++            models.CheckConstraint(
++                check=models.Q(age__gte=18),
++                name='%(app_label)s_%(class)s_adult',
++            ),
++        ]
++
++
++class ChildModel(AbstractModel):
++    pass
+diff --git a/tests/constraints/tests.py b/tests/constraints/tests.py
+index b7aeb1e..c2f99c5 100644
+--- a/tests/constraints/tests.py
++++ b/tests/constraints/tests.py
+@@ -3,7 +3,7 @@ from django.db import IntegrityError, connection, models
+ from django.db.models.constraints import BaseConstraint
+ from django.test import SimpleTestCase, TestCase, skipUnlessDBFeature
+ 
+-from .models import Product
++from .models import ChildModel, Product
+ 
+ 
+ def get_constraints(table):
+@@ -76,8 +76,17 @@ class CheckConstraintTests(TestCase):
+     @skipUnlessDBFeature('supports_table_check_constraints')
+     def test_name(self):
+         constraints = get_constraints(Product._meta.db_table)
+-        expected_name = 'price_gt_discounted_price'
+-        self.assertIn(expected_name, constraints)
++        for expected_name in (
++            'price_gt_discounted_price',
++            'constraints_product_price_gt_0',
++        ):
++            with self.subTest(expected_name):
++                self.assertIn(expected_name, constraints)
++
++    @skipUnlessDBFeature('supports_table_check_constraints')
++    def test_abstract_name(self):
++        constraints = get_constraints(ChildModel._meta.db_table)
++        self.assertIn('constraints_childmodel_adult', constraints)
+ 
+ 
+ class UniqueConstraintTests(TestCase):
+diff --git a/tests/migrations/test_state.py b/tests/migrations/test_state.py
+index 259a42f..0f0f918 100644
+--- a/tests/migrations/test_state.py
++++ b/tests/migrations/test_state.py
+@@ -1105,7 +1105,7 @@ class ModelStateTests(SimpleTestCase):
+             class Meta:
+                 app_label = 'migrations'
+                 abstract = True
+-                indexes = [models.indexes.Index(fields=['name'])]
++                indexes = [models.Index(fields=['name'])]
+ 
+         class Child1(Abstract):
+             pass
+@@ -1131,7 +1131,7 @@ class ModelStateTests(SimpleTestCase):
+ 
+             class Meta:
+                 app_label = 'migrations'
+-                indexes = [models.indexes.Index(fields=['name'], name='foo_idx')]
++                indexes = [models.Index(fields=['name'], name='foo_idx')]
+ 
+         model_state = ModelState.from_model(TestModel)
+         index_names = [index.name for index in model_state.options['indexes']]
+diff --git a/tests/model_indexes/models.py b/tests/model_indexes/models.py
+index fbee67a..42651cd 100644
+--- a/tests/model_indexes/models.py
++++ b/tests/model_indexes/models.py
+@@ -7,20 +7,26 @@ class Book(models.Model):
+     pages = models.IntegerField(db_column='page_count')
+     shortcut = models.CharField(max_length=50, db_tablespace='idx_tbls')
+     isbn = models.CharField(max_length=50, db_tablespace='idx_tbls')
++    barcode = models.CharField(max_length=31)
+ 
+     class Meta:
+         indexes = [
+-            models.indexes.Index(fields=['title']),
+-            models.indexes.Index(fields=['isbn', 'id']),
++            models.Index(fields=['title']),
++            models.Index(fields=['isbn', 'id']),
++            models.Index(fields=['barcode'], name='%(app_label)s_%(class)s_barcode_idx'),
+         ]
+ 
+ 
+ class AbstractModel(models.Model):
+     name = models.CharField(max_length=50)
++    shortcut = models.CharField(max_length=3)
+ 
+     class Meta:
+         abstract = True
+-        indexes = [models.indexes.Index(fields=['name'])]
++        indexes = [
++            models.Index(fields=['name']),
++            models.Index(fields=['shortcut'], name='%(app_label)s_%(class)s_idx'),
++        ]
+ 
+ 
+ class ChildModel1(AbstractModel):
+diff --git a/tests/model_indexes/tests.py b/tests/model_indexes/tests.py
+index 5180d8c..ade27e1 100644
+--- a/tests/model_indexes/tests.py
++++ b/tests/model_indexes/tests.py
+@@ -134,13 +134,26 @@ class SimpleIndexesTests(SimpleTestCase):
+ 
+     def test_name_set(self):
+         index_names = [index.name for index in Book._meta.indexes]
+-        self.assertCountEqual(index_names, ['model_index_title_196f42_idx', 'model_index_isbn_34f975_idx'])
++        self.assertCountEqual(
++            index_names,
++            [
++                'model_index_title_196f42_idx',
++                'model_index_isbn_34f975_idx',
++                'model_indexes_book_barcode_idx',
++            ],
++        )
+ 
+     def test_abstract_children(self):
+         index_names = [index.name for index in ChildModel1._meta.indexes]
+-        self.assertEqual(index_names, ['model_index_name_440998_idx'])
++        self.assertEqual(
++            index_names,
++            ['model_index_name_440998_idx', 'model_indexes_childmodel1_idx'],
++        )
+         index_names = [index.name for index in ChildModel2._meta.indexes]
+-        self.assertEqual(index_names, ['model_index_name_b6c374_idx'])
++        self.assertEqual(
++            index_names,
++            ['model_index_name_b6c374_idx', 'model_indexes_childmodel2_idx'],
++        )
+ 
+ 
+ class IndexesTests(TestCase):
+diff --git a/tests/schema/tests.py b/tests/schema/tests.py
+index 64a1512..9176098 100644
+--- a/tests/schema/tests.py
++++ b/tests/schema/tests.py
+@@ -8,7 +8,7 @@ from django.core.management.color import no_style
+ from django.db import (
+     DatabaseError, IntegrityError, OperationalError, connection,
+ )
+-from django.db.models import Model, Q
++from django.db.models import Index, Model, Q
+ from django.db.models.constraints import CheckConstraint, UniqueConstraint
+ from django.db.models.deletion import CASCADE, PROTECT
+ from django.db.models.fields import (
+@@ -19,7 +19,6 @@ from django.db.models.fields import (
+ from django.db.models.fields.related import (
+     ForeignKey, ForeignObject, ManyToManyField, OneToOneField,
+ )
+-from django.db.models.indexes import Index
+ from django.db.transaction import TransactionManagementError, atomic
+ from django.db.utils import DataError
+ from django.test import (

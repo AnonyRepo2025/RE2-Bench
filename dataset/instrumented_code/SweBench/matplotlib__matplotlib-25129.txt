@@ -1,0 +1,445 @@
+diff --git a/examples/event_handling/cursor_demo.py b/examples/event_handling/cursor_demo.py
+index 96dacee..6c12d67 100644
+--- a/examples/event_handling/cursor_demo.py
++++ b/examples/event_handling/cursor_demo.py
+@@ -28,6 +28,8 @@ __ https://github.com/anntzer/mplcursors
+ import matplotlib.pyplot as plt
+ import numpy as np
+ 
++from matplotlib.backend_bases import MouseEvent
++
+ 
+ class Cursor:
+     """
+@@ -71,6 +73,11 @@ ax.plot(x, y, 'o')
+ cursor = Cursor(ax)
+ fig.canvas.mpl_connect('motion_notify_event', cursor.on_mouse_move)
+ 
++# Simulate a mouse move to (0.5, 0.5), needed for online docs
++t = ax.transData
++MouseEvent(
++    "motion_notify_event", ax.figure.canvas, *t.transform((0.5, 0.5))
++)._process()
+ 
+ # %%
+ # Faster redrawing using blitting
+@@ -85,6 +92,7 @@ fig.canvas.mpl_connect('motion_notify_event', cursor.on_mouse_move)
+ # created whenever the figure changes. This is achieved by connecting to the
+ # ``'draw_event'``.
+ 
++
+ class BlittedCursor:
+     """
+     A cross-hair cursor using blitting for faster redraw.
+@@ -152,6 +160,11 @@ ax.plot(x, y, 'o')
+ blitted_cursor = BlittedCursor(ax)
+ fig.canvas.mpl_connect('motion_notify_event', blitted_cursor.on_mouse_move)
+ 
++# Simulate a mouse move to (0.5, 0.5), needed for online docs
++t = ax.transData
++MouseEvent(
++    "motion_notify_event", ax.figure.canvas, *t.transform((0.5, 0.5))
++)._process()
+ 
+ # %%
+ # Snapping to data points
+@@ -165,6 +178,7 @@ fig.canvas.mpl_connect('motion_notify_event', blitted_cursor.on_mouse_move)
+ # the lag due to many redraws. Of course, blitting could still be added on top
+ # for additional speedup.
+ 
++
+ class SnappingCursor:
+     """
+     A cross-hair cursor that snaps to the data point of a line, which is
+@@ -218,4 +232,11 @@ ax.set_title('Snapping cursor')
+ line, = ax.plot(x, y, 'o')
+ snap_cursor = SnappingCursor(ax, line)
+ fig.canvas.mpl_connect('motion_notify_event', snap_cursor.on_mouse_move)
++
++# Simulate a mouse move to (0.5, 0.5), needed for online docs
++t = ax.transData
++MouseEvent(
++    "motion_notify_event", ax.figure.canvas, *t.transform((0.5, 0.5))
++)._process()
++
+ plt.show()
+diff --git a/examples/widgets/annotated_cursor.py b/examples/widgets/annotated_cursor.py
+index eabec85..a10a010 100644
+--- a/examples/widgets/annotated_cursor.py
++++ b/examples/widgets/annotated_cursor.py
+@@ -24,6 +24,8 @@ from matplotlib.widgets import Cursor
+ import numpy as np
+ import matplotlib.pyplot as plt
+ 
++from matplotlib.backend_bases import MouseEvent
++
+ 
+ class AnnotatedCursor(Cursor):
+     """
+@@ -312,6 +314,12 @@ cursor = AnnotatedCursor(
+     color='red',
+     linewidth=2)
+ 
++# Simulate a mouse move to (-2, 10), needed for online docs
++t = ax.transData
++MouseEvent(
++    "motion_notify_event", ax.figure.canvas, *t.transform((-2, 10))
++)._process()
++
+ plt.show()
+ 
+ # %%
+@@ -339,4 +347,10 @@ cursor = AnnotatedCursor(
+     useblit=True,
+     color='red', linewidth=2)
+ 
++# Simulate a mouse move to (-2, 10), needed for online docs
++t = ax.transData
++MouseEvent(
++    "motion_notify_event", ax.figure.canvas, *t.transform((-2, 10))
++)._process()
++
+ plt.show()
+diff --git a/lib/matplotlib/tests/test_widgets.py b/lib/matplotlib/tests/test_widgets.py
+index 4f0bfb3..53fd955 100644
+--- a/lib/matplotlib/tests/test_widgets.py
++++ b/lib/matplotlib/tests/test_widgets.py
+@@ -1654,7 +1654,9 @@ def test_MultiCursor(horizOn, vertOn):
+     # Can't use `do_event` as that helper requires the widget
+     # to have a single .ax attribute.
+     event = mock_event(ax1, xdata=.5, ydata=.25)
+-    multi._onmove(event)
++    multi.onmove(event)
++    # force a draw + draw event to exercise clear
++    ax1.figure.canvas.draw()
+ 
+     # the lines in the first two ax should both move
+     for l in multi.vlines:
+@@ -1671,7 +1673,7 @@ def test_MultiCursor(horizOn, vertOn):
+     multi.horizOn = not multi.horizOn
+     multi.vertOn = not multi.vertOn
+     event = mock_event(ax1, xdata=.5, ydata=.25)
+-    multi._onmove(event)
++    multi.onmove(event)
+     assert len([line for line in multi.vlines if line.get_visible()]) == (
+         0 if vertOn else 2)
+     assert len([line for line in multi.hlines if line.get_visible()]) == (
+@@ -1680,7 +1682,7 @@ def test_MultiCursor(horizOn, vertOn):
+     # test a move event in an Axes not part of the MultiCursor
+     # the lines in ax1 and ax2 should not have moved.
+     event = mock_event(ax3, xdata=.75, ydata=.75)
+-    multi._onmove(event)
++    multi.onmove(event)
+     for l in multi.vlines:
+         assert l.get_xdata() == (.5, .5)
+     for l in multi.hlines:
+diff --git a/lib/matplotlib/widgets.py b/lib/matplotlib/widgets.py
+index 9668c02..7e03105 100644
+--- a/lib/matplotlib/widgets.py
++++ b/lib/matplotlib/widgets.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/matplotlib__matplotlib-25129/lib/matplotlib/widgets.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ GUI neutral widgets
+ ===================
+@@ -1948,13 +2141,14 @@ class Cursor(AxesWidget):
+     --------
+     See :doc:`/gallery/widgets/cursor`.
+     """
++    @inspect_code
+     @_api.make_keyword_only("3.7", "horizOn")
+     def __init__(self, ax, horizOn=True, vertOn=True, useblit=False,
+                  **lineprops):
+         super().__init__(ax)
+ 
+-        self.connect_event('motion_notify_event', self._onmove)
+-        self.connect_event('draw_event', self._clear)
++        self.connect_event('motion_notify_event', self.onmove)
++        self.connect_event('draw_event', self.clear)
+ 
+         self.visible = True
+         self.horizOn = horizOn
+@@ -1967,29 +2161,17 @@ class Cursor(AxesWidget):
+         self.linev = ax.axvline(ax.get_xbound()[0], visible=False, **lineprops)
+ 
+         self.background = None
+-        self._needclear = False
++        self.needclear = False
+ 
+-    needclear = _api.deprecate_privatize_attribute("3.7")
+-
+-    @_api.deprecated('3.7')
+     def clear(self, event):
+-        """Internal event handler to clear the cursor."""
+-        self._clear(event)
+-        if self.ignore(event):
+-            return
+-        self.linev.set_visible(False)
+-        self.lineh.set_visible(False)
+-
+-    def _clear(self, event):
+         """Internal event handler to clear the cursor."""
+         if self.ignore(event):
+             return
+         if self.useblit:
+             self.background = self.canvas.copy_from_bbox(self.ax.bbox)
+ 
+-    onmove = _api.deprecate_privatize_attribute('3.7')
+-
+-    def _onmove(self, event):
++    @inspect_code
++    def onmove(self, event):
+         """Internal event handler to draw the cursor when the mouse moves."""
+         if self.ignore(event):
+             return
+@@ -1999,11 +2181,11 @@ class Cursor(AxesWidget):
+             self.linev.set_visible(False)
+             self.lineh.set_visible(False)
+ 
+-            if self._needclear:
++            if self.needclear:
+                 self.canvas.draw()
+-                self._needclear = False
++                self.needclear = False
+             return
+-        self._needclear = True
++        self.needclear = True
+ 
+         self.linev.set_xdata((event.xdata, event.xdata))
+         self.linev.set_visible(self.visible and self.vertOn)
+@@ -2102,12 +2284,13 @@ class MultiCursor(Widget):
+         self._backgrounds[self.axes[0].figure.canvas] if self.axes else None))
+     needclear = _api.deprecated("3.7")(lambda self: False)
+ 
++    @inspect_code
+     def connect(self):
+         """Connect events."""
+         for canvas, info in self._canvas_infos.items():
+             info["cids"] = [
+-                canvas.mpl_connect('motion_notify_event', self._onmove),
+-                canvas.mpl_connect('draw_event', self._clear),
++                canvas.mpl_connect('motion_notify_event', self.onmove),
++                canvas.mpl_connect('draw_event', self.clear),
+             ]
+ 
+     def disconnect(self):
+@@ -2117,16 +2300,7 @@ class MultiCursor(Widget):
+                 canvas.mpl_disconnect(cid)
+             info["cids"].clear()
+ 
+-    @_api.deprecated('3.7')
+     def clear(self, event):
+-        """Clear the cursor."""
+-        if self.ignore(event):
+-            return
+-        self._clear(event)
+-        for line in self.vlines + self.hlines:
+-            line.set_visible(False)
+-
+-    def _clear(self, event):
+         """Clear the cursor."""
+         if self.ignore(event):
+             return
+@@ -2134,9 +2308,7 @@ class MultiCursor(Widget):
+             for canvas, info in self._canvas_infos.items():
+                 info["background"] = canvas.copy_from_bbox(canvas.figure.bbox)
+ 
+-    onmove = _api.deprecate_privatize_attribute('3.7')
+-
+-    def _onmove(self, event):
++    def onmove(self, event):
+         if (self.ignore(event)
+                 or event.inaxes not in self.axes
+                 or not event.canvas.widgetlock.available(self)):

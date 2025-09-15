@@ -1,0 +1,1186 @@
+diff --git a/xarray/__init__.py b/xarray/__init__.py
+index 331d8ec..0fead57 100644
+--- a/xarray/__init__.py
++++ b/xarray/__init__.py
+@@ -17,7 +17,7 @@ from .conventions import SerializationWarning, decode_cf
+ from .core.alignment import align, broadcast
+ from .core.combine import auto_combine, combine_by_coords, combine_nested
+ from .core.common import ALL_DIMS, full_like, ones_like, zeros_like
+-from .core.computation import apply_ufunc, dot, where
++from .core.computation import apply_ufunc, dot, polyval, where
+ from .core.concat import concat
+ from .core.dataarray import DataArray
+ from .core.dataset import Dataset
+@@ -65,6 +65,7 @@ __all__ = (
+     "open_mfdataset",
+     "open_rasterio",
+     "open_zarr",
++    "polyval",
+     "register_dataarray_accessor",
+     "register_dataset_accessor",
+     "save_mfdataset",
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index f2941a3..13bf624 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1306,3 +1306,35 @@ def where(cond, x, y):
+         dataset_join="exact",
+         dask="allowed",
+     )
++
++
++def polyval(coord, coeffs, degree_dim="degree"):
++    """Evaluate a polynomial at specific values
++
++    Parameters
++    ----------
++    coord : DataArray
++        The 1D coordinate along which to evaluate the polynomial.
++    coeffs : DataArray
++        Coefficients of the polynomials.
++    degree_dim : str, default "degree"
++        Name of the polynomial degree dimension in `coeffs`.
++
++    See also
++    --------
++    xarray.DataArray.polyfit
++    numpy.polyval
++    """
++    from .dataarray import DataArray
++    from .missing import get_clean_interp_index
++
++    x = get_clean_interp_index(coord, coord.name)
++
++    deg_coord = coeffs[degree_dim]
++
++    lhs = DataArray(
++        np.vander(x, int(deg_coord.max()) + 1),
++        dims=(coord.name, degree_dim),
++        coords={coord.name: coord, degree_dim: np.arange(deg_coord.max() + 1)[::-1]},
++    )
++    return (lhs * coeffs).sum(degree_dim)
+diff --git a/xarray/core/dask_array_ops.py b/xarray/core/dask_array_ops.py
+index 37f261c..87f6463 100644
+--- a/xarray/core/dask_array_ops.py
++++ b/xarray/core/dask_array_ops.py
+@@ -95,3 +95,30 @@ def rolling_window(a, axis, window, center, fill_value):
+     # crop boundary.
+     index = (slice(None),) * axis + (slice(drop_size, drop_size + orig_shape[axis]),)
+     return out[index]
++
++
++def least_squares(lhs, rhs, rcond=None, skipna=False):
++    import dask.array as da
++
++    lhs_da = da.from_array(lhs, chunks=(rhs.chunks[0], lhs.shape[1]))
++    if skipna:
++        added_dim = rhs.ndim == 1
++        if added_dim:
++            rhs = rhs.reshape(rhs.shape[0], 1)
++        results = da.apply_along_axis(
++            nputils._nanpolyfit_1d,
++            0,
++            rhs,
++            lhs_da,
++            dtype=float,
++            shape=(lhs.shape[1] + 1,),
++            rcond=rcond,
++        )
++        coeffs = results[:-1, ...]
++        residuals = results[-1, ...]
++        if added_dim:
++            coeffs = coeffs.reshape(coeffs.shape[0])
++            residuals = residuals.reshape(residuals.shape[0])
++    else:
++        coeffs, residuals, _, _ = da.linalg.lstsq(lhs_da, rhs)
++    return coeffs, residuals
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index 232fb86..ad35382 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-3733/xarray/core/dataarray.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import datetime
+ import functools
+ import warnings
+@@ -3275,6 +3468,69 @@ class DataArray(AbstractArray, DataWithCoords):
+ 
+         return map_blocks(func, self, args, kwargs)
+ 
++    @inspect_code
++    def polyfit(
++        self,
++        dim: Hashable,
++        deg: int,
++        skipna: bool = None,
++        rcond: float = None,
++        w: Union[Hashable, Any] = None,
++        full: bool = False,
++        cov: bool = False,
++    ):
++        """
++        Least squares polynomial fit.
++
++        This replicates the behaviour of `numpy.polyfit` but differs by skipping
++        invalid values when `skipna = True`.
++
++        Parameters
++        ----------
++        dim : hashable
++            Coordinate along which to fit the polynomials.
++        deg : int
++            Degree of the fitting polynomial.
++        skipna : bool, optional
++            If True, removes all invalid values before fitting each 1D slices of the array.
++            Default is True if data is stored in a dask.array or if there is any
++            invalid values, False otherwise.
++        rcond : float, optional
++            Relative condition number to the fit.
++        w : Union[Hashable, Any], optional
++            Weights to apply to the y-coordinate of the sample points.
++            Can be an array-like object or the name of a coordinate in the dataset.
++        full : bool, optional
++            Whether to return the residuals, matrix rank and singular values in addition
++            to the coefficients.
++        cov : Union[bool, str], optional
++            Whether to return to the covariance matrix in addition to the coefficients.
++            The matrix is not scaled if `cov='unscaled'`.
++
++        Returns
++        -------
++        polyfit_results : Dataset
++            A single dataset which contains:
++
++            polyfit_coefficients
++                The coefficients of the best fit.
++            polyfit_residuals
++                The residuals of the least-square computation (only included if `full=True`)
++            [dim]_matrix_rank
++                The effective rank of the scaled Vandermonde coefficient matrix (only included if `full=True`)
++            [dim]_singular_value
++                The singular values of the scaled Vandermonde coefficient matrix (only included if `full=True`)
++            polyfit_covariance
++                The covariance matrix of the polynomial coefficient estimates (only included if `full=False` and `cov=True`)
++
++        See also
++        --------
++        numpy.polyfit
++        """
++        return self._to_temp_dataset().polyfit(
++            dim, deg, skipna=skipna, rcond=rcond, w=w, full=full, cov=cov
++        )
++
+     def pad(
+         self,
+         pad_width: Mapping[Hashable, Union[int, Tuple[int, int]]] = None,
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index 6f96e4f..5372f9a 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-3733/xarray/core/dataset.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import copy
+ import datetime
+ import functools
+@@ -76,6 +269,7 @@ from .merge import (
+     merge_coordinates_without_align,
+     merge_data_and_coords,
+ )
++from .missing import get_clean_interp_index
+ from .options import OPTIONS, _get_keep_attrs
+ from .pycompat import dask_array_type
+ from .utils import (
+@@ -5748,6 +5942,185 @@ class Dataset(Mapping, ImplementsDatasetReduce, DataWithCoords):
+ 
+         return map_blocks(func, self, args, kwargs)
+ 
++    @inspect_code
++    def polyfit(
++        self,
++        dim: Hashable,
++        deg: int,
++        skipna: bool = None,
++        rcond: float = None,
++        w: Union[Hashable, Any] = None,
++        full: bool = False,
++        cov: Union[bool, str] = False,
++    ):
++        """
++        Least squares polynomial fit.
++
++        This replicates the behaviour of `numpy.polyfit` but differs by skipping
++        invalid values when `skipna = True`.
++
++        Parameters
++        ----------
++        dim : hashable
++            Coordinate along which to fit the polynomials.
++        deg : int
++            Degree of the fitting polynomial.
++        skipna : bool, optional
++            If True, removes all invalid values before fitting each 1D slices of the array.
++            Default is True if data is stored in a dask.array or if there is any
++            invalid values, False otherwise.
++        rcond : float, optional
++            Relative condition number to the fit.
++        w : Union[Hashable, Any], optional
++            Weights to apply to the y-coordinate of the sample points.
++            Can be an array-like object or the name of a coordinate in the dataset.
++        full : bool, optional
++            Whether to return the residuals, matrix rank and singular values in addition
++            to the coefficients.
++        cov : Union[bool, str], optional
++            Whether to return to the covariance matrix in addition to the coefficients.
++            The matrix is not scaled if `cov='unscaled'`.
++
++
++        Returns
++        -------
++        polyfit_results : Dataset
++            A single dataset which contains (for each "var" in the input dataset):
++
++            [var]_polyfit_coefficients
++                The coefficients of the best fit for each variable in this dataset.
++            [var]_polyfit_residuals
++                The residuals of the least-square computation for each variable (only included if `full=True`)
++            [dim]_matrix_rank
++                The effective rank of the scaled Vandermonde coefficient matrix (only included if `full=True`)
++            [dim]_singular_values
++                The singular values of the scaled Vandermonde coefficient matrix (only included if `full=True`)
++            [var]_polyfit_covariance
++                The covariance matrix of the polynomial coefficient estimates (only included if `full=False` and `cov=True`)
++
++        See also
++        --------
++        numpy.polyfit
++        """
++        variables = {}
++        skipna_da = skipna
++
++        x = get_clean_interp_index(self, dim)
++        xname = "{}_".format(self[dim].name)
++        order = int(deg) + 1
++        lhs = np.vander(x, order)
++
++        if rcond is None:
++            rcond = x.shape[0] * np.core.finfo(x.dtype).eps
++
++        # Weights:
++        if w is not None:
++            if isinstance(w, Hashable):
++                w = self.coords[w]
++            w = np.asarray(w)
++            if w.ndim != 1:
++                raise TypeError("Expected a 1-d array for weights.")
++            if w.shape[0] != lhs.shape[0]:
++                raise TypeError("Expected w and {} to have the same length".format(dim))
++            lhs *= w[:, np.newaxis]
++
++        # Scaling
++        scale = np.sqrt((lhs * lhs).sum(axis=0))
++        lhs /= scale
++
++        degree_dim = utils.get_temp_dimname(self.dims, "degree")
++
++        rank = np.linalg.matrix_rank(lhs)
++        if rank != order and not full:
++            warnings.warn(
++                "Polyfit may be poorly conditioned", np.RankWarning, stacklevel=4
++            )
++
++        if full:
++            rank = xr.DataArray(rank, name=xname + "matrix_rank")
++            variables[rank.name] = rank
++            sing = np.linalg.svd(lhs, compute_uv=False)
++            sing = xr.DataArray(
++                sing,
++                dims=(degree_dim,),
++                coords={degree_dim: np.arange(order)[::-1]},
++                name=xname + "singular_values",
++            )
++            variables[sing.name] = sing
++
++        for name, da in self.data_vars.items():
++            if dim not in da.dims:
++                continue
++
++            if skipna is None:
++                if isinstance(da.data, dask_array_type):
++                    skipna_da = True
++                else:
++                    skipna_da = np.any(da.isnull())
++
++            dims_to_stack = [dimname for dimname in da.dims if dimname != dim]
++            stacked_coords = {}
++            if dims_to_stack:
++                stacked_dim = utils.get_temp_dimname(dims_to_stack, "stacked")
++                rhs = da.transpose(dim, *dims_to_stack).stack(
++                    {stacked_dim: dims_to_stack}
++                )
++                stacked_coords = {stacked_dim: rhs[stacked_dim]}
++                scale_da = scale[:, np.newaxis]
++            else:
++                rhs = da
++                scale_da = scale
++
++            if w is not None:
++                rhs *= w[:, np.newaxis]
++
++            coeffs, residuals = duck_array_ops.least_squares(
++                lhs, rhs.data, rcond=rcond, skipna=skipna_da
++            )
++
++            if isinstance(name, str):
++                name = "{}_".format(name)
++            else:
++                # Thus a ReprObject => polyfit was called on a DataArray
++                name = ""
++
++            coeffs = xr.DataArray(
++                coeffs / scale_da,
++                dims=[degree_dim] + list(stacked_coords.keys()),
++                coords={degree_dim: np.arange(order)[::-1], **stacked_coords},
++                name=name + "polyfit_coefficients",
++            )
++            if dims_to_stack:
++                coeffs = coeffs.unstack(stacked_dim)
++            variables[coeffs.name] = coeffs
++
++            if full or (cov is True):
++                residuals = xr.DataArray(
++                    residuals if dims_to_stack else residuals.squeeze(),
++                    dims=list(stacked_coords.keys()),
++                    coords=stacked_coords,
++                    name=name + "polyfit_residuals",
++                )
++                if dims_to_stack:
++                    residuals = residuals.unstack(stacked_dim)
++                variables[residuals.name] = residuals
++
++            if cov:
++                Vbase = np.linalg.inv(np.dot(lhs.T, lhs))
++                Vbase /= np.outer(scale, scale)
++                if cov == "unscaled":
++                    fac = 1
++                else:
++                    if x.shape[0] <= order:
++                        raise ValueError(
++                            "The number of data points must exceed order to scale the covariance matrix."
++                        )
++                    fac = residuals / (x.shape[0] - order)
++                covariance = xr.DataArray(Vbase, dims=("cov_i", "cov_j"),) * fac
++                variables[name + "polyfit_covariance"] = covariance
++
++        return Dataset(data_vars=variables, attrs=self.attrs.copy())
++
+     def pad(
+         self,
+         pad_width: Mapping[Hashable, Union[int, Tuple[int, int]]] = None,
+diff --git a/xarray/core/duck_array_ops.py b/xarray/core/duck_array_ops.py
+index ff2d0af..4047a1e 100644
+--- a/xarray/core/duck_array_ops.py
++++ b/xarray/core/duck_array_ops.py
+@@ -597,3 +597,12 @@ def rolling_window(array, axis, window, center, fill_value):
+         return dask_array_ops.rolling_window(array, axis, window, center, fill_value)
+     else:  # np.ndarray
+         return nputils.rolling_window(array, axis, window, center, fill_value)
++
++
++def least_squares(lhs, rhs, rcond=None, skipna=False):
++    """Return the coefficients and residuals of a least-squares fit.
++    """
++    if isinstance(rhs, dask_array_type):
++        return dask_array_ops.least_squares(lhs, rhs, rcond=rcond, skipna=skipna)
++    else:
++        return nputils.least_squares(lhs, rhs, rcond=rcond, skipna=skipna)
+diff --git a/xarray/core/nputils.py b/xarray/core/nputils.py
+index 5dd8219..bb5f9ae 100644
+--- a/xarray/core/nputils.py
++++ b/xarray/core/nputils.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-3733/xarray/core/nputils.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import warnings
+ 
+ import numpy as np
+@@ -220,6 +413,40 @@ def _create_bottleneck_method(name, npmodule=np):
+     return f
+ 
+ 
++@inspect_code
++def _nanpolyfit_1d(arr, x, rcond=None):
++    out = np.full((x.shape[1] + 1,), np.nan)
++    mask = np.isnan(arr)
++    if not np.all(mask):
++        out[:-1], out[-1], _, _ = np.linalg.lstsq(x[~mask, :], arr[~mask], rcond=rcond)
++    return out
++
++
++def least_squares(lhs, rhs, rcond=None, skipna=False):
++    if skipna:
++        added_dim = rhs.ndim == 1
++        if added_dim:
++            rhs = rhs.reshape(rhs.shape[0], 1)
++        nan_cols = np.any(np.isnan(rhs), axis=0)
++        out = np.empty((lhs.shape[1] + 1, rhs.shape[1]))
++        if np.any(nan_cols):
++            out[:, nan_cols] = np.apply_along_axis(
++                _nanpolyfit_1d, 0, rhs[:, nan_cols], lhs
++            )
++        if np.any(~nan_cols):
++            out[:-1, ~nan_cols], out[-1, ~nan_cols], _, _ = np.linalg.lstsq(
++                lhs, rhs[:, ~nan_cols], rcond=rcond
++            )
++        coeffs = out[:-1, :]
++        residuals = out[-1, :]
++        if added_dim:
++            coeffs = coeffs.reshape(coeffs.shape[0])
++            residuals = residuals.reshape(residuals.shape[0])
++    else:
++        coeffs, residuals, _, _ = np.linalg.lstsq(lhs, rhs, rcond=rcond)
++    return coeffs, residuals
++
++
+ nanmin = _create_bottleneck_method("nanmin")
+ nanmax = _create_bottleneck_method("nanmax")
+ nanmean = _create_bottleneck_method("nanmean")
+diff --git a/xarray/tests/test_computation.py b/xarray/tests/test_computation.py
+index 3699035..4eed464 100644
+--- a/xarray/tests/test_computation.py
++++ b/xarray/tests/test_computation.py
+@@ -1120,3 +1120,35 @@ def test_where():
+     actual = xr.where(cond, 1, 0)
+     expected = xr.DataArray([1, 0], dims="x")
+     assert_identical(expected, actual)
++
++
++@pytest.mark.parametrize("use_dask", [True, False])
++@pytest.mark.parametrize("use_datetime", [True, False])
++def test_polyval(use_dask, use_datetime):
++    if use_dask and not has_dask:
++        pytest.skip("requires dask")
++
++    if use_datetime:
++        xcoord = xr.DataArray(
++            pd.date_range("2000-01-01", freq="D", periods=10), dims=("x",), name="x"
++        )
++        x = xr.core.missing.get_clean_interp_index(xcoord, "x")
++    else:
++        xcoord = x = np.arange(10)
++
++    da = xr.DataArray(
++        np.stack((1.0 + x + 2.0 * x ** 2, 1.0 + 2.0 * x + 3.0 * x ** 2)),
++        dims=("d", "x"),
++        coords={"x": xcoord, "d": [0, 1]},
++    )
++    coeffs = xr.DataArray(
++        [[2, 1, 1], [3, 2, 1]],
++        dims=("d", "degree"),
++        coords={"d": [0, 1], "degree": [2, 1, 0]},
++    )
++    if use_dask:
++        coeffs = coeffs.chunk({"d": 2})
++
++    da_pv = xr.polyval(da.x, coeffs)
++
++    xr.testing.assert_allclose(da, da_pv.T)
+diff --git a/xarray/tests/test_dataarray.py b/xarray/tests/test_dataarray.py
+index 4f19dc2..e23ff2f 100644
+--- a/xarray/tests/test_dataarray.py
++++ b/xarray/tests/test_dataarray.py
+@@ -23,6 +23,7 @@ from xarray.tests import (
+     assert_array_equal,
+     assert_equal,
+     assert_identical,
++    has_dask,
+     raises_regex,
+     requires_bottleneck,
+     requires_dask,
+@@ -4191,6 +4192,55 @@ class TestDataArray:
+         y = DataArray([0.75, 0.25, np.nan, 0.5, 1.0], dims=("z",))
+         assert_equal(y.rank("z", pct=True), y)
+ 
++    @pytest.mark.parametrize("use_dask", [True, False])
++    @pytest.mark.parametrize("use_datetime", [True, False])
++    def test_polyfit(self, use_dask, use_datetime):
++        if use_dask and not has_dask:
++            pytest.skip("requires dask")
++        xcoord = xr.DataArray(
++            pd.date_range("1970-01-01", freq="D", periods=10), dims=("x",), name="x"
++        )
++        x = xr.core.missing.get_clean_interp_index(xcoord, "x")
++        if not use_datetime:
++            xcoord = x
++
++        da_raw = DataArray(
++            np.stack(
++                (10 + 1e-15 * x + 2e-28 * x ** 2, 30 + 2e-14 * x + 1e-29 * x ** 2)
++            ),
++            dims=("d", "x"),
++            coords={"x": xcoord, "d": [0, 1]},
++        )
++
++        if use_dask:
++            da = da_raw.chunk({"d": 1})
++        else:
++            da = da_raw
++
++        out = da.polyfit("x", 2)
++        expected = DataArray(
++            [[2e-28, 1e-15, 10], [1e-29, 2e-14, 30]],
++            dims=("d", "degree"),
++            coords={"degree": [2, 1, 0], "d": [0, 1]},
++        ).T
++        assert_allclose(out.polyfit_coefficients, expected, rtol=1e-3)
++
++        # With NaN
++        da_raw[0, 1] = np.nan
++        if use_dask:
++            da = da_raw.chunk({"d": 1})
++        else:
++            da = da_raw
++        out = da.polyfit("x", 2, skipna=True, cov=True)
++        assert_allclose(out.polyfit_coefficients, expected, rtol=1e-3)
++        assert "polyfit_covariance" in out
++
++        # Skipna + Full output
++        out = da.polyfit("x", 2, skipna=True, full=True)
++        assert_allclose(out.polyfit_coefficients, expected, rtol=1e-3)
++        assert out.x_matrix_rank == 3
++        np.testing.assert_almost_equal(out.polyfit_residuals, [0, 0])
++
+     def test_pad_constant(self):
+         ar = DataArray(np.arange(3 * 4 * 5).reshape(3, 4, 5))
+         actual = ar.pad(dim_0=(1, 3))
+diff --git a/xarray/tests/test_dataset.py b/xarray/tests/test_dataset.py
+index 20b814a..0269825 100644
+--- a/xarray/tests/test_dataset.py
++++ b/xarray/tests/test_dataset.py
+@@ -5499,6 +5499,19 @@ class TestDataset:
+             ds.data_vars[item]  # should not raise
+         assert sorted(actual) == sorted(expected)
+ 
++    def test_polyfit_output(self):
++        ds = create_test_data(seed=1)
++
++        out = ds.polyfit("dim2", 2, full=False)
++        assert "var1_polyfit_coefficients" in out
++
++        out = ds.polyfit("dim1", 2, full=True)
++        assert "var1_polyfit_coefficients" in out
++        assert "dim1_matrix_rank" in out
++
++        out = ds.polyfit("time", 2)
++        assert len(out.data_vars) == 0
++
+     def test_pad(self):
+         ds = create_test_data(seed=1)
+         padded = ds.pad(dim2=(1, 1), constant_values=42)
+diff --git a/xarray/tests/test_duck_array_ops.py b/xarray/tests/test_duck_array_ops.py
+index 157cd16..e61881c 100644
+--- a/xarray/tests/test_duck_array_ops.py
++++ b/xarray/tests/test_duck_array_ops.py
+@@ -16,6 +16,7 @@ from xarray.core.duck_array_ops import (
+     first,
+     gradient,
+     last,
++    least_squares,
+     mean,
+     np_timedelta64_to_float,
+     pd_timedelta_to_float,
+@@ -761,3 +762,20 @@ def test_timedelta_to_numeric(td):
+     out = timedelta_to_numeric(td, "ns")
+     np.testing.assert_allclose(out, 86400 * 1e9)
+     assert isinstance(out, float)
++
++
++@pytest.mark.parametrize("use_dask", [True, False])
++@pytest.mark.parametrize("skipna", [True, False])
++def test_least_squares(use_dask, skipna):
++    if use_dask and not has_dask:
++        pytest.skip("requires dask")
++    lhs = np.array([[1, 2], [1, 2], [3, 2]])
++    rhs = DataArray(np.array([3, 5, 7]), dims=("y",))
++
++    if use_dask:
++        rhs = rhs.chunk({"y": 1})
++
++    coeffs, residuals = least_squares(lhs, rhs.data, skipna=skipna)
++
++    np.testing.assert_allclose(coeffs, [1.5, 1.25])
++    np.testing.assert_allclose(residuals, [2.0])

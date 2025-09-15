@@ -1,0 +1,64 @@
+[THOUGHT]
+1.  **Analyze the Target Output:** The desired output is a NumPy array: `[0., 0., 0., 0., 2.15579371, 0., 0., 0., 0., 0., 0., 0.]`. This is a 1D array of length 12 with a single non-zero value at index 4.
+
+2.  **Analyze the `orthogonal_mp_gram` Function Signature and Behavior:**
+    *   `orthogonal_mp_gram(Gram, Xy, n_nonzero_coefs=None, tol=None, ...)`
+    *   The length of the output array is determined by `len(Gram)`. Since the output has 12 elements, `Gram` must be a 12x12 matrix.
+    *   The function initializes a result array `coef` with zeros, with shape `(len(Gram), Xy.shape[1])`.
+    *   It then calls `_gram_omp` in a loop. `_gram_omp` finds the "active" atoms (features) and their corresponding coefficients.
+    *   The line `coef[idx, k] = x` updates the result array. `idx` contains the indices of the active atoms, and `x` contains their coefficients.
+    *   Finally, `np.squeeze(coef)` is returned. Since the output is 1D, this implies `Xy` was likely a 1D array or a 2D array with one column.
+
+3.  **Reverse-Engineer the Core Logic (`_gram_omp`):**
+    *   The goal is to have only one non-zero coefficient at index 4. This means the Orthogonal Matching Pursuit (OMP) algorithm must select only the 4th atom and then terminate.
+    *   The OMP algorithm iteratively selects the atom most correlated with the current residual. In the first step, the residual `alpha` is equal to the input `Xy`.
+    *   The selection is done by `lam = np.argmax(np.abs(alpha))`. To make the algorithm pick index 4 first, `abs(Xy[4])` must be the largest value in the `Xy` array.
+    *   The algorithm's termination is controlled by either `n_nonzero_coefs` or `tol`. The simplest way to force it to stop after exactly one iteration is to set `n_nonzero_coefs=1`. If `tol` is `None`, the loop condition `n_active == max_features` (where `max_features` is `n_nonzero_coefs`) will cause the loop to break after one atom is selected (`n_active` becomes 1).
+
+4.  **Determine the Coefficient Value:**
+    *   Inside `_gram_omp`, after selecting the first atom (`lam=4`), the coefficient `gamma` is calculated.
+    *   For the first iteration, the calculation simplifies to `gamma = [Xy[4] / sqrt(Gram[4, 4])]`.
+    *   This `gamma` is returned as `x` to the parent function, and `idx` is `[4]`.
+    *   The parent function executes `coef[4, 0] = gamma[0]`.
+    *   We know the final coefficient value is `2.15579371`. So, we need `Xy[4] / sqrt(Gram[4, 4]) = 2.15579371`.
+    *   The easiest way to satisfy this equation is to choose a simple `Gram` matrix. An identity matrix (`np.eye(12)`) is a perfect choice. In this case, `Gram[4, 4] = 1.0`, and `sqrt(Gram[4, 4]) = 1.0`.
+    *   This simplifies the equation to `Xy[4] / 1.0 = 2.15579371`, which means `Xy[4]` must be `2.15579371`.
+
+5.  **Construct the Final Input:**
+    *   `Gram`: A 12x12 identity matrix. This ensures `sqrt(Gram[4, 4])` is 1 and that atoms are orthogonal, simplifying the OMP process.
+    *   `Xy`: A 12-element array. To ensure `np.argmax(np.abs(Xy))` returns 4, we set `Xy[4] = 2.15579371` and all other elements to 0.
+    *   `n_nonzero_coefs`: Set to `1` to force the algorithm to stop after selecting one atom.
+    *   `tol`: Set to `None` to use the `n_nonzero_coefs` stopping criterion.
+    *   `norms_squared`: Can be `None` since `tol` is `None`.
+    *   Other parameters (`copy_Gram`, `copy_Xy`, `return_path`, `return_n_iter`) can be left to their defaults (`True`, `True`, `False`, `False` respectively).
+
+This set of inputs will cause the algorithm to select atom 4, calculate its coefficient as 2.15579371, and then terminate, producing the exact desired output.
+[/THOUGHT]
+[INPUT]
+```json
+{
+    "Gram": [
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    ],
+    "Xy": [0.0, 0.0, 0.0, 0.0, 2.15579371, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "n_nonzero_coefs": 1,
+    "tol": null,
+    "norms_squared": null,
+    "copy_Gram": true,
+    "copy_Xy": true,
+    "return_path": false,
+    "return_n_iter": false
+}
+```
+[/INPUT]

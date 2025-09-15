@@ -1,0 +1,396 @@
+diff --git a/django/db/models/fields/related_descriptors.py b/django/db/models/fields/related_descriptors.py
+index 7e78263..1431f9e 100644
+--- a/django/db/models/fields/related_descriptors.py
++++ b/django/db/models/fields/related_descriptors.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-15318/django/db/models/fields/related_descriptors.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Accessors for related objects.
+ 
+@@ -609,6 +802,7 @@ class ReverseManyToOneDescriptor:
+         )
+ 
+ 
++@inspect_code
+ def create_reverse_many_to_one_manager(superclass, rel):
+     """
+     Create a manager for the reverse side of a many-to-one relation.
+@@ -618,6 +812,7 @@ def create_reverse_many_to_one_manager(superclass, rel):
+     """
+ 
+     class RelatedManager(superclass):
++        @inspect_code
+         def __init__(self, instance):
+             super().__init__()
+ 
+@@ -627,6 +822,15 @@ def create_reverse_many_to_one_manager(superclass, rel):
+ 
+             self.core_filters = {self.field.name: instance}
+ 
++            # Even if this relation is not to pk, we require still pk value.
++            # The wish is that the instance has been already saved to DB,
++            # although having a pk value isn't a guarantee of that.
++            if self.instance.pk is None:
++                raise ValueError(
++                    f"{instance.__class__.__name__!r} instance needs to have a primary "
++                    f"key value before this relationship can be used."
++                )
++
+         def __call__(self, *, manager):
+             manager = getattr(self.model, manager)
+             manager_class = create_reverse_many_to_one_manager(manager.__class__, rel)
+@@ -634,6 +838,15 @@ def create_reverse_many_to_one_manager(superclass, rel):
+ 
+         do_not_call_in_templates = True
+ 
++        @inspect_code
++        def _check_fk_val(self):
++            for field in self.field.foreign_related_fields:
++                if getattr(self.instance, field.attname) is None:
++                    raise ValueError(
++                        f'"{self.instance!r}" needs to have a value for field '
++                        f'"{field.attname}" before this relationship can be used.'
++                    )
++
+         def _apply_rel_filters(self, queryset):
+             """
+             Filter the queryset for the instance this manager is bound to.
+@@ -713,7 +926,9 @@ def create_reverse_many_to_one_manager(superclass, rel):
+             cache_name = self.field.remote_field.get_cache_name()
+             return queryset, rel_obj_attr, instance_attr, False, cache_name, False
+ 
++        @inspect_code
+         def add(self, *objs, bulk=True):
++            self._check_fk_val()
+             self._remove_prefetched_objects()
+             db = router.db_for_write(self.model, instance=self.instance)
+ 
+@@ -752,6 +967,7 @@ def create_reverse_many_to_one_manager(superclass, rel):
+         add.alters_data = True
+ 
+         def create(self, **kwargs):
++            self._check_fk_val()
+             kwargs[self.field.name] = self.instance
+             db = router.db_for_write(self.model, instance=self.instance)
+             return super(RelatedManager, self.db_manager(db)).create(**kwargs)
+@@ -759,6 +975,7 @@ def create_reverse_many_to_one_manager(superclass, rel):
+         create.alters_data = True
+ 
+         def get_or_create(self, **kwargs):
++            self._check_fk_val()
+             kwargs[self.field.name] = self.instance
+             db = router.db_for_write(self.model, instance=self.instance)
+             return super(RelatedManager, self.db_manager(db)).get_or_create(**kwargs)
+@@ -766,6 +983,7 @@ def create_reverse_many_to_one_manager(superclass, rel):
+         get_or_create.alters_data = True
+ 
+         def update_or_create(self, **kwargs):
++            self._check_fk_val()
+             kwargs[self.field.name] = self.instance
+             db = router.db_for_write(self.model, instance=self.instance)
+             return super(RelatedManager, self.db_manager(db)).update_or_create(**kwargs)
+@@ -779,6 +997,7 @@ def create_reverse_many_to_one_manager(superclass, rel):
+             def remove(self, *objs, bulk=True):
+                 if not objs:
+                     return
++                self._check_fk_val()
+                 val = self.field.get_foreign_related_value(self.instance)
+                 old_ids = set()
+                 for obj in objs:
+@@ -802,6 +1021,7 @@ def create_reverse_many_to_one_manager(superclass, rel):
+             remove.alters_data = True
+ 
+             def clear(self, *, bulk=True):
++                self._check_fk_val()
+                 self._clear(self, bulk)
+ 
+             clear.alters_data = True
+@@ -822,6 +1042,7 @@ def create_reverse_many_to_one_manager(superclass, rel):
+             _clear.alters_data = True
+ 
+         def set(self, objs, *, bulk=True, clear=False):
++            self._check_fk_val()
+             # Force evaluation of `objs` in case it's a queryset whose value
+             # could be affected by `manager.clear()`. Refs #19816.
+             objs = tuple(objs)
+diff --git a/tests/many_to_one/tests.py b/tests/many_to_one/tests.py
+index b8b040e..2311834 100644
+--- a/tests/many_to_one/tests.py
++++ b/tests/many_to_one/tests.py
+@@ -738,14 +738,16 @@ class ManyToOneTests(TestCase):
+         self.assertEqual("id", cat.remote_field.get_related_field().name)
+ 
+     def test_relation_unsaved(self):
+-        # The <field>_set manager does not join on Null value fields (#17541)
+         Third.objects.create(name="Third 1")
+         Third.objects.create(name="Third 2")
+         th = Third(name="testing")
+-        # The object isn't saved and thus the relation field is null - we won't even
+-        # execute a query in this case.
+-        with self.assertNumQueries(0):
+-            self.assertEqual(th.child_set.count(), 0)
++        # The object isn't saved and the relation cannot be used.
++        msg = (
++            "'Third' instance needs to have a primary key value before this "
++            "relationship can be used."
++        )
++        with self.assertRaisesMessage(ValueError, msg):
++            th.child_set.count()
+         th.save()
+         # Now the model is saved, so we will need to execute a query.
+         with self.assertNumQueries(1):
+diff --git a/tests/many_to_one_null/tests.py b/tests/many_to_one_null/tests.py
+index 5bd06b1..f92d49f 100644
+--- a/tests/many_to_one_null/tests.py
++++ b/tests/many_to_one_null/tests.py
+@@ -146,3 +146,36 @@ class ManyToOneNullTests(TestCase):
+         self.assertIs(d1.car, None)
+         with self.assertNumQueries(0):
+             self.assertEqual(list(c1.drivers.all()), [])
++
++    def test_unsaved(self):
++        msg = (
++            "'Car' instance needs to have a primary key value before this relationship "
++            "can be used."
++        )
++        with self.assertRaisesMessage(ValueError, msg):
++            Car(make="Ford").drivers.all()
++
++    def test_related_null_to_field_related_managers(self):
++        car = Car.objects.create(make=None)
++        driver = Driver.objects.create()
++        msg = (
++            f'"{car!r}" needs to have a value for field "make" before this '
++            f"relationship can be used."
++        )
++        with self.assertRaisesMessage(ValueError, msg):
++            car.drivers.add(driver)
++        with self.assertRaisesMessage(ValueError, msg):
++            car.drivers.create()
++        with self.assertRaisesMessage(ValueError, msg):
++            car.drivers.get_or_create()
++        with self.assertRaisesMessage(ValueError, msg):
++            car.drivers.update_or_create()
++        with self.assertRaisesMessage(ValueError, msg):
++            car.drivers.remove(driver)
++        with self.assertRaisesMessage(ValueError, msg):
++            car.drivers.clear()
++        with self.assertRaisesMessage(ValueError, msg):
++            car.drivers.set([driver])
++
++        with self.assertNumQueries(0):
++            self.assertEqual(car.drivers.count(), 0)
+diff --git a/tests/null_queries/tests.py b/tests/null_queries/tests.py
+index 4c5c3bb..828c68d 100644
+--- a/tests/null_queries/tests.py
++++ b/tests/null_queries/tests.py
+@@ -44,9 +44,14 @@ class NullQueriesTests(TestCase):
+         with self.assertRaisesMessage(ValueError, "Cannot use None as a query value"):
+             Choice.objects.filter(id__gt=None)
+ 
+-        # Related managers use __exact=None implicitly if the object hasn't been saved.
+-        p2 = Poll(question="How?")
+-        self.assertEqual(repr(p2.choice_set.all()), "<QuerySet []>")
++    def test_unsaved(self):
++        poll = Poll(question="How?")
++        msg = (
++            "'Poll' instance needs to have a primary key value before this "
++            "relationship can be used."
++        )
++        with self.assertRaisesMessage(ValueError, msg):
++            poll.choice_set.all()
+ 
+     def test_reverse_relations(self):
+         """

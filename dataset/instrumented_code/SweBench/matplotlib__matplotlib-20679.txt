@@ -1,0 +1,815 @@
+diff --git a/lib/matplotlib/tests/test_widgets.py b/lib/matplotlib/tests/test_widgets.py
+index 41ca36d..e6df7cf 100644
+--- a/lib/matplotlib/tests/test_widgets.py
++++ b/lib/matplotlib/tests/test_widgets.py
+@@ -190,6 +190,63 @@ def test_rectangle_handles():
+         tool._corner_handles.artist.get_markeredgecolor(), 'b')
+ 
+ 
++@pytest.mark.parametrize('interactive', [True, False])
++def test_rectangle_selector_onselect(interactive):
++    # check when press and release events take place at the same position
++    ax = get_ax()
++
++    def onselect(vmin, vmax):
++        ax._got_onselect = True
++
++    tool = widgets.RectangleSelector(ax, onselect, interactive=interactive)
++    do_event(tool, 'press', xdata=100, ydata=110, button=1)
++    # move outside of axis
++    do_event(tool, 'onmove', xdata=150, ydata=120, button=1)
++    do_event(tool, 'release', xdata=150, ydata=120, button=1)
++
++    assert tool.ax._got_onselect
++    assert tool.extents == (100.0, 150.0, 110.0, 120.0)
++
++    # Reset tool.ax._got_onselect
++    tool.ax._got_onselect = False
++
++    do_event(tool, 'press', xdata=10, ydata=100, button=1)
++    do_event(tool, 'release', xdata=10, ydata=100, button=1)
++
++    assert tool.ax._got_onselect
++
++
++@pytest.mark.parametrize('ignore_event_outside', [True, False])
++def test_rectangle_selector_ignore_outside(ignore_event_outside):
++    ax = get_ax()
++    def onselect(vmin, vmax):
++        ax._got_onselect = True
++
++    tool = widgets.RectangleSelector(ax, onselect,
++                                     ignore_event_outside=ignore_event_outside)
++    do_event(tool, 'press', xdata=100, ydata=110, button=1)
++    do_event(tool, 'onmove', xdata=150, ydata=120, button=1)
++    do_event(tool, 'release', xdata=150, ydata=120, button=1)
++
++    assert tool.ax._got_onselect
++    assert tool.extents == (100.0, 150.0, 110.0, 120.0)
++
++    # Reset
++    ax._got_onselect = False
++    # Trigger event outside of span
++    do_event(tool, 'press', xdata=150, ydata=150, button=1)
++    do_event(tool, 'onmove', xdata=160, ydata=160, button=1)
++    do_event(tool, 'release', xdata=160, ydata=160, button=1)
++    if ignore_event_outside:
++        # event have been ignored and span haven't changed.
++        assert not ax._got_onselect
++        assert tool.extents == (100.0, 150.0, 110.0, 120.0)
++    else:
++        # A new shape is created
++        assert ax._got_onselect
++        assert tool.extents == (150.0, 160.0, 150.0, 160.0)
++
++
+ def check_span(*args, **kwargs):
+     ax = get_ax()
+ 
+@@ -222,13 +279,79 @@ def test_span_selector():
+     check_span('horizontal', minspan=10, useblit=True)
+     check_span('vertical', onmove_callback=True, button=1)
+     check_span('horizontal', props=dict(fill=True))
++    check_span('horizontal', interactive=True)
++
++
++@pytest.mark.parametrize('interactive', [True, False])
++def test_span_selector_onselect(interactive):
++    # check when press and release events take place at the same position
++    ax = get_ax()
++
++    def onselect(vmin, vmax):
++        ax._got_onselect = True
++
++    tool = widgets.SpanSelector(ax, onselect, 'horizontal',
++                                interactive=interactive)
++    do_event(tool, 'press', xdata=100, ydata=100, button=1)
++    # move outside of axis
++    do_event(tool, 'onmove', xdata=150, ydata=100, button=1)
++    do_event(tool, 'release', xdata=150, ydata=100, button=1)
++
++    assert tool.ax._got_onselect
++    assert tool.extents == (100, 150)
++
++    # Reset tool.ax._got_onselect
++    tool.ax._got_onselect = False
++
++    do_event(tool, 'press', xdata=10, ydata=100, button=1)
++    do_event(tool, 'release', xdata=10, ydata=100, button=1)
++
++    assert tool.ax._got_onselect
++
++
++@pytest.mark.parametrize('ignore_event_outside', [True, False])
++def test_span_selector_ignore_outside(ignore_event_outside):
++    ax = get_ax()
++    def onselect(vmin, vmax):
++        ax._got_onselect = True
++
++    def onmove(vmin, vmax):
++        ax._got_on_move = True
++
++    tool = widgets.SpanSelector(ax, onselect, 'horizontal',
++                                onmove_callback=onmove,
++                                ignore_event_outside=ignore_event_outside)
++    do_event(tool, 'press', xdata=100, ydata=100, button=1)
++    do_event(tool, 'onmove', xdata=125, ydata=125, button=1)
++    do_event(tool, 'release', xdata=125, ydata=125, button=1)
++    assert ax._got_onselect
++    assert ax._got_on_move
++    assert tool.extents == (100, 125)
++
++    # Reset
++    ax._got_onselect = False
++    ax._got_on_move = False
++    # Trigger event outside of span
++    do_event(tool, 'press', xdata=150, ydata=150, button=1)
++    do_event(tool, 'onmove', xdata=160, ydata=160, button=1)
++    do_event(tool, 'release', xdata=160, ydata=160, button=1)
++    if ignore_event_outside:
++        # event have been ignored and span haven't changed.
++        assert not ax._got_onselect
++        assert not ax._got_on_move
++        assert tool.extents == (100, 125)
++    else:
++        # A new shape is created
++        assert ax._got_onselect
++        assert ax._got_on_move
++        assert tool.extents == (150, 160)
+ 
+ 
+ @pytest.mark.parametrize('drag_from_anywhere', [True, False])
+ def test_span_selector_drag(drag_from_anywhere):
+     ax = get_ax()
+ 
+-    def onselect(epress, erelease):
++    def onselect(*args):
+         pass
+ 
+     # Create span
+@@ -263,7 +386,7 @@ def test_span_selector_drag(drag_from_anywhere):
+ def test_span_selector_direction():
+     ax = get_ax()
+ 
+-    def onselect(epress, erelease):
++    def onselect(*args):
+         pass
+ 
+     tool = widgets.SpanSelector(ax, onselect, 'horizontal', interactive=True)
+@@ -702,7 +825,7 @@ def test_MultiCursor(horizOn, vertOn):
+ def test_rect_visibility(fig_test, fig_ref):
+     # Check that requesting an invisible selector makes it invisible
+     ax_test = fig_test.subplots()
+-    ax_ref = fig_ref.subplots()
++    _ = fig_ref.subplots()
+ 
+     def onselect(verts):
+         pass
+diff --git a/lib/matplotlib/widgets.py b/lib/matplotlib/widgets.py
+index 010fd04..a98a813 100644
+--- a/lib/matplotlib/widgets.py
++++ b/lib/matplotlib/widgets.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/matplotlib__matplotlib-20679/lib/matplotlib/widgets.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ GUI neutral widgets
+ ===================
+@@ -1786,6 +1979,7 @@ class MultiCursor(Widget):
+ 
+ class _SelectorWidget(AxesWidget):
+ 
++    @inspect_code
+     def __init__(self, ax, onselect, useblit=False, button=None,
+                  state_modifier_keys=None):
+         super().__init__(ax)
+@@ -1807,6 +2001,9 @@ class _SelectorWidget(AxesWidget):
+         else:
+             self.validButtons = button
+ 
++        # Set to True when a selection is completed, otherwise is False
++        self._selection_completed = False
++
+         # will save the data (position at mouseclick)
+         self._eventpress = None
+         # will save the data (pos. at mouserelease)
+@@ -2017,12 +2214,17 @@ class SpanSelector(_SelectorWidget):
+     In order to turn off the SpanSelector, set ``span_selector.active`` to
+     False.  To turn it back on, set it to True.
+ 
++    Press and release events triggered at the same coordinates outside the
++    selection will clear the selector, except when
++    ``ignore_event_outside=True``.
++
+     Parameters
+     ----------
+     ax : `matplotlib.axes.Axes`
+ 
+     onselect : callable
+-        A callback function to be called when the selection is completed.
++        A callback function that is called after a release event and the
++        selection is created, changed or removed.
+         It must have the signature::
+ 
+             def on_select(min: float, max: float) -> Any
+@@ -2031,8 +2233,8 @@ class SpanSelector(_SelectorWidget):
+         The direction along which to draw the span selector.
+ 
+     minspan : float, default: 0
+-        If selection is less than or equal to *minspan*, do not call
+-        *onselect*.
++        If selection is less than or equal to *minspan*, the selection is
++        removed (when already existing) or cancelled.
+ 
+     useblit : bool, default: False
+         If True, use the backend-dependent blitting features for faster
+@@ -2071,6 +2273,10 @@ class SpanSelector(_SelectorWidget):
+         If `True`, the widget can be moved by clicking anywhere within
+         its bounds.
+ 
++    ignore_event_outside : bool, default: False
++        If `True`, the event triggered outside the span selector will be
++        ignored.
++
+     Examples
+     --------
+     >>> import matplotlib.pyplot as plt
+@@ -2086,12 +2292,13 @@ class SpanSelector(_SelectorWidget):
+     See also: :doc:`/gallery/widgets/span_selector`
+     """
+ 
++    @inspect_code
+     @_api.rename_parameter("3.5", "rectprops", "props")
+     @_api.rename_parameter("3.5", "span_stays", "interactive")
+     def __init__(self, ax, onselect, direction, minspan=0, useblit=False,
+                  props=None, onmove_callback=None, interactive=False,
+                  button=None, handle_props=None, grab_range=10,
+-                 drag_from_anywhere=False):
++                 drag_from_anywhere=False, ignore_event_outside=False):
+ 
+         super().__init__(ax, onselect, useblit=useblit, button=button)
+ 
+@@ -2117,6 +2324,7 @@ class SpanSelector(_SelectorWidget):
+         self.grab_range = grab_range
+         self._interactive = interactive
+         self.drag_from_anywhere = drag_from_anywhere
++        self.ignore_event_outside = ignore_event_outside
+ 
+         # Reset canvas so that `new_axes` connects events.
+         self.canvas = None
+@@ -2153,6 +2361,7 @@ class SpanSelector(_SelectorWidget):
+ 
+     prev = _api.deprecate_privatize_attribute("3.5")
+ 
++    @inspect_code
+     def new_axes(self, ax):
+         """Set SpanSelector to operate on a new Axes."""
+         self.ax = ax
+@@ -2163,6 +2372,9 @@ class SpanSelector(_SelectorWidget):
+             self.canvas = ax.figure.canvas
+             self.connect_default_events()
+ 
++        # Reset
++        self._selection_completed = False
++
+         if self.direction == 'horizontal':
+             trans = ax.get_xaxis_transform()
+             w, h = 0, 1
+@@ -2209,6 +2421,7 @@ class SpanSelector(_SelectorWidget):
+         if getattr(self, '_interactive', False):
+             self.connect_event('motion_notify_event', self._hover)
+ 
++    @inspect_code
+     def _press(self, event):
+         """Button press event handler."""
+         self._set_cursor(True)
+@@ -2227,7 +2440,7 @@ class SpanSelector(_SelectorWidget):
+         self._pressv = v
+         self._prev = self._get_data(event)
+ 
+-        if self._active_handle is None:
++        if self._active_handle is None and not self.ignore_event_outside:
+             # when the press event outside the span, we initially set the
+             # visibility to False and extents to (v, v)
+             # update will be called when setting the extents
+@@ -2264,25 +2477,36 @@ class SpanSelector(_SelectorWidget):
+         else:
+             self._direction = direction
+ 
++    @inspect_code
+     def _release(self, event):
+         """Button release event handler."""
+         self._set_cursor(False)
++        # self._pressv is deprecated but we still need to maintain it
++        self._pressv = None
++
+         if not self._interactive:
+             self._rect.set_visible(False)
+ 
++        if (self._active_handle is None and self._selection_completed and
++                self.ignore_event_outside):
++            return
++
+         vmin, vmax = self.extents
+         span = vmax - vmin
++
+         if span <= self.minspan:
++            # Remove span and set self._selection_completed = False
+             self.set_visible(False)
+-            self.update()
+-            return
++            if self._selection_completed:
++                # Call onselect, only when the span is already existing
++                self.onselect(vmin, vmax)
++            self._selection_completed = False
++        else:
++            self.onselect(vmin, vmax)
++            self._selection_completed = True
+ 
+-        self.onselect(vmin, vmax)
+         self.update()
+ 
+-        # self._pressv is deprecated but we still need to maintain it
+-        self._pressv = None
+-
+         self._active_handle = None
+ 
+         return False
+@@ -2300,6 +2524,7 @@ class SpanSelector(_SelectorWidget):
+         _, e_dist = self._edge_handles.closest(event.x, event.y)
+         self._set_cursor(e_dist <= self.grab_range)
+ 
++    @inspect_code
+     def _onmove(self, event):
+         """Motion notify event handler."""
+ 
+@@ -2330,6 +2555,10 @@ class SpanSelector(_SelectorWidget):
+                 vmax = v
+         # new shape
+         else:
++            # Don't create a new span if there is already one when
++            # ignore_event_outside=True
++            if self.ignore_event_outside and self._selection_completed:
++                return
+             vmin, vmax = vpress, v
+             if vmin > vmax:
+                 vmin, vmax = vmax, vmin
+@@ -2576,7 +2805,8 @@ _RECTANGLESELECTOR_PARAMETERS_DOCSTRING = \
+         The parent axes for the widget.
+ 
+     onselect : function
+-        A callback function that is called after a selection is completed.
++        A callback function that is called after a release event and the
++        selection is created, changed or removed.
+         It must have the signature::
+ 
+             def onselect(eclick: MouseEvent, erelease: MouseEvent)
+@@ -2585,10 +2815,12 @@ _RECTANGLESELECTOR_PARAMETERS_DOCSTRING = \
+         `.MouseEvent`\s that start and complete the selection.
+ 
+     minspanx : float, default: 0
+-        Selections with an x-span less than *minspanx* are ignored.
++        Selections with an x-span less than or equal to *minspanx* are removed
++        (when already existing) or cancelled.
+ 
+     minspany : float, default: 0
+-        Selections with a y-span less than *minspany* are ignored.
++        Selections with an y-span less than or equal to *minspanx* are removed
++        (when already existing) or cancelled.
+ 
+     useblit : bool, default: False
+         Whether to use blitting for faster drawing (if supported by the
+@@ -2635,9 +2867,14 @@ _RECTANGLESELECTOR_PARAMETERS_DOCSTRING = \
+ 
+         "square" and "center" can be combined.
+ 
+-    drag_from_anywhere : bool, optional
++    drag_from_anywhere : bool, default: False
+         If `True`, the widget can be moved by clicking anywhere within
+         its bounds.
++
++    ignore_event_outside : bool, default: False
++        If `True`, the event triggered outside the span selector will be
++        ignored.
++
+     """
+ 
+ 
+@@ -2649,6 +2886,10 @@ class RectangleSelector(_SelectorWidget):
+ 
+     For the cursor to remain responsive you must keep a reference to it.
+ 
++    Press and release events triggered at the same coordinates outside the
++    selection will clear the selector, except when
++    ``ignore_event_outside=True``.
++
+     %s
+ 
+     Examples
+@@ -2680,7 +2921,7 @@ class RectangleSelector(_SelectorWidget):
+                  lineprops=None, props=None, spancoords='data',
+                  button=None, grab_range=10, handle_props=None,
+                  interactive=False, state_modifier_keys=None,
+-                 drag_from_anywhere=False):
++                 drag_from_anywhere=False, ignore_event_outside=False):
+         super().__init__(ax, onselect, useblit=useblit, button=button,
+                          state_modifier_keys=state_modifier_keys)
+ 
+@@ -2688,6 +2929,7 @@ class RectangleSelector(_SelectorWidget):
+         self.visible = True
+         self._interactive = interactive
+         self.drag_from_anywhere = drag_from_anywhere
++        self.ignore_event_outside = ignore_event_outside
+ 
+         if drawtype == 'none':  # draw a line but make it invisible
+             _api.warn_deprecated(
+@@ -2788,7 +3030,7 @@ class RectangleSelector(_SelectorWidget):
+             # Clear previous rectangle before drawing new rectangle.
+             self.update()
+ 
+-        if self._active_handle is None:
++        if self._active_handle is None and not self.ignore_event_outside:
+             x = event.xdata
+             y = event.ydata
+             self.visible = False
+@@ -2804,6 +3046,10 @@ class RectangleSelector(_SelectorWidget):
+         if not self._interactive:
+             self._to_draw.set_visible(False)
+ 
++        if (self._active_handle is None and self._selection_completed and
++                self.ignore_event_outside):
++            return
++
+         # update the eventpress and eventrelease with the resulting extents
+         x0, x1, y0, y1 = self.extents
+         self._eventpress.xdata = x0
+@@ -2828,21 +3074,24 @@ class RectangleSelector(_SelectorWidget):
+                                spancoords=self.spancoords)
+         # check if drawn distance (if it exists) is not too small in
+         # either x or y-direction
+-        if (self._drawtype != 'none'
+-                and (self.minspanx is not None and spanx < self.minspanx
+-                     or self.minspany is not None and spany < self.minspany)):
++        minspanxy = (spanx <= self.minspanx or spany <= self.minspany)
++        if (self._drawtype != 'none' and minspanxy):
+             for artist in self.artists:
+                 artist.set_visible(False)
+-            self.update()
+-            return
++            if self._selection_completed:
++                # Call onselect, only when the selection is already existing
++                self.onselect(self._eventpress, self._eventrelease)
++            self._selection_completed = False
++        else:
++            self.onselect(self._eventpress, self._eventrelease)
++            self._selection_completed = True
+ 
+-        # call desired function
+-        self.onselect(self._eventpress, self._eventrelease)
+         self.update()
+         self._active_handle = None
+ 
+         return False
+ 
++    @inspect_code
+     def _onmove(self, event):
+         """Motion notify event handler."""
+         # resize an existing shape
+@@ -2867,6 +3116,10 @@ class RectangleSelector(_SelectorWidget):
+ 
+         # new shape
+         else:
++            # Don't create a new rectangle if there is already one when
++            # ignore_event_outside=True
++            if self.ignore_event_outside and self._selection_completed:
++                return
+             center = [self._eventpress.xdata, self._eventpress.ydata]
+             center_pix = [self._eventpress.x, self._eventpress.y]
+             dx = (event.xdata - center[0]) / 2.
+@@ -3048,6 +3301,10 @@ class EllipseSelector(RectangleSelector):
+ 
+     For the cursor to remain responsive you must keep a reference to it.
+ 
++    Press and release events triggered at the same coordinates outside the
++    selection will clear the selector, except when
++    ``ignore_event_outside=True``.
++
+     %s
+ 
+     Examples
+@@ -3275,7 +3532,6 @@ class PolygonSelector(_SelectorWidget):
+                          state_modifier_keys=state_modifier_keys)
+ 
+         self._xs, self._ys = [0], [0]
+-        self._polygon_completed = False
+ 
+         if props is None:
+             props = dict(color='k', linestyle='-', linewidth=2, alpha=0.5)
+@@ -3306,10 +3562,11 @@ class PolygonSelector(_SelectorWidget):
+     def _nverts(self):
+         return len(self._xs)
+ 
++    @inspect_code
+     def _remove_vertex(self, i):
+         """Remove vertex with index i."""
+         if (self._nverts > 2 and
+-                self._polygon_completed and
++                self._selection_completed and
+                 i in (0, self._nverts - 1)):
+             # If selecting the first or final vertex, remove both first and
+             # last vertex as they are the same for a closed polygon
+@@ -3327,12 +3584,12 @@ class PolygonSelector(_SelectorWidget):
+         if self._nverts <= 2:
+             # If only one point left, return to incomplete state to let user
+             # start drawing again
+-            self._polygon_completed = False
++            self._selection_completed = False
+ 
+     def _press(self, event):
+         """Button press event handler."""
+         # Check for selection of a tool handle.
+-        if ((self._polygon_completed or 'move_vertex' in self._state)
++        if ((self._selection_completed or 'move_vertex' in self._state)
+                 and len(self._xs) > 0):
+             h_idx, h_dist = self._polygon_handles.closest(event.x, event.y)
+             if h_dist < self.grab_range:
+@@ -3354,16 +3611,16 @@ class PolygonSelector(_SelectorWidget):
+         elif (len(self._xs) > 3
+               and self._xs[-1] == self._xs[0]
+               and self._ys[-1] == self._ys[0]):
+-            self._polygon_completed = True
++            self._selection_completed = True
+ 
+         # Place new vertex.
+-        elif (not self._polygon_completed
++        elif (not self._selection_completed
+               and 'move_all' not in self._state
+               and 'move_vertex' not in self._state):
+             self._xs.insert(-1, event.xdata)
+             self._ys.insert(-1, event.ydata)
+ 
+-        if self._polygon_completed:
++        if self._selection_completed:
+             self.onselect(self.verts)
+ 
+     def onmove(self, event):
+@@ -3378,6 +3635,7 @@ class PolygonSelector(_SelectorWidget):
+             return True
+         return False
+ 
++    @inspect_code
+     def _onmove(self, event):
+         """Cursor move event handler."""
+         # Move the active vertex (ToolHandle).
+@@ -3386,7 +3644,7 @@ class PolygonSelector(_SelectorWidget):
+             self._xs[idx], self._ys[idx] = event.xdata, event.ydata
+             # Also update the end of the polygon line if the first vertex is
+             # the active handle and the polygon is completed.
+-            if idx == 0 and self._polygon_completed:
++            if idx == 0 and self._selection_completed:
+                 self._xs[-1], self._ys[-1] = event.xdata, event.ydata
+ 
+         # Move all vertices.
+@@ -3398,7 +3656,7 @@ class PolygonSelector(_SelectorWidget):
+                 self._ys[k] = self._ys_at_press[k] + dy
+ 
+         # Do nothing if completed or waiting for a move.
+-        elif (self._polygon_completed
++        elif (self._selection_completed
+               or 'move_vertex' in self._state or 'move_all' in self._state):
+             return
+ 
+@@ -3416,11 +3674,12 @@ class PolygonSelector(_SelectorWidget):
+ 
+         self._draw_polygon()
+ 
++    @inspect_code
+     def _on_key_press(self, event):
+         """Key press event handler."""
+         # Remove the pending vertex if entering the 'move_vertex' or
+         # 'move_all' mode
+-        if (not self._polygon_completed
++        if (not self._selection_completed
+                 and ('move_vertex' in self._state or
+                      'move_all' in self._state)):
+             self._xs, self._ys = self._xs[:-1], self._ys[:-1]
+@@ -3430,7 +3689,7 @@ class PolygonSelector(_SelectorWidget):
+         """Key release event handler."""
+         # Add back the pending vertex if leaving the 'move_vertex' or
+         # 'move_all' mode (by checking the released key)
+-        if (not self._polygon_completed
++        if (not self._selection_completed
+                 and
+                 (event.key == self.state_modifier_keys.get('move_vertex')
+                  or event.key == self.state_modifier_keys.get('move_all'))):
+@@ -3441,16 +3700,17 @@ class PolygonSelector(_SelectorWidget):
+         elif event.key == self.state_modifier_keys.get('clear'):
+             event = self._clean_event(event)
+             self._xs, self._ys = [event.xdata], [event.ydata]
+-            self._polygon_completed = False
++            self._selection_completed = False
+             self.set_visible(True)
+ 
++    @inspect_code
+     def _draw_polygon(self):
+         """Redraw the polygon based on the new vertex positions."""
+         self.line.set_data(self._xs, self._ys)
+         # Only show one tool handle at the start and end vertex of the polygon
+         # if the polygon is completed or the user is locked on to the start
+         # vertex.
+-        if (self._polygon_completed
++        if (self._selection_completed
+                 or (len(self._xs) > 3
+                     and self._xs[-1] == self._xs[0]
+                     and self._ys[-1] == self._ys[0])):

@@ -1,0 +1,174 @@
+1. The output is a sparse matrix, which is represented by its shape, indices, indptr, and data.
+2. The input is a TfidfTransformer object, which has norm, use_idf, smooth_idf, and sublinear_tf attributes.
+3. The idf_ attribute of the TfidfTransformer object is a sparse diagonal matrix, which is represented by its shape, indices, indptr, and data.
+4. The transform method of the TfidfTransformer object takes a sparse matrix as input, which is represented by its shape, indices, indptr, and data.
+5. The input of the transform method is a sparse matrix, which is represented by its shape, indices, indptr, and data.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "norm": "l2",
+        "use_idf": true,
+        "smooth_idf": true,
+        "sublinear_tf": false,
+        "_idf_diag": {
+            "_shape": [
+                2,
+                2
+            ],
+            "maxprint": 50,
+            "indices": "[0 1]",
+            "indptr": "[0 1 2]",
+            "data": "[0.40796057 0.91299955]"
+        }
+    },
+    "args": {
+        "X": {
+            "_shape": [
+                11,
+                2
+            ],
+            "maxprint": 50,
+            "indices": "[1 0 1 0 1 0 1]",
+            "indptr": "[0 2 4 6 7 7 7 7 7 7 7 7]",
+            "data": "[0.66635332 0.74563614 0.87269566 0.48826456 1.0]",
+            "_has_sorted_indices": true
+        }
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV
+from sklearn.datasets import load_iris
+
+iris = load_iris()
+X, y = iris.data, iris.target
+
+pipe = Pipeline([('standard_scaler', StandardScaler()), ('logistic_regression', LogisticRegression())])
+
+param_grid = {'logistic_regression__C': np.logspace(-4, 4, 9)}
+
+search = GridSearchCV(pipe, param_grid, n_jobs=-1)
+search.fit(X, y)
+print("Best parameter (CV score=%0.3f):" % search.best_score_)
+print(search.best_params_)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.pipeline.Pipeline.fit
+
+def fit(self, X, y=None, **fit_params):
+    fit_params_steps = self._check_fit_params(**fit_params)
+    Xt = self._fit(X, y, **fit_params_steps)
+    if self._final_estimator is not None:
+        self._final_estimator.fit(Xt, y, **fit_params_steps[self.steps[-1][0]])
+    return self
+
+.sklearn.pipeline.Pipeline._fit
+
+def _fit(self, X, y=None, **fit_params):
+    Xt, fit_params = self._fit_transform_one(X, y, None,
+                                              **fit_params)
+    for name, step in self.steps[1:]:
+        if step is None:
+            continue
+        Xt, fit_params = self._fit_transform_one(Xt, y, step,
+                                                  **fit_params)
+    return Xt
+
+.sklearn.pipeline.Pipeline._fit_transform_one
+
+def _fit_transform_one(self, X, y=None,
+                       transformer=None, **fit_params):
+    if y is None:
+        if hasattr(transformer, 'fit_transform'):
+            res = transformer.fit_transform(X, **fit_params)
+        else:
+            res = transformer.fit(X, **fit_params).transform(X)
+    else:
+        res = transformer.fit(X, y, **fit_params).transform(X)
+    return res, {}
+
+.sklearn.model_selection._search.GridSearchCV.fit
+
+def fit(self, X, y=None, groups=None):
+    return self._fit(X, y, groups=groups)
+
+.sklearn.model_selection._search.GridSearchCV._fit
+
+def _fit(self, X, y, groups):
+    X, y, groups = indexable(X, y, groups)
+    estimator = self.estimator
+    cv = self.cv
+    self.scorer_ = check_scoring(estimator, scoring=self.scoring)
+    result_container = []
+    for parameters in self.param_grid:
+        for train, test in cv.split(X, y, groups):
+            cloned_estimator = clone(self.estimator)
+            cloned_estimator.set_params(**parameters)
+            cloned_estimator.fit(X[train], y[train], **(fit_params := self._get_param_names()))
+            score = self._score(cloned_estimator, X[test], y[test])
+            result_container.append((parameters, score))
+    self.cv_results_ = self._format_results(result_container)
+    self._is_fitted = True
+    return self
+
+.sklearn.model_selection._search.GridSearchCV._get_param_names
+
+def _get_param_names(self):
+    if (self.estimator is None or
+            self.param_grid is None):
+        raise ValueError("Estimator and param_grid need to be set")
+    no_key = (self.__class__.__name__ + "().set_params()")
+    for params in self.param_grid:
+        for key in params.keys():
+            if key not in self.estimator.get_params(deep=True):
+                raise ValueError("Estimator not found in GridSearchCV. "
+                                 "Parameter %s is not a valid parameter "
+                                 "for estimator %s." %
+                                 (key, no_key))
+    return self.param_grid
+
+.sklearn.model_selection._search.GridSearchCV._score
+
+def _score(self, estimator, X_test, y_test):
+    score = self.scorer_(estimator, X_test, y_test)
+    return score
+
+.sklearn.model_selection._search.GridSearchCV._format_results
+
+def _format_results(self, candidate_params, out=None, verbose=1):
+    cv_results = {"params": defaultdict(list),
+                  "mean_test_score": [],
+                  "std_test_score": [],
+                  "rank_test_score": []}
+    n_splits = len(candidate_params[0][1])
+    for params, scores in candidate_params:
+        cv_results["params"]["param_C"].append(params['logistic_regression__C'])
+        cv_results["mean_test_score"].append(np.mean(scores))
+        cv_results["std_test_score"].append(np.std(scores))
+    cv_results["rank_test_score"] = rankdata(-np.array(cv_results["mean_test_score"]), method='min')
+    return cv_results
+
+.sklearn.preprocessing._data.StandardScaler.fit
+
+def fit(self, X, y=None):
+    X = check_array(X, accept_sparse='csr')
+    self._reset()
+    return self.partial_fit(X, y)
+
+.sklearn.preprocessing._data.StandardScaler.partial_fit
+
+def partial_fit(self, X, y=None):
+    X = check_array(X, accept_sparse='csr')
+    first_pass = not hasattr(self, 'n_samples_seen_

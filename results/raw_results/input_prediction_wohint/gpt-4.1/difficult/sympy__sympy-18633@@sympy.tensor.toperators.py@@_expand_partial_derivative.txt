@@ -1,0 +1,70 @@
+[THOUGHT]
+We are told that the output of `_expand_partial_derivative` is an object with `_indices`, `_free`, and `_dum` all set to null (i.e., None in Python). Let's analyze what input to `_expand_partial_derivative` would produce this.
+
+First, `_expand_partial_derivative` is a method of the `PartialDerivative` class, which is a subclass of `TensExpr`. The method is called on a `PartialDerivative` object (`self`).
+
+The method starts by calling `self._contract_indices_for_derivative(self.expr, self.variables)`, which returns `args, indices, free, dum`. Then, it creates a new object: `obj = self.func(*args)`, and sets `obj._indices = indices`, `obj._free = free`, `obj._dum = dum`.
+
+Then, it sets `result = obj`.
+
+The next lines check:
+- If `not args[0].free_symbols`, return `S.Zero`.
+- If `isinstance(obj.expr, TensAdd)`, do something.
+- If `isinstance(obj.expr, TensMul)`, do something.
+- Otherwise, return `result`.
+
+But in all cases, the only place where `_indices`, `_free`, and `_dum` are set is in the line:
+```
+obj._indices = indices
+obj._free = free
+obj._dum = dum
+```
+and then `result = obj`.
+
+So, for the output to be:
+```
+{
+    "_indices": null,
+    "_free": null,
+    "_dum": null
+}
+```
+it must be that `indices`, `free`, and `dum` are all `None` (i.e., null in JSON).
+
+But looking at `_contract_indices_for_derivative`, it always returns the result of `TensMul._tensMul_contract_indices`, which always returns tuples (lists) for `indices`, `free`, and `dum` (see the function code). There is no code path that returns `None` for these values unless the input is such that the lists are empty, or the input is such that the function is not called at all.
+
+Alternatively, perhaps the method returns `S.Zero` (i.e., sympy's zero object), which does not have `_indices`, `_free`, or `_dum` attributes, so when serializing, these are null.
+
+But the output is an object with those attributes set to null, not missing.
+
+Alternatively, perhaps the input is such that the method returns `S.Zero`, and the serialization code tries to access `_indices`, `_free`, and `_dum` on `S.Zero`, which does not have them, so they are null.
+
+But let's look at the code:
+```
+if not args[0].free_symbols:
+    return S.Zero
+```
+So, if the first argument (`args[0]`) has no free symbols, the method returns `S.Zero`.
+
+Therefore, the only way for the output to be an object with `_indices`, `_free`, and `_dum` all null is if the method returns `S.Zero`, and the serialization code tries to access those attributes, finds they don't exist, and sets them to null.
+
+Therefore, the input must be a `PartialDerivative` object whose `expr` has no free symbols.
+
+What is a minimal such input? For example, `PartialDerivative(1, x)` where `1` is a number (no free symbols), and `x` is a symbol.
+
+So, the input is a `PartialDerivative` object with `expr=1` and `variables=(x,)`, where `x` is a `Symbol`.
+
+Therefore, the input to `_expand_partial_derivative` is a `PartialDerivative` object with `expr=1` and `variables=(x,)`.
+
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "__class__": "PartialDerivative",
+        "args": [1, "x"]
+    }
+}
+```
+[/INPUT]

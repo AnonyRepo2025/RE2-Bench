@@ -1,0 +1,735 @@
+diff --git a/django/contrib/auth/management/commands/changepassword.py b/django/contrib/auth/management/commands/changepassword.py
+index 619ce87..b0c0a7f 100644
+--- a/django/contrib/auth/management/commands/changepassword.py
++++ b/django/contrib/auth/management/commands/changepassword.py
+@@ -12,7 +12,7 @@ UserModel = get_user_model()
+ class Command(BaseCommand):
+     help = "Change a user's password for django.contrib.auth."
+     requires_migrations_checks = True
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def _get_pass(self, prompt="Password: "):
+         p = getpass.getpass(prompt=prompt)
+diff --git a/django/contrib/gis/management/commands/ogrinspect.py b/django/contrib/gis/management/commands/ogrinspect.py
+index d4a7b16..9dffc2a 100644
+--- a/django/contrib/gis/management/commands/ogrinspect.py
++++ b/django/contrib/gis/management/commands/ogrinspect.py
+@@ -37,7 +37,7 @@ class Command(BaseCommand):
+         ' ./manage.py ogrinspect zipcode.shp Zipcode'
+     )
+ 
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def add_arguments(self, parser):
+         parser.add_argument('data_source', help='Path to the data source.')
+diff --git a/django/contrib/staticfiles/management/commands/collectstatic.py b/django/contrib/staticfiles/management/commands/collectstatic.py
+index ff630fd..f7e069b 100644
+--- a/django/contrib/staticfiles/management/commands/collectstatic.py
++++ b/django/contrib/staticfiles/management/commands/collectstatic.py
+@@ -16,7 +16,7 @@ class Command(BaseCommand):
+     settings.STATIC_ROOT.
+     """
+     help = "Collect static files in a single location."
+-    requires_system_checks = False
++    requires_system_checks = [Tags.staticfiles]
+ 
+     def __init__(self, *args, **kwargs):
+         super().__init__(*args, **kwargs)
+@@ -36,10 +36,6 @@ class Command(BaseCommand):
+         return True
+ 
+     def add_arguments(self, parser):
+-        parser.add_argument(
+-            '--skip-checks', action='store_true',
+-            help='Skip system checks.',
+-        )
+         parser.add_argument(
+             '--noinput', '--no-input', action='store_false', dest='interactive',
+             help="Do NOT prompt the user for input of any kind.",
+@@ -151,9 +147,6 @@ class Command(BaseCommand):
+ 
+     def handle(self, **options):
+         self.set_options(**options)
+-        if not options['skip_checks']:
+-            self.check(tags=[Tags.staticfiles])
+-
+         message = ['\n']
+         if self.dry_run:
+             message.append(
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+index 4fc2dd1..6c288af 100644
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -1,9 +1,203 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-12910/django/core/management/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Base classes for writing management commands (named commands which can
+ be executed through ``django-admin`` or ``manage.py``).
+ """
+ import os
+ import sys
++import warnings
+ from argparse import ArgumentParser, HelpFormatter
+ from io import TextIOBase
+ 
+@@ -12,6 +206,9 @@ from django.core import checks
+ from django.core.exceptions import ImproperlyConfigured
+ from django.core.management.color import color_style, no_style
+ from django.db import DEFAULT_DB_ALIAS, connections
++from django.utils.deprecation import RemovedInDjango41Warning
++
++ALL_CHECKS = '__all__'
+ 
+ 
+ class CommandError(Exception):
+@@ -203,8 +400,11 @@ class BaseCommand:
+         migrations on disk don't match the migrations in the database.
+ 
+     ``requires_system_checks``
+-        A boolean; if ``True``, entire Django project will be checked for errors
+-        prior to executing the command. Default value is ``True``.
++        A list or tuple of tags, e.g. [Tags.staticfiles, Tags.models]. System
++        checks registered in the chosen tags will be checked for errors prior
++        to executing the command. The value '__all__' can be used to specify
++        that all system checks should be performed. Default value is '__all__'.
++
+         To validate an individual application's models
+         rather than all applications' models, call
+         ``self.check(app_configs)`` from ``handle()``, where ``app_configs``
+@@ -222,13 +422,14 @@ class BaseCommand:
+     _called_from_command_line = False
+     output_transaction = False  # Whether to wrap the output in a "BEGIN; COMMIT;"
+     requires_migrations_checks = False
+-    requires_system_checks = True
++    requires_system_checks = '__all__'
+     # Arguments, common to all commands, which aren't defined by the argument
+     # parser.
+     base_stealth_options = ('stderr', 'stdout')
+     # Command-specific options not defined by the argument parser.
+     stealth_options = ()
+ 
++    @inspect_code
+     def __init__(self, stdout=None, stderr=None, no_color=False, force_color=False):
+         self.stdout = OutputWrapper(stdout or sys.stdout)
+         self.stderr = OutputWrapper(stderr or sys.stderr)
+@@ -239,6 +440,19 @@ class BaseCommand:
+         else:
+             self.style = color_style(force_color)
+             self.stderr.style_func = self.style.ERROR
++        if self.requires_system_checks in [False, True]:
++            warnings.warn(
++                "Using a boolean value for requires_system_checks is "
++                "deprecated. Use '__all__' instead of True, and [] (an empty "
++                "list) instead of False.",
++                RemovedInDjango41Warning,
++            )
++            self.requires_system_checks = ALL_CHECKS if self.requires_system_checks else []
++        if (
++            not isinstance(self.requires_system_checks, (list, tuple)) and
++            self.requires_system_checks != ALL_CHECKS
++        ):
++            raise TypeError('requires_system_checks must be a list or tuple.')
+ 
+     def get_version(self):
+         """
+@@ -346,6 +560,7 @@ class BaseCommand:
+                 # configured settings).
+                 pass
+ 
++    @inspect_code
+     def execute(self, *args, **options):
+         """
+         Try to execute this command, performing system checks if needed (as
+@@ -365,7 +580,10 @@ class BaseCommand:
+             self.stderr = OutputWrapper(options['stderr'])
+ 
+         if self.requires_system_checks and not options['skip_checks']:
+-            self.check()
++            if self.requires_system_checks == ALL_CHECKS:
++                self.check()
++            else:
++                self.check(tags=self.requires_system_checks)
+         if self.requires_migrations_checks:
+             self.check_migrations()
+         output = self.handle(*args, **options)
+diff --git a/django/core/management/commands/check.py b/django/core/management/commands/check.py
+index b05534f..a925636 100644
+--- a/django/core/management/commands/check.py
++++ b/django/core/management/commands/check.py
+@@ -7,7 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
+ class Command(BaseCommand):
+     help = "Checks the entire Django project for potential problems."
+ 
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def add_arguments(self, parser):
+         parser.add_argument('args', metavar='app_label', nargs='*')
+diff --git a/django/core/management/commands/compilemessages.py b/django/core/management/commands/compilemessages.py
+index 282ce01..df188ce 100644
+--- a/django/core/management/commands/compilemessages.py
++++ b/django/core/management/commands/compilemessages.py
+@@ -29,7 +29,7 @@ def is_writable(path):
+ class Command(BaseCommand):
+     help = 'Compiles .po files to .mo files for use with builtin gettext support.'
+ 
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     program = 'msgfmt'
+     program_options = ['--check-format']
+diff --git a/django/core/management/commands/createcachetable.py b/django/core/management/commands/createcachetable.py
+index 677420f..84f6104 100644
+--- a/django/core/management/commands/createcachetable.py
++++ b/django/core/management/commands/createcachetable.py
+@@ -10,7 +10,7 @@ from django.db import (
+ class Command(BaseCommand):
+     help = "Creates the tables needed to use the SQL cache backend."
+ 
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def add_arguments(self, parser):
+         parser.add_argument(
+diff --git a/django/core/management/commands/dbshell.py b/django/core/management/commands/dbshell.py
+index fb3caed..cd94787 100644
+--- a/django/core/management/commands/dbshell.py
++++ b/django/core/management/commands/dbshell.py
+@@ -10,7 +10,7 @@ class Command(BaseCommand):
+         "default database if none is provided."
+     )
+ 
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def add_arguments(self, parser):
+         parser.add_argument(
+diff --git a/django/core/management/commands/diffsettings.py b/django/core/management/commands/diffsettings.py
+index 54ec93c..6f93ce2 100644
+--- a/django/core/management/commands/diffsettings.py
++++ b/django/core/management/commands/diffsettings.py
+@@ -10,7 +10,7 @@ class Command(BaseCommand):
+     help = """Displays differences between the current settings.py and Django's
+     default settings."""
+ 
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def add_arguments(self, parser):
+         parser.add_argument(
+diff --git a/django/core/management/commands/inspectdb.py b/django/core/management/commands/inspectdb.py
+index 9913b67..70bc5ba 100644
+--- a/django/core/management/commands/inspectdb.py
++++ b/django/core/management/commands/inspectdb.py
+@@ -8,7 +8,7 @@ from django.db.models.constants import LOOKUP_SEP
+ 
+ class Command(BaseCommand):
+     help = "Introspects the database tables in the given database and outputs a Django model module."
+-    requires_system_checks = False
++    requires_system_checks = []
+     stealth_options = ('table_name_filter',)
+     db_module = 'django.db'
+ 
+diff --git a/django/core/management/commands/makemessages.py b/django/core/management/commands/makemessages.py
+index 1b64a62..593381c 100644
+--- a/django/core/management/commands/makemessages.py
++++ b/django/core/management/commands/makemessages.py
+@@ -206,7 +206,7 @@ class Command(BaseCommand):
+     translatable_file_class = TranslatableFile
+     build_file_class = BuildFile
+ 
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     msgmerge_options = ['-q', '--previous']
+     msguniq_options = ['--to-code=utf-8']
+diff --git a/django/core/management/commands/migrate.py b/django/core/management/commands/migrate.py
+index 3899a16..81696f1 100644
+--- a/django/core/management/commands/migrate.py
++++ b/django/core/management/commands/migrate.py
+@@ -20,7 +20,7 @@ from django.utils.text import Truncator
+ 
+ class Command(BaseCommand):
+     help = "Updates database schema. Manages both apps with migrations and those without."
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def add_arguments(self, parser):
+         parser.add_argument(
+diff --git a/django/core/management/commands/runserver.py b/django/core/management/commands/runserver.py
+index 10dd314..d9fb088 100644
+--- a/django/core/management/commands/runserver.py
++++ b/django/core/management/commands/runserver.py
+@@ -25,7 +25,7 @@ class Command(BaseCommand):
+     help = "Starts a lightweight Web server for development."
+ 
+     # Validation is called explicitly each time the server is reloaded.
+-    requires_system_checks = False
++    requires_system_checks = []
+     stealth_options = ('shutdown_message',)
+ 
+     default_addr = '127.0.0.1'
+diff --git a/django/core/management/commands/shell.py b/django/core/management/commands/shell.py
+index e9d5aa9..0f74c5a 100644
+--- a/django/core/management/commands/shell.py
++++ b/django/core/management/commands/shell.py
+@@ -14,7 +14,7 @@ class Command(BaseCommand):
+         "as code."
+     )
+ 
+-    requires_system_checks = False
++    requires_system_checks = []
+     shells = ['ipython', 'bpython', 'python']
+ 
+     def add_arguments(self, parser):
+diff --git a/django/core/management/commands/test.py b/django/core/management/commands/test.py
+index 3da2f93..679dbc0 100644
+--- a/django/core/management/commands/test.py
++++ b/django/core/management/commands/test.py
+@@ -10,7 +10,7 @@ class Command(BaseCommand):
+     help = 'Discover and run tests in the specified modules or the current directory.'
+ 
+     # DiscoverRunner runs the checks after databases are set up.
+-    requires_system_checks = False
++    requires_system_checks = []
+     test_runner = None
+ 
+     def run_from_argv(self, argv):
+diff --git a/django/core/management/commands/testserver.py b/django/core/management/commands/testserver.py
+index 03814e5..ee8709a 100644
+--- a/django/core/management/commands/testserver.py
++++ b/django/core/management/commands/testserver.py
+@@ -6,7 +6,7 @@ from django.db import connection
+ class Command(BaseCommand):
+     help = 'Runs a development server with data from the given fixture(s).'
+ 
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def add_arguments(self, parser):
+         parser.add_argument(
+diff --git a/django/core/management/templates.py b/django/core/management/templates.py
+index 2c20344..9e51906 100644
+--- a/django/core/management/templates.py
++++ b/django/core/management/templates.py
+@@ -28,7 +28,7 @@ class TemplateCommand(BaseCommand):
+     :param directory: The directory to which the template should be copied.
+     :param options: The additional variables passed to project or app templates
+     """
+-    requires_system_checks = False
++    requires_system_checks = []
+     # The supported URL schemes
+     url_schemes = ['http', 'https', 'ftp']
+     # Rewrite the following suffixes when determining the target filename.
+diff --git a/tests/admin_scripts/management/commands/app_command.py b/tests/admin_scripts/management/commands/app_command.py
+index 7f2aff5..e5272dd 100644
+--- a/tests/admin_scripts/management/commands/app_command.py
++++ b/tests/admin_scripts/management/commands/app_command.py
+@@ -3,7 +3,7 @@ from django.core.management.base import AppCommand
+ 
+ class Command(AppCommand):
+     help = 'Test Application-based commands'
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def handle_app_config(self, app_config, **options):
+         print('EXECUTE:AppCommand name=%s, options=%s' % (app_config.name, sorted(options.items())))
+diff --git a/tests/admin_scripts/management/commands/base_command.py b/tests/admin_scripts/management/commands/base_command.py
+index 56ab664..940f04d 100644
+--- a/tests/admin_scripts/management/commands/base_command.py
++++ b/tests/admin_scripts/management/commands/base_command.py
+@@ -3,7 +3,7 @@ from django.core.management.base import BaseCommand
+ 
+ class Command(BaseCommand):
+     help = 'Test basic commands'
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def add_arguments(self, parser):
+         parser.add_argument('args', nargs='*')
+diff --git a/tests/admin_scripts/management/commands/label_command.py b/tests/admin_scripts/management/commands/label_command.py
+index 5bffeb3..981b88a 100644
+--- a/tests/admin_scripts/management/commands/label_command.py
++++ b/tests/admin_scripts/management/commands/label_command.py
+@@ -3,7 +3,7 @@ from django.core.management.base import LabelCommand
+ 
+ class Command(LabelCommand):
+     help = "Test Label-based commands"
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def handle_label(self, label, **options):
+         print('EXECUTE:LabelCommand label=%s, options=%s' % (label, sorted(options.items())))
+diff --git a/tests/admin_scripts/management/commands/noargs_command.py b/tests/admin_scripts/management/commands/noargs_command.py
+index c95f7c1..65ee370 100644
+--- a/tests/admin_scripts/management/commands/noargs_command.py
++++ b/tests/admin_scripts/management/commands/noargs_command.py
+@@ -3,7 +3,7 @@ from django.core.management.base import BaseCommand
+ 
+ class Command(BaseCommand):
+     help = "Test No-args commands"
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def handle(self, **options):
+         print('EXECUTE: noargs_command options=%s' % sorted(options.items()))
+diff --git a/tests/admin_scripts/tests.py b/tests/admin_scripts/tests.py
+index fac1c99..47efe0b 100644
+--- a/tests/admin_scripts/tests.py
++++ b/tests/admin_scripts/tests.py
+@@ -1395,7 +1395,7 @@ class ManageTestserver(SimpleTestCase):
+ # the commands are correctly parsed and processed.
+ ##########################################################################
+ class ColorCommand(BaseCommand):
+-    requires_system_checks = False
++    requires_system_checks = []
+ 
+     def handle(self, *args, **options):
+         self.stdout.write('Hello, world!', self.style.ERROR)
+@@ -1541,7 +1541,7 @@ class CommandTypes(AdminScriptTestCase):
+ 
+     def test_custom_stdout(self):
+         class Command(BaseCommand):
+-            requires_system_checks = False
++            requires_system_checks = []
+ 
+             def handle(self, *args, **options):
+                 self.stdout.write("Hello, World!")
+@@ -1558,7 +1558,7 @@ class CommandTypes(AdminScriptTestCase):
+ 
+     def test_custom_stderr(self):
+         class Command(BaseCommand):
+-            requires_system_checks = False
++            requires_system_checks = []
+ 
+             def handle(self, *args, **options):
+                 self.stderr.write("Hello, World!")
+diff --git a/tests/user_commands/management/commands/dance.py b/tests/user_commands/management/commands/dance.py
+index 82cfc33..efa1bc0 100644
+--- a/tests/user_commands/management/commands/dance.py
++++ b/tests/user_commands/management/commands/dance.py
+@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand, CommandError
+ class Command(BaseCommand):
+     help = "Dance around like a madman."
+     args = ''
+-    requires_system_checks = True
++    requires_system_checks = '__all__'
+ 
+     def add_arguments(self, parser):
+         parser.add_argument("integer", nargs='?', type=int, default=0)
+diff --git a/tests/user_commands/tests.py b/tests/user_commands/tests.py
+index 0a3b6ae..f0627e8 100644
+--- a/tests/user_commands/tests.py
++++ b/tests/user_commands/tests.py
+@@ -6,6 +6,7 @@ from admin_scripts.tests import AdminScriptTestCase
+ 
+ from django.apps import apps
+ from django.core import management
++from django.core.checks import Tags
+ from django.core.management import BaseCommand, CommandError, find_commands
+ from django.core.management.utils import (
+     find_command, get_random_secret_key, is_ignored_path,
+@@ -13,8 +14,9 @@ from django.core.management.utils import (
+ )
+ from django.db import connection
+ from django.test import SimpleTestCase, override_settings
+-from django.test.utils import captured_stderr, extend_sys_path
++from django.test.utils import captured_stderr, extend_sys_path, ignore_warnings
+ from django.utils import translation
++from django.utils.deprecation import RemovedInDjango41Warning
+ from django.utils.version import PY37
+ 
+ from .management.commands import dance
+@@ -59,13 +61,13 @@ class CommandTests(SimpleTestCase):
+         with self.assertRaises(CommandError) as cm:
+             management.call_command('dance', example="raise")
+         self.assertEqual(cm.exception.returncode, 3)
+-        dance.Command.requires_system_checks = False
++        dance.Command.requires_system_checks = []
+         try:
+             with captured_stderr() as stderr, self.assertRaises(SystemExit) as cm:
+                 management.ManagementUtility(['manage.py', 'dance', '--example=raise']).execute()
+             self.assertEqual(cm.exception.code, 3)
+         finally:
+-            dance.Command.requires_system_checks = True
++            dance.Command.requires_system_checks = '__all__'
+         self.assertIn("CommandError", stderr.getvalue())
+ 
+     def test_no_translations_deactivate_translations(self):
+@@ -155,6 +157,7 @@ class CommandTests(SimpleTestCase):
+ 
+         def patched_check(self_, **kwargs):
+             self.counter += 1
++            self.kwargs = kwargs
+ 
+         saved_check = BaseCommand.check
+         BaseCommand.check = patched_check
+@@ -163,9 +166,28 @@ class CommandTests(SimpleTestCase):
+             self.assertEqual(self.counter, 0)
+             management.call_command("dance", verbosity=0, skip_checks=False)
+             self.assertEqual(self.counter, 1)
++            self.assertEqual(self.kwargs, {})
+         finally:
+             BaseCommand.check = saved_check
+ 
++    def test_requires_system_checks_empty(self):
++        with mock.patch('django.core.management.base.BaseCommand.check') as mocked_check:
++            management.call_command('no_system_checks')
++        self.assertIs(mocked_check.called, False)
++
++    def test_requires_system_checks_specific(self):
++        with mock.patch('django.core.management.base.BaseCommand.check') as mocked_check:
++            management.call_command('specific_system_checks')
++        mocked_check.called_once_with(tags=[Tags.staticfiles, Tags.models])
++
++    def test_requires_system_checks_invalid(self):
++        class Command(BaseCommand):
++            requires_system_checks = 'x'
++
++        msg = 'requires_system_checks must be a list or tuple.'
++        with self.assertRaisesMessage(TypeError, msg):
++            Command()
++
+     def test_check_migrations(self):
+         requires_migrations_checks = dance.Command.requires_migrations_checks
+         self.assertIs(requires_migrations_checks, False)
+@@ -334,3 +356,45 @@ class UtilsTests(SimpleTestCase):
+     def test_normalize_path_patterns_truncates_wildcard_base(self):
+         expected = [os.path.normcase(p) for p in ['foo/bar', 'bar/*/']]
+         self.assertEqual(normalize_path_patterns(['foo/bar/*', 'bar/*/']), expected)
++
++
++class DeprecationTests(SimpleTestCase):
++    def test_requires_system_checks_warning(self):
++        class Command(BaseCommand):
++            pass
++
++        msg = (
++            "Using a boolean value for requires_system_checks is deprecated. "
++            "Use '__all__' instead of True, and [] (an empty list) instead of "
++            "False."
++        )
++        for value in [False, True]:
++            Command.requires_system_checks = value
++            with self.assertRaisesMessage(RemovedInDjango41Warning, msg):
++                Command()
++
++    @ignore_warnings(category=RemovedInDjango41Warning)
++    def test_requires_system_checks_true(self):
++        class Command(BaseCommand):
++            requires_system_checks = True
++
++            def handle(self, *args, **options):
++                pass
++
++        command = Command()
++        with mock.patch('django.core.management.base.BaseCommand.check') as mocked_check:
++            management.call_command(command, skip_checks=False)
++        mocked_check.assert_called_once_with()
++
++    @ignore_warnings(category=RemovedInDjango41Warning)
++    def test_requires_system_checks_false(self):
++        class Command(BaseCommand):
++            requires_system_checks = False
++
++            def handle(self, *args, **options):
++                pass
++
++        command = Command()
++        with mock.patch('django.core.management.base.BaseCommand.check') as mocked_check:
++            management.call_command(command)
++        self.assertIs(mocked_check.called, False)

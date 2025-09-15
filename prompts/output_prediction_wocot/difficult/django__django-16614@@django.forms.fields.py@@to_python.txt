@@ -1,0 +1,228 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. ONLY print the output, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+import copy
+import datetime
+import json
+import math
+import operator
+import os
+import re
+import uuid
+import warnings
+from decimal import Decimal, DecimalException
+from io import BytesIO
+from urllib.parse import urlsplit, urlunsplit
+from django.core import validators
+from django.core.exceptions import ValidationError
+from django.db.models.enums import ChoicesMeta
+from django.forms.boundfield import BoundField
+from django.forms.utils import from_current_timezone, to_current_timezone
+from django.forms.widgets import FILE_INPUT_CONTRADICTION, CheckboxInput, ClearableFileInput, DateInput, DateTimeInput, EmailInput, FileInput, HiddenInput, MultipleHiddenInput, NullBooleanSelect, NumberInput, Select, SelectMultiple, SplitDateTimeWidget, SplitHiddenDateTimeWidget, Textarea, TextInput, TimeInput, URLInput
+from django.utils import formats
+from django.utils.dateparse import parse_datetime, parse_duration
+from django.utils.deprecation import RemovedInDjango60Warning
+from django.utils.duration import duration_string
+from django.utils.ipv6 import clean_ipv6_address
+from django.utils.regex_helper import _lazy_re_compile
+from django.utils.translation import gettext_lazy as _
+from django.utils.translation import ngettext_lazy
+from PIL import Image
+__all__ = ('Field', 'CharField', 'IntegerField', 'DateField', 'TimeField', 'DateTimeField', 'DurationField', 'RegexField', 'EmailField', 'FileField', 'ImageField', 'URLField', 'BooleanField', 'NullBooleanField', 'ChoiceField', 'MultipleChoiceField', 'ComboField', 'MultiValueField', 'FloatField', 'DecimalField', 'SplitDateTimeField', 'GenericIPAddressField', 'FilePathField', 'JSONField', 'SlugField', 'TypedChoiceField', 'TypedMultipleChoiceField', 'UUIDField')
+
+class URLField(CharField):
+    widget = URLInput
+    default_error_messages = {'invalid': _('Enter a valid URL.')}
+    default_validators = [validators.URLValidator()]
+
+    def to_python(self, value):
+
+        def split_url(url):
+            try:
+                return list(urlsplit(url))
+            except ValueError:
+                raise ValidationError(self.error_messages['invalid'], code='invalid')
+        value = super().to_python(value)
+        if value:
+            url_fields = split_url(value)
+            if not url_fields[0]:
+                url_fields[0] = self.assume_scheme
+            if not url_fields[1]:
+                url_fields[1] = url_fields[2]
+                url_fields[2] = ''
+                url_fields = split_url(urlunsplit(url_fields))
+            value = urlunsplit(url_fields)
+        return value
+[/PYTHON]
+
+What will be the output of `to_python`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "assume_scheme": "https",
+        "max_length": 40,
+        "min_length": null,
+        "strip": true,
+        "empty_value": "",
+        "required": true,
+        "label": "The URL",
+        "initial": null,
+        "show_hidden_initial": false,
+        "help_text": "",
+        "disabled": false,
+        "label_suffix": null,
+        "localize": false,
+        "widget": {
+            "input_type": "text",
+            "attrs": {
+                "class": "url",
+                "maxlength": "40"
+            },
+            "is_required": true
+        },
+        "error_messages": {
+            "required": {
+                "_proxy____args": [
+                    "This field is required."
+                ],
+                "_proxy____kw": {}
+            },
+            "invalid": {
+                "_proxy____args": [
+                    "Enter a valid URL."
+                ],
+                "_proxy____kw": {}
+            }
+        },
+        "validators": null,
+        "template_name": null
+    },
+    "args": {
+        "value": "http://www.example.com/category/"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "output": XXX        
+}
+```
+[/STRUCTURE]

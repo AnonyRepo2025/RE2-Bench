@@ -1,0 +1,469 @@
+diff --git a/django/middleware/csrf.py b/django/middleware/csrf.py
+index c2a9470..9d69c6d 100644
+--- a/django/middleware/csrf.py
++++ b/django/middleware/csrf.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14599/django/middleware/csrf.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Cross Site Request Forgery Middleware.
+ 
+@@ -436,16 +629,27 @@ class CsrfViewMiddleware(MiddlewareMixin):
+ 
+         return self._accept(request)
+ 
++    @inspect_code
+     def process_response(self, request, response):
+-        if not getattr(request, 'csrf_cookie_needs_reset', False):
+-            if getattr(response, 'csrf_cookie_set', False):
+-                return response
+-
+-        if not request.META.get("CSRF_COOKIE_USED", False):
+-            return response
++        # Send the CSRF cookie whenever the cookie is being used (even if the
++        # client already has it) in order to renew the expiry timer, but only
++        # if it hasn't already been sent during this request-response cycle.
++        # Also, send the cookie no matter what if a reset was requested.
++        if (
++            getattr(request, 'csrf_cookie_needs_reset', False) or (
++                request.META.get('CSRF_COOKIE_USED') and
++                not getattr(response, 'csrf_cookie_set', False)
++            )
++        ):
++            self._set_token(request, response)
++            # Update state to prevent _set_token() from being unnecessarily
++            # called again in process_response() by other instances of
++            # CsrfViewMiddleware. This can happen e.g. when both a decorator
++            # and middleware are used. However, the csrf_cookie_needs_reset
++            # attribute is still respected in subsequent calls e.g. in case
++            # rotate_token() is called in process_response() later by custom
++            # middleware but before those subsequent calls.
++            response.csrf_cookie_set = True
++            request.csrf_cookie_needs_reset = False
+ 
+-        # Set the CSRF cookie even if it's already set, so we renew
+-        # the expiry timer.
+-        self._set_token(request, response)
+-        response.csrf_cookie_set = True
+         return response
+diff --git a/tests/csrf_tests/tests.py b/tests/csrf_tests/tests.py
+index d1f1f7e..2166250 100644
+--- a/tests/csrf_tests/tests.py
++++ b/tests/csrf_tests/tests.py
+@@ -14,8 +14,9 @@ from django.test import SimpleTestCase, override_settings
+ from django.views.decorators.csrf import csrf_exempt, requires_csrf_token
+ 
+ from .views import (
+-    ensure_csrf_cookie_view, non_token_view_using_request_processor,
+-    post_form_view, token_view,
++    ensure_csrf_cookie_view, ensured_and_protected_view,
++    non_token_view_using_request_processor, post_form_view, protected_view,
++    sandwiched_rotate_token_view, token_view,
+ )
+ 
+ # This is a test (unmasked) CSRF cookie / secret.
+@@ -69,14 +70,30 @@ class CsrfFunctionTests(SimpleTestCase):
+                 self.assertMaskedSecretCorrect(masked, secret)
+ 
+ 
++class TestingSessionStore(SessionStore):
++    """
++    A version of SessionStore that stores what cookie values are passed to
++    set_cookie() when CSRF_USE_SESSIONS=True.
++    """
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        # This is a list of the cookie values passed to set_cookie() over
++        # the course of the request-response.
++        self._cookies_set = []
++
++    def __setitem__(self, key, value):
++        super().__setitem__(key, value)
++        self._cookies_set.append(value)
++
++
+ class TestingHttpRequest(HttpRequest):
+     """
+-    A version of HttpRequest that allows us to change some things
+-    more easily
++    A version of HttpRequest that lets one track and change some things more
++    easily.
+     """
+     def __init__(self):
+         super().__init__()
+-        self.session = SessionStore()
++        self.session = TestingSessionStore()
+ 
+     def is_secure(self):
+         return getattr(self, '_is_secure_override', False)
+@@ -99,6 +116,21 @@ class CsrfViewMiddlewareTestMixin:
+         """
+         raise NotImplementedError('This method must be implemented by a subclass.')
+ 
++    def _get_cookies_set(self, req, resp):
++        """
++        Return a list of the cookie values passed to set_cookie() over the
++        course of the request-response.
++        """
++        raise NotImplementedError('This method must be implemented by a subclass.')
++
++    def assertCookiesSet(self, req, resp, expected_secrets):
++        """
++        Assert that set_cookie() was called with the given sequence of secrets.
++        """
++        cookies_set = self._get_cookies_set(req, resp)
++        secrets_set = [_unmask_cipher_token(cookie) for cookie in cookies_set]
++        self.assertEqual(secrets_set, expected_secrets)
++
+     def _get_request(self, method=None, cookie=None):
+         if method is None:
+             method = 'GET'
+@@ -332,6 +364,21 @@ class CsrfViewMiddlewareTestMixin:
+         resp = mw.process_view(req, post_form_view, (), {})
+         self.assertIsNone(resp)
+ 
++    def test_rotate_token_triggers_second_reset(self):
++        """
++        If rotate_token() is called after the token is reset in
++        CsrfViewMiddleware's process_response() and before another call to
++        the same process_response(), the cookie is reset a second time.
++        """
++        req = self._get_POST_request_with_token()
++        resp = sandwiched_rotate_token_view(req)
++        self.assertContains(resp, 'OK')
++        csrf_cookie = self._read_csrf_cookie(req, resp)
++        actual_secret = _unmask_cipher_token(csrf_cookie)
++        # set_cookie() was called a second time with a different secret.
++        self.assertCookiesSet(req, resp, [TEST_SECRET, actual_secret])
++        self.assertNotEqual(actual_secret, TEST_SECRET)
++
+     # Tests for the template tag method
+     def test_token_node_no_csrf_cookie(self):
+         """
+@@ -875,6 +922,9 @@ class CsrfViewMiddlewareTests(CsrfViewMiddlewareTestMixin, SimpleTestCase):
+         csrf_cookie = resp.cookies[settings.CSRF_COOKIE_NAME]
+         return csrf_cookie.value
+ 
++    def _get_cookies_set(self, req, resp):
++        return resp._cookies_set
++
+     def test_ensures_csrf_cookie_no_middleware(self):
+         """
+         The ensure_csrf_cookie() decorator works without middleware.
+@@ -1016,6 +1066,32 @@ class CsrfViewMiddlewareTests(CsrfViewMiddlewareTestMixin, SimpleTestCase):
+                 resp = mw.process_view(req, token_view, (), {})
+                 self.assertIsNone(resp)
+ 
++    def test_cookie_reset_only_once(self):
++        """
++        A CSRF cookie that needs to be reset is reset only once when the view
++        is decorated with both ensure_csrf_cookie and csrf_protect.
++        """
++        # Pass an unmasked cookie to trigger a cookie reset.
++        req = self._get_POST_request_with_token(cookie=TEST_SECRET)
++        resp = ensured_and_protected_view(req)
++        self.assertContains(resp, 'OK')
++        csrf_cookie = self._read_csrf_cookie(req, resp)
++        actual_secret = _unmask_cipher_token(csrf_cookie)
++        self.assertEqual(actual_secret, TEST_SECRET)
++        # set_cookie() was called only once and with the expected secret.
++        self.assertCookiesSet(req, resp, [TEST_SECRET])
++
++    def test_invalid_cookie_replaced_on_GET(self):
++        """
++        A CSRF cookie with the wrong format is replaced during a GET request.
++        """
++        req = self._get_request(cookie='badvalue')
++        resp = protected_view(req)
++        self.assertContains(resp, 'OK')
++        csrf_cookie = self._read_csrf_cookie(req, resp)
++        self.assertTrue(csrf_cookie, msg='No CSRF cookie was sent.')
++        self.assertEqual(len(csrf_cookie), CSRF_TOKEN_LENGTH)
++
+     def test_bare_secret_accepted_and_replaced(self):
+         """
+         The csrf token is reset from a bare secret.
+@@ -1089,6 +1165,9 @@ class CsrfViewMiddlewareUseSessionsTests(CsrfViewMiddlewareTestMixin, SimpleTest
+             return False
+         return req.session[CSRF_SESSION_KEY]
+ 
++    def _get_cookies_set(self, req, resp):
++        return req.session._cookies_set
++
+     def test_no_session_on_request(self):
+         msg = (
+             'CSRF_USE_SESSIONS is enabled, but request.session is not set. '
+diff --git a/tests/csrf_tests/views.py b/tests/csrf_tests/views.py
+index 41bcb07..774d726 100644
+--- a/tests/csrf_tests/views.py
++++ b/tests/csrf_tests/views.py
+@@ -1,8 +1,63 @@
+ from django.http import HttpResponse
+-from django.middleware.csrf import get_token
++from django.middleware.csrf import get_token, rotate_token
+ from django.template import Context, RequestContext, Template
+ from django.template.context_processors import csrf
+-from django.views.decorators.csrf import ensure_csrf_cookie
++from django.utils.decorators import decorator_from_middleware
++from django.utils.deprecation import MiddlewareMixin
++from django.views.decorators.csrf import csrf_protect, ensure_csrf_cookie
++
++
++class TestingHttpResponse(HttpResponse):
++    """
++    A version of HttpResponse that stores what cookie values are passed to
++    set_cookie() when CSRF_USE_SESSIONS=False.
++    """
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        # This is a list of the cookie values passed to set_cookie() over
++        # the course of the request-response.
++        self._cookies_set = []
++
++    def set_cookie(self, key, value, **kwargs):
++        super().set_cookie(key, value, **kwargs)
++        self._cookies_set.append(value)
++
++
++class _CsrfCookieRotator(MiddlewareMixin):
++
++    def process_response(self, request, response):
++        rotate_token(request)
++        return response
++
++
++csrf_rotating_token = decorator_from_middleware(_CsrfCookieRotator)
++
++
++@csrf_protect
++def protected_view(request):
++    return HttpResponse('OK')
++
++
++@ensure_csrf_cookie
++def ensure_csrf_cookie_view(request):
++    return HttpResponse('OK')
++
++
++@csrf_protect
++@ensure_csrf_cookie
++def ensured_and_protected_view(request):
++    return TestingHttpResponse('OK')
++
++
++@csrf_protect
++@csrf_rotating_token
++@ensure_csrf_cookie
++def sandwiched_rotate_token_view(request):
++    """
++    This is a view that calls rotate_token() in process_response() between two
++    calls to CsrfViewMiddleware.process_response().
++    """
++    return TestingHttpResponse('OK')
+ 
+ 
+ def post_form_view(request):
+@@ -12,12 +67,6 @@ def post_form_view(request):
+ """)
+ 
+ 
+-@ensure_csrf_cookie
+-def ensure_csrf_cookie_view(request):
+-    # Doesn't insert a token or anything.
+-    return HttpResponse()
+-
+-
+ def token_view(request):
+     context = RequestContext(request, processors=[csrf])
+     template = Template('{% csrf_token %}')

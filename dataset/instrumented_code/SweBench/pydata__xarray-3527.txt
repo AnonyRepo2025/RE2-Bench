@@ -1,0 +1,527 @@
+diff --git a/xarray/core/groupby.py b/xarray/core/groupby.py
+index c73ee3c..f587a29 100644
+--- a/xarray/core/groupby.py
++++ b/xarray/core/groupby.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-3527/xarray/core/groupby.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import datetime
+ import functools
+ import warnings
+@@ -557,6 +750,60 @@ class GroupBy(SupportsArithmetic):
+         out = ops.fillna(self, value)
+         return out
+ 
++    @inspect_code
++    def quantile(self, q, dim=None, interpolation="linear", keep_attrs=None):
++        """Compute the qth quantile over each array in the groups and
++        concatenate them together into a new array.
++
++        Parameters
++        ----------
++        q : float in range of [0,1] (or sequence of floats)
++            Quantile to compute, which must be between 0 and 1
++            inclusive.
++        dim : `...`, str or sequence of str, optional
++            Dimension(s) over which to apply quantile.
++            Defaults to the grouped dimension.
++        interpolation : {'linear', 'lower', 'higher', 'midpoint', 'nearest'}
++            This optional parameter specifies the interpolation method to
++            use when the desired quantile lies between two data points
++            ``i < j``:
++                * linear: ``i + (j - i) * fraction``, where ``fraction`` is
++                  the fractional part of the index surrounded by ``i`` and
++                  ``j``.
++                * lower: ``i``.
++                * higher: ``j``.
++                * nearest: ``i`` or ``j``, whichever is nearest.
++                * midpoint: ``(i + j) / 2``.
++
++        Returns
++        -------
++        quantiles : Variable
++            If `q` is a single quantile, then the result is a
++            scalar. If multiple percentiles are given, first axis of
++            the result corresponds to the quantile. In either case a
++            quantile dimension is added to the return array. The other
++            dimensions are the dimensions that remain after the
++            reduction of the array.
++
++        See Also
++        --------
++        numpy.nanpercentile, pandas.Series.quantile, Dataset.quantile,
++        DataArray.quantile
++        """
++        if dim is None:
++            dim = self._group_dim
++
++        out = self.map(
++            self._obj.__class__.quantile,
++            shortcut=False,
++            q=q,
++            dim=dim,
++            interpolation=interpolation,
++            keep_attrs=keep_attrs,
++        )
++
++        return out
++
+     def where(self, cond, other=dtypes.NA):
+         """Return elements from `self` or `other` depending on `cond`.
+ 
+@@ -737,60 +984,6 @@ class DataArrayGroupBy(GroupBy, ImplementsArrayReduce):
+         combined = self._maybe_unstack(combined)
+         return combined
+ 
+-    def quantile(self, q, dim=None, interpolation="linear", keep_attrs=None):
+-        """Compute the qth quantile over each array in the groups and
+-        concatenate them together into a new array.
+-
+-        Parameters
+-        ----------
+-        q : float in range of [0,1] (or sequence of floats)
+-            Quantile to compute, which must be between 0 and 1
+-            inclusive.
+-        dim : `...`, str or sequence of str, optional
+-            Dimension(s) over which to apply quantile.
+-            Defaults to the grouped dimension.
+-        interpolation : {'linear', 'lower', 'higher', 'midpoint', 'nearest'}
+-            This optional parameter specifies the interpolation method to
+-            use when the desired quantile lies between two data points
+-            ``i < j``:
+-                * linear: ``i + (j - i) * fraction``, where ``fraction`` is
+-                  the fractional part of the index surrounded by ``i`` and
+-                  ``j``.
+-                * lower: ``i``.
+-                * higher: ``j``.
+-                * nearest: ``i`` or ``j``, whichever is nearest.
+-                * midpoint: ``(i + j) / 2``.
+-
+-        Returns
+-        -------
+-        quantiles : Variable
+-            If `q` is a single quantile, then the result
+-            is a scalar. If multiple percentiles are given, first axis of
+-            the result corresponds to the quantile and a quantile dimension
+-            is added to the return array. The other dimensions are the
+-            dimensions that remain after the reduction of the array.
+-
+-        See Also
+-        --------
+-        numpy.nanpercentile, pandas.Series.quantile, Dataset.quantile,
+-        DataArray.quantile
+-        """
+-        if dim is None:
+-            dim = self._group_dim
+-
+-        out = self.map(
+-            self._obj.__class__.quantile,
+-            shortcut=False,
+-            q=q,
+-            dim=dim,
+-            interpolation=interpolation,
+-            keep_attrs=keep_attrs,
+-        )
+-
+-        if np.asarray(q, dtype=np.float64).ndim == 0:
+-            out = out.drop_vars("quantile")
+-        return out
+-
+     def reduce(
+         self, func, dim=None, axis=None, keep_attrs=None, shortcut=True, **kwargs
+     ):
+diff --git a/xarray/tests/test_groupby.py b/xarray/tests/test_groupby.py
+index 581affa..97bd31a 100644
+--- a/xarray/tests/test_groupby.py
++++ b/xarray/tests/test_groupby.py
+@@ -137,42 +137,58 @@ def test_da_groupby_empty():
+ 
+ def test_da_groupby_quantile():
+ 
+-    array = xr.DataArray([1, 2, 3, 4, 5, 6], [("x", [1, 1, 1, 2, 2, 2])])
++    array = xr.DataArray(
++        data=[1, 2, 3, 4, 5, 6], coords={"x": [1, 1, 1, 2, 2, 2]}, dims="x"
++    )
+ 
+     # Scalar quantile
+-    expected = xr.DataArray([2, 5], [("x", [1, 2])])
++    expected = xr.DataArray(
++        data=[2, 5], coords={"x": [1, 2], "quantile": 0.5}, dims="x"
++    )
+     actual = array.groupby("x").quantile(0.5)
+     assert_identical(expected, actual)
+ 
+     # Vector quantile
+-    expected = xr.DataArray([[1, 3], [4, 6]], [("x", [1, 2]), ("quantile", [0, 1])])
++    expected = xr.DataArray(
++        data=[[1, 3], [4, 6]],
++        coords={"x": [1, 2], "quantile": [0, 1]},
++        dims=("x", "quantile"),
++    )
+     actual = array.groupby("x").quantile([0, 1])
+     assert_identical(expected, actual)
+ 
+     # Multiple dimensions
+     array = xr.DataArray(
+-        [[1, 11, 26], [2, 12, 22], [3, 13, 23], [4, 16, 24], [5, 15, 25]],
+-        [("x", [1, 1, 1, 2, 2]), ("y", [0, 0, 1])],
++        data=[[1, 11, 26], [2, 12, 22], [3, 13, 23], [4, 16, 24], [5, 15, 25]],
++        coords={"x": [1, 1, 1, 2, 2], "y": [0, 0, 1]},
++        dims=("x", "y"),
+     )
+ 
+     actual_x = array.groupby("x").quantile(0, dim=...)
+-    expected_x = xr.DataArray([1, 4], [("x", [1, 2])])
++    expected_x = xr.DataArray(
++        data=[1, 4], coords={"x": [1, 2], "quantile": 0}, dims="x"
++    )
+     assert_identical(expected_x, actual_x)
+ 
+     actual_y = array.groupby("y").quantile(0, dim=...)
+-    expected_y = xr.DataArray([1, 22], [("y", [0, 1])])
++    expected_y = xr.DataArray(
++        data=[1, 22], coords={"y": [0, 1], "quantile": 0}, dims="y"
++    )
+     assert_identical(expected_y, actual_y)
+ 
+     actual_xx = array.groupby("x").quantile(0)
+     expected_xx = xr.DataArray(
+-        [[1, 11, 22], [4, 15, 24]], [("x", [1, 2]), ("y", [0, 0, 1])]
++        data=[[1, 11, 22], [4, 15, 24]],
++        coords={"x": [1, 2], "y": [0, 0, 1], "quantile": 0},
++        dims=("x", "y"),
+     )
+     assert_identical(expected_xx, actual_xx)
+ 
+     actual_yy = array.groupby("y").quantile(0)
+     expected_yy = xr.DataArray(
+-        [[1, 26], [2, 22], [3, 23], [4, 24], [5, 25]],
+-        [("x", [1, 1, 1, 2, 2]), ("y", [0, 1])],
++        data=[[1, 26], [2, 22], [3, 23], [4, 24], [5, 25]],
++        coords={"x": [1, 1, 1, 2, 2], "y": [0, 1], "quantile": 0},
++        dims=("x", "y"),
+     )
+     assert_identical(expected_yy, actual_yy)
+ 
+@@ -180,14 +196,14 @@ def test_da_groupby_quantile():
+     x = [0, 1]
+     foo = xr.DataArray(
+         np.reshape(np.arange(365 * 2), (365, 2)),
+-        coords=dict(time=times, x=x),
++        coords={"time": times, "x": x},
+         dims=("time", "x"),
+     )
+     g = foo.groupby(foo.time.dt.month)
+ 
+     actual = g.quantile(0, dim=...)
+     expected = xr.DataArray(
+-        [
++        data=[
+             0.0,
+             62.0,
+             120.0,
+@@ -201,12 +217,111 @@ def test_da_groupby_quantile():
+             610.0,
+             670.0,
+         ],
+-        [("month", np.arange(1, 13))],
++        coords={"month": np.arange(1, 13), "quantile": 0},
++        dims="month",
+     )
+     assert_identical(expected, actual)
+ 
+     actual = g.quantile(0, dim="time")[:2]
+-    expected = xr.DataArray([[0.0, 1], [62.0, 63]], [("month", [1, 2]), ("x", [0, 1])])
++    expected = xr.DataArray(
++        data=[[0.0, 1], [62.0, 63]],
++        coords={"month": [1, 2], "x": [0, 1], "quantile": 0},
++        dims=("month", "x"),
++    )
++    assert_identical(expected, actual)
++
++
++def test_ds_groupby_quantile():
++    ds = xr.Dataset(
++        data_vars={"a": ("x", [1, 2, 3, 4, 5, 6])}, coords={"x": [1, 1, 1, 2, 2, 2]}
++    )
++
++    # Scalar quantile
++    expected = xr.Dataset(
++        data_vars={"a": ("x", [2, 5])}, coords={"quantile": 0.5, "x": [1, 2]}
++    )
++    actual = ds.groupby("x").quantile(0.5)
++    assert_identical(expected, actual)
++
++    # Vector quantile
++    expected = xr.Dataset(
++        data_vars={"a": (("x", "quantile"), [[1, 3], [4, 6]])},
++        coords={"x": [1, 2], "quantile": [0, 1]},
++    )
++    actual = ds.groupby("x").quantile([0, 1])
++    assert_identical(expected, actual)
++
++    # Multiple dimensions
++    ds = xr.Dataset(
++        data_vars={
++            "a": (
++                ("x", "y"),
++                [[1, 11, 26], [2, 12, 22], [3, 13, 23], [4, 16, 24], [5, 15, 25]],
++            )
++        },
++        coords={"x": [1, 1, 1, 2, 2], "y": [0, 0, 1]},
++    )
++
++    actual_x = ds.groupby("x").quantile(0, dim=...)
++    expected_x = xr.Dataset({"a": ("x", [1, 4])}, coords={"x": [1, 2], "quantile": 0})
++    assert_identical(expected_x, actual_x)
++
++    actual_y = ds.groupby("y").quantile(0, dim=...)
++    expected_y = xr.Dataset({"a": ("y", [1, 22])}, coords={"y": [0, 1], "quantile": 0})
++    assert_identical(expected_y, actual_y)
++
++    actual_xx = ds.groupby("x").quantile(0)
++    expected_xx = xr.Dataset(
++        {"a": (("x", "y"), [[1, 11, 22], [4, 15, 24]])},
++        coords={"x": [1, 2], "y": [0, 0, 1], "quantile": 0},
++    )
++    assert_identical(expected_xx, actual_xx)
++
++    actual_yy = ds.groupby("y").quantile(0)
++    expected_yy = xr.Dataset(
++        {"a": (("x", "y"), [[1, 26], [2, 22], [3, 23], [4, 24], [5, 25]])},
++        coords={"x": [1, 1, 1, 2, 2], "y": [0, 1], "quantile": 0},
++    ).transpose()
++    assert_identical(expected_yy, actual_yy)
++
++    times = pd.date_range("2000-01-01", periods=365)
++    x = [0, 1]
++    foo = xr.Dataset(
++        {"a": (("time", "x"), np.reshape(np.arange(365 * 2), (365, 2)))},
++        coords=dict(time=times, x=x),
++    )
++    g = foo.groupby(foo.time.dt.month)
++
++    actual = g.quantile(0, dim=...)
++    expected = xr.Dataset(
++        {
++            "a": (
++                "month",
++                [
++                    0.0,
++                    62.0,
++                    120.0,
++                    182.0,
++                    242.0,
++                    304.0,
++                    364.0,
++                    426.0,
++                    488.0,
++                    548.0,
++                    610.0,
++                    670.0,
++                ],
++            )
++        },
++        coords={"month": np.arange(1, 13), "quantile": 0},
++    )
++    assert_identical(expected, actual)
++
++    actual = g.quantile(0, dim="time").isel(month=slice(None, 2))
++    expected = xr.Dataset(
++        data_vars={"a": (("month", "x"), [[0.0, 1], [62.0, 63]])},
++        coords={"month": [1, 2], "x": [0, 1], "quantile": 0},
++    )
+     assert_identical(expected, actual)
+ 
+ 

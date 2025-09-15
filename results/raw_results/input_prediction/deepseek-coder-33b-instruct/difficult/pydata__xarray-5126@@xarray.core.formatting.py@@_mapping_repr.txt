@@ -1,0 +1,173 @@
+1. The output is "Attributes:\n    foo:      bar". So, the title is "Attributes", and the mapping is {"foo": "bar"}.
+2. The summarizer is not given, so I assume it's a function that takes a key, a value, and a col_width, and returns a string.
+3. The expand_option_name is not given, so I assume it's a string that represents a boolean option.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "mapping": {
+            "foo": "bar"
+        }
+    },
+    "kwargs": {
+        "title": "Attributes",
+        "summarizer": {},
+        "expand_option_name": "display_expand_attrs"
+    }
+}
+```
+[/INPUT]
+[/PYTHON]
+[PYTHON]
+import contextlib
+import functools
+from datetime import datetime, timedelta
+from itertools import chain, zip_longest
+from typing import Hashable
+import numpy as np
+import pandas as pd
+from pandas.errors import OutOfBoundsDatetime
+from .duck_array_ops import array_equiv
+from .options import OPTIONS, _get_boolean_with_default
+from .pycompat import dask_array_type, sparse_array_type
+from .utils import is_duck_array
+import sparse
+from .variable import IndexVariable
+_KNOWN_TYPE_REPRS = {np.ndarray: 'np.ndarray'}
+EMPTY_REPR = '    *empty*'
+data_vars_repr = functools.partial(_mapping_repr, title='Data variables', summarizer=summarize_datavar, expand_option_name='display_expand_data_vars')
+attrs_repr = functools.partial(_mapping_repr, title='Attributes', summarizer=summarize_attr, expand_option_name='display_expand_attrs')
+diff_coords_repr = functools.partial(_diff_mapping_repr, title='Coordinates', summarizer=summarize_coord)
+diff_data_vars_repr = functools.partial(_diff_mapping_repr, title='Data variables', summarizer=summarize_datavar)
+diff_attrs_repr = functools.partial(_diff_mapping_repr, title='Attributes', summarizer=summarize_attr)
+
+def _mapping_repr(mapping, title, summarizer, expand_option_name, col_width=None, max_rows=None):
+    if col_width is None:
+        col_width = _calculate_col_width(mapping)
+    if max_rows is None:
+        max_rows = OPTIONS['display_max_rows']
+    summary = [f'{title}:']
+    if mapping:
+        len_mapping = len(mapping)
+        if not _get_boolean_with_default(expand_option_name, default=True):
+            summary = [f'{summary[0]} ({len_mapping})']
+        elif len_mapping > max_rows:
+            summary = [f'{summary[0]} ({max_rows}/{len_mapping})']
+            first_rows = max_rows // 2 + max_rows % 2
+            items = list(mapping.items())
+            summary += [summarizer(k, v, col_width) for k, v in items[:first_rows]]
+            if max_rows > 1:
+                last_rows = max_rows // 2
+                summary += [pretty_print('    ...', col_width) + ' ...']
+                summary += [summarizer(k, v, col_width) for k, v in items[-last_rows:]]
+        else:
+            summary += [summarizer(k, v, col_width) for k, v in mapping.items()]
+    else:
+        summary += [EMPTY_REPR]
+    return '\n'.join(summary)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.xarray.core.formatting._calculate_col_width
+
+def _calculate_col_width(col_items):
+    max_name_length = max((len(str(s)) for s in col_items)) if col_items else 0
+    col_width = max(max_name_length, 7) + 6
+    return col_width
+
+.xarray.core.dataset.DataVariables.__len__
+
+def __len__(self) -> int:
+    return len(self._dataset._variables) - len(self._dataset._coord_names)
+
+.xarray.core.dataset.DataVariables.__iter__
+
+def __iter__(self) -> Iterator[Hashable]:
+    return (key for key in self._dataset._variables if key not in self._dataset._coord_names)
+
+.xarray.core.options._get_boolean_with_default
+
+def _get_boolean_with_default(option, default):
+    global_choice = OPTIONS[option]
+    if global_choice == 'default':
+        return default
+    elif global_choice in [True, False]:
+        return global_choice
+    else:
+        raise ValueError(f"The global option {option} must be one of True, False or 'default'.")
+
+.xarray.core.dataset.DataVariables.__getitem__
+
+def __getitem__(self, key: Hashable) -> 'DataArray':
+    if key not in self._dataset._coord_names:
+        return cast('DataArray', self._dataset[key])
+    raise KeyError(key)
+
+.xarray.core.dataset.Dataset.__getitem__
+
+def __getitem__(self, key: Mapping) -> 'Dataset':
+    ...
+
+.xarray.core.utils.is_dict_like
+
+def is_dict_like(value: Any) -> bool:
+    return hasattr(value, 'keys') and hasattr(value, '__getitem__')
+
+.xarray.core.utils.hashable
+
+def hashable(v: Any) -> bool:
+    try:
+        hash(v)
+    except TypeError:
+        return False
+    return True
+
+.xarray.core.dataset.Dataset._construct_dataarray
+
+def _construct_dataarray(self, name: Hashable) -> 'DataArray':
+    from .dataarray import DataArray
+    try:
+        variable = self._variables[name]
+    except KeyError:
+        _, name, variable = _get_virtual_variable(self._variables, name, self._level_coords, self.dims)
+    needed_dims = set(variable.dims)
+    coords: Dict[Hashable, Variable] = {}
+    for k in self._variables:
+        if k in self._coord_names and set(self.variables[k].dims) <= needed_dims:
+            coords[k] = self.variables[k]
+    if self._indexes is None:
+        indexes = None
+    else:
+        indexes = {k: v for k, v in self._indexes.items() if k in coords}
+    return DataArray(variable, coords, name=name, indexes=indexes, fastpath=True)
+
+.xarray.core.variable.Variable.dims
+
+def dims(self):
+    return self._dims
+
+.xarray.core.dataset.Dataset.variables
+
+def variables(self) -> Mapping[Hashable, Variable]:
+    return Frozen(self._variables)
+
+.xarray.core.utils.Frozen.__init__
+
+def __init__(self, mapping: Mapping[K, V]):
+    self.mapping = mapping
+
+.xarray.core.utils.Frozen.__getitem__
+
+def __getitem__(self, key: K) -> V:
+    return self.mapping[key]
+
+.xarray.core.dataarray.DataArray.__init__
+
+def __init__(self, data: Any=dtypes.NA, coords: Union[Sequence[Tuple], Mapping[Hashable, Any], None]=None, dims: Union[Hashable, Sequence[Hashable], None]=None, name: Hashable=None, attrs: Mapping=None, indexes: Dict[Hashable, pd.Index]=None, fastpath: bool=False):
+    if fastpath:
+        variable = data
+        assert dims is None

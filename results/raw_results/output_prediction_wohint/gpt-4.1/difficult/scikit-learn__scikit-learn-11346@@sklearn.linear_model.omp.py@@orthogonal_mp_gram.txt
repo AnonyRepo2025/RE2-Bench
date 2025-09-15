@@ -1,0 +1,120 @@
+[THOUGHT]
+Let's step through the function `orthogonal_mp_gram` with the provided input.
+
+**Inputs:**
+- Gram: 12x12 numpy array (provided as a string, but will be parsed as a numpy array)
+- Xy: 12x1 numpy array (provided as a string, but will be parsed as a numpy array)
+- n_nonzero_coefs: 1
+- tol: None
+- norms_squared: [4.64744652] (but not used since tol is None)
+- copy_Xy: False
+
+**Step 1: Input Preparation**
+- Gram is checked and possibly copied (order='F', copy=True by default, but copy_Gram is not passed, so default True).
+- Xy is np.asarray(Xy), shape (12,1).
+- Since Xy.ndim > 1 and Xy.shape[1] > 1: False (shape is (12,1)), so copy_Gram remains True.
+- Xy.ndim == 1: False, so no reshape.
+- If copy_Xy or not Xy.flags.writeable: copy_Xy is False, so only copy if not writeable. Let's assume it's writeable.
+- n_nonzero_coefs is 1, tol is None, so nothing changes.
+- If return_path: False (not passed), so
+  - coef = np.zeros((12, 1))
+- n_iters = []
+
+**Step 2: Main Loop**
+- For k in range(Xy.shape[1]): Xy.shape[1] == 1, so k=0 only.
+- Call _gram_omp with:
+  - Gram: (12,12)
+  - Xy[:,0]: (12,)
+  - n_nonzero_coefs: 1
+  - tol_0: None
+  - tol: None
+  - copy_Gram: True
+  - copy_Xy: False
+  - return_path: False
+
+**Step 3: _gram_omp**
+- Gram = Gram.copy('F') (copy_Gram True)
+- Xy: (12,) (copy_Xy False, assume writeable)
+- min_float = np.finfo(Gram.dtype).eps
+- nrm2, swap = linalg.get_blas_funcs(('nrm2', 'swap'), (Gram,))
+- potrs, = get_lapack_funcs(('potrs',), (Gram,))
+- indices = np.arange(12)
+- alpha = Xy (shape (12,))
+- tol_curr = tol_0 = None
+- delta = 0
+- gamma = np.empty(0)
+- n_active = 0
+- max_features = 1 (since tol is None)
+- L = np.empty((1,1)), dtype=Gram.dtype
+- L[0,0] = 1.0
+
+**Step 4: Main While Loop**
+- while True:
+  - lam = np.argmax(np.abs(alpha))
+    - Find the index of the largest absolute value in Xy.
+    - Xy = [0.1260535, -0.4460294, 0.29305911, -0.84156526, 2.15579371, -1.60930398, -0.25892627, -1.34654783, 1.24704881, 0.66923821, -0.16778773, -0.09414498]
+    - abs(Xy) = [0.126, 0.446, 0.293, 0.841, 2.155, 1.609, 0.259, 1.347, 1.247, 0.669, 0.168, 0.094]
+    - The largest is 2.15579371 at index 4.
+    - lam = 4
+  - if lam < n_active or alpha[lam] ** 2 < min_float: n_active=0, lam=4, alpha[4]=2.15579371, min_float~2e-16, so False.
+  - if n_active > 0: False (n_active=0)
+    - else: L[0,0] = sqrt(Gram[lam,lam]) = sqrt(Gram[4,4]) = sqrt(1.0) = 1.0
+  - Gram[n_active], Gram[lam] = swap(Gram[n_active], Gram[lam])
+    - Swap row 0 and row 4
+  - Gram.T[n_active], Gram.T[lam] = swap(Gram.T[n_active], Gram.T[lam])
+    - Swap col 0 and col 4
+  - indices[n_active], indices[lam] = indices[lam], indices[n_active]
+    - indices[0], indices[4] = 4, 0
+    - indices now: [4,1,2,3,0,5,6,7,8,9,10,11]
+  - Xy[n_active], Xy[lam] = Xy[lam], Xy[n_active]
+    - Xy[0], Xy[4] = 2.15579371, 0.1260535
+    - Xy now: [2.15579371, -0.4460294, 0.29305911, -0.84156526, 0.1260535, -1.60930398, -0.25892627, -1.34654783, 1.24704881, 0.66923821, -0.16778773, -0.09414498]
+  - n_active += 1 -> n_active = 1
+  - gamma, _ = potrs(L[:n_active, :n_active], Xy[:n_active], lower=True, overwrite_b=False)
+    - L[:1,:1] = [[1.0]]
+    - Xy[:1] = [2.15579371]
+    - Solve L*L^T*gamma = Xy[:1]
+    - Since L is 1x1 identity, gamma = Xy[:1] = [2.15579371]
+  - if return_path: False
+  - beta = np.dot(Gram[:, :n_active], gamma)
+    - Gram[:, :1] is the first column of Gram (after swapping)
+    - gamma = [2.15579371]
+    - beta = Gram[:,0] * 2.15579371
+  - alpha = Xy - beta
+    - Xy: [2.15579371, -0.4460294, 0.29305911, -0.84156526, 0.1260535, -1.60930398, -0.25892627, -1.34654783, 1.24704881, 0.66923821, -0.16778773, -0.09414498]
+    - beta = Gram[:,0] * 2.15579371
+  - if tol is not None: False
+  - elif n_active == max_features: True (n_active=1, max_features=1)
+    - break
+
+**Step 5: Return**
+- return (gamma, indices[:n_active], n_active)
+  - gamma: [2.15579371]
+  - indices[:1]: [4]
+  - n_active: 1
+
+**Step 6: Back to orthogonal_mp_gram**
+- x, idx, n_iter = out
+  - x = [2.15579371]
+  - idx = [4]
+  - n_iter = 1
+- coef[idx, k] = x
+  - coef is zeros (12,1)
+  - coef[4,0] = 2.15579371
+- n_iters.append(n_iter) -> n_iters = [1]
+- Xy.shape[1] == 1, so n_iters = n_iters[0] = 1
+- return np.squeeze(coef)
+  - coef is (12,1), only coef[4,0] = 2.15579371, rest are 0.
+  - np.squeeze(coef) -> (12,) array, with 2.15579371 at index 4, rest 0.
+
+**Final Output:**
+A 12-element array, all zeros except index 4, which is 2.15579371.
+
+[/THOUGHT]
+[OUTPUT]
+```
+{
+    "result": [0.0, 0.0, 0.0, 0.0, 2.15579371, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+}
+```
+[/OUTPUT]

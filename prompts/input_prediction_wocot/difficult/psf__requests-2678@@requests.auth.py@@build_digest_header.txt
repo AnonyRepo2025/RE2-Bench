@@ -1,0 +1,350 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. The input structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict input variable values to fill out placeholders XXX in the structure, and print input between [INPUT] and [\INPUT]. You should maintain the structure when printing inputs. Do not change anything else.  ONLY print the input, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import os
+import re
+import time
+import hashlib
+import threading
+from base64 import b64encode
+from .compat import urlparse, str
+from .cookies import extract_cookies_to_jar
+from .utils import parse_dict_header, to_native_string
+from .status_codes import codes
+CONTENT_TYPE_FORM_URLENCODED = 'application/x-www-form-urlencoded'
+CONTENT_TYPE_MULTI_PART = 'multipart/form-data'
+
+class HTTPDigestAuth(AuthBase):
+
+    def build_digest_header(self, method, url):
+        realm = self._thread_local.chal['realm']
+        nonce = self._thread_local.chal['nonce']
+        qop = self._thread_local.chal.get('qop')
+        algorithm = self._thread_local.chal.get('algorithm')
+        opaque = self._thread_local.chal.get('opaque')
+        if algorithm is None:
+            _algorithm = 'MD5'
+        else:
+            _algorithm = algorithm.upper()
+        if _algorithm == 'MD5' or _algorithm == 'MD5-SESS':
+
+            def md5_utf8(x):
+                if isinstance(x, str):
+                    x = x.encode('utf-8')
+                return hashlib.md5(x).hexdigest()
+            hash_utf8 = md5_utf8
+        elif _algorithm == 'SHA':
+
+            def sha_utf8(x):
+                if isinstance(x, str):
+                    x = x.encode('utf-8')
+                return hashlib.sha1(x).hexdigest()
+            hash_utf8 = sha_utf8
+        KD = lambda s, d: hash_utf8('%s:%s' % (s, d))
+        if hash_utf8 is None:
+            return None
+        entdig = None
+        p_parsed = urlparse(url)
+        path = p_parsed.path or '/'
+        if p_parsed.query:
+            path += '?' + p_parsed.query
+        A1 = '%s:%s:%s' % (self.username, realm, self.password)
+        A2 = '%s:%s' % (method, path)
+        HA1 = hash_utf8(A1)
+        HA2 = hash_utf8(A2)
+        if nonce == self._thread_local.last_nonce:
+            self._thread_local.nonce_count += 1
+        else:
+            self._thread_local.nonce_count = 1
+        ncvalue = '%08x' % self._thread_local.nonce_count
+        s = str(self._thread_local.nonce_count).encode('utf-8')
+        s += nonce.encode('utf-8')
+        s += time.ctime().encode('utf-8')
+        s += os.urandom(8)
+        cnonce = hashlib.sha1(s).hexdigest()[:16]
+        if _algorithm == 'MD5-SESS':
+            HA1 = hash_utf8('%s:%s:%s' % (HA1, nonce, cnonce))
+        if qop is None:
+            respdig = KD(HA1, '%s:%s' % (nonce, HA2))
+        elif qop == 'auth' or 'auth' in qop.split(','):
+            noncebit = '%s:%s:%s:%s:%s' % (nonce, ncvalue, cnonce, 'auth', HA2)
+            respdig = KD(HA1, noncebit)
+        else:
+            return None
+        self._thread_local.last_nonce = nonce
+        base = 'username="%s", realm="%s", nonce="%s", uri="%s", response="%s"' % (self.username, realm, nonce, path, respdig)
+        if opaque:
+            base += ', opaque="%s"' % opaque
+        if algorithm:
+            base += ', algorithm="%s"' % algorithm
+        if entdig:
+            base += ', digest="%s"' % entdig
+        if qop:
+            base += ', qop="auth", nc=%s, cnonce="%s"' % (ncvalue, cnonce)
+        return 'Digest %s' % base
+
+    def handle_redirect(self, r, **kwargs):
+        if r.is_redirect:
+            self._thread_local.num_401_calls = 1
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.requests.cookies.MockRequest.get_origin_req_host
+
+def get_origin_req_host(self):
+    return self.get_host()
+
+.requests.cookies.MockRequest.get_host
+
+def get_host(self):
+    return urlparse(self._r.url).netloc
+
+.requests.cookies.MockRequest.get_full_url
+
+def get_full_url(self):
+    if not self._r.headers.get('Host'):
+        return self._r.url
+    host = self._r.headers['Host']
+    parsed = urlparse(self._r.url)
+    return urlunparse([parsed.scheme, host, parsed.path, parsed.params, parsed.query, parsed.fragment])
+
+.requests.structures.CaseInsensitiveDict.__getitem__
+
+def __getitem__(self, key):
+    return self._store[key.lower()][1]
+
+.requests.cookies.MockResponse.__init__
+
+def __init__(self, headers):
+    self._headers = headers
+
+.requests.cookies.MockResponse.info
+
+def info(self):
+    return self._headers
+
+.requests.cookies.RequestsCookieJar.set_cookie
+
+def set_cookie(self, cookie, *args, **kwargs):
+    if hasattr(cookie.value, 'startswith') and cookie.value.startswith('"') and cookie.value.endswith('"'):
+        cookie.value = cookie.value.replace('\\"', '')
+    return super(RequestsCookieJar, self).set_cookie(cookie, *args, **kwargs)
+
+.requests.cookies.MockRequest.origin_req_host
+
+def origin_req_host(self):
+    return self.get_origin_req_host()
+
+.requests.structures.CaseInsensitiveDict.__setitem__
+
+def __setitem__(self, key, value):
+    self._store[key.lower()] = (key, value)
+
+.requests.packages.urllib3._collections.HTTPHeaderDict.__getitem__
+
+def __getitem__(self, key):
+    val = _dict_getitem(self, key.lower())
+    return ', '.join(val[1:])
+
+.requests.models.PreparedRequest.copy
+
+def copy(self):
+    p = PreparedRequest()
+    p.method = self.method
+    p.url = self.url
+    p.headers = self.headers.copy() if self.headers is not None else None
+    p._cookies = _copy_cookie_jar(self._cookies)
+    p.body = self.body
+    p.hooks = self.hooks
+    return p
+
+.requests.models.PreparedRequest.__init__
+
+def __init__(self):
+    self.method = None
+    self.url = None
+    self.headers = None
+    self._cookies = None
+    self.body = None
+    self.hooks = default_hooks()
+
+.requests.cookies.MockRequest.unverifiable
+
+def unverifiable(self):
+    return self.is_unverifiable()
+
+.requests.cookies.MockRequest.is_unverifiable
+
+def is_unverifiable(self):
+    return True
+
+.requests.packages.urllib3.util.timeout.Timeout.__init__
+
+def __init__(self, total=None, connect=_Default, read=_Default):
+    self._connect = self._validate_timeout(connect, 'connect')
+    self._read = self._validate_timeout(read, 'read')
+    self.total = self._validate_timeout(total, 'total')
+    self._start_connect = None
+
+
+[/PYTHON]
+What will be the input of `build_digest_header`, given the following output:
+[OUTPUT]
+```
+{
+    "output": "Digest username=\"user\", realm=\"me@kennethreitz.com\", nonce=\"54c8df80c7443b10ad9890ddfce551f9\", uri=\"/digest-auth/auth/user/pass\", response=\"2a3292bcb01e5d08c466eacc7609d2b6\", opaque=\"cbe3b2ba4f82f0040cf76baec4025b43\", algorithm=\"MD5\", qop=\"auth\", nc=00000001, cnonce=\"e2f9f401162cf240\""
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "username": XXX,
+        "password": XXX,
+        "_thread_local": {
+            "init": XXX,
+            "last_nonce": XXX,
+            "nonce_count": XXX,
+            "chal": {
+                "realm": XXX,
+                "nonce": XXX,
+                "qop": XXX,
+                "opaque": XXX,
+                "algorithm": XXX,
+                "stale": XXX
+            },
+            "pos": XXX,
+            "num_401_calls": XXX
+        }
+    },
+    "args": {
+        "method": XXX,
+        "url": XXX
+    },
+    "kwargs": {}
+}
+```
+[/STRUCTURE]

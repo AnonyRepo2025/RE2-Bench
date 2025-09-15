@@ -1,0 +1,173 @@
+diff --git a/sphinx/util/inspect.py b/sphinx/util/inspect.py
+index 986419d..29407bf 100644
+--- a/sphinx/util/inspect.py
++++ b/sphinx/util/inspect.py
+@@ -350,38 +350,64 @@ def safe_getattr(obj: Any, name: str, *defargs: Any) -> Any:
+         raise AttributeError(name) from exc
+ 
+ 
+-def object_description(object: Any) -> str:
+-    """A repr() implementation that returns text safe to use in reST context."""
+-    if isinstance(object, dict):
++def object_description(obj: Any, *, _seen: frozenset = frozenset()) -> str:
++    """A repr() implementation that returns text safe to use in reST context.
++
++    Maintains a set of 'seen' object IDs to detect and avoid infinite recursion.
++    """
++    seen = _seen
++    if isinstance(obj, dict):
++        if id(obj) in seen:
++            return 'dict(...)'
++        seen |= {id(obj)}
+         try:
+-            sorted_keys = sorted(object)
+-        except Exception:
+-            pass  # Cannot sort dict keys, fall back to generic repr
+-        else:
+-            items = ("%s: %s" %
+-                     (object_description(key), object_description(object[key]))
+-                     for key in sorted_keys)
+-            return "{%s}" % ", ".join(items)
+-    elif isinstance(object, set):
++            sorted_keys = sorted(obj)
++        except TypeError:
++            # Cannot sort dict keys, fall back to using descriptions as a sort key
++            sorted_keys = sorted(obj, key=lambda k: object_description(k, _seen=seen))
++
++        items = ((object_description(key, _seen=seen),
++                  object_description(obj[key], _seen=seen)) for key in sorted_keys)
++        return '{%s}' % ', '.join(f'{key}: {value}' for (key, value) in items)
++    elif isinstance(obj, set):
++        if id(obj) in seen:
++            return 'set(...)'
++        seen |= {id(obj)}
+         try:
+-            sorted_values = sorted(object)
++            sorted_values = sorted(obj)
+         except TypeError:
+-            pass  # Cannot sort set values, fall back to generic repr
+-        else:
+-            return "{%s}" % ", ".join(object_description(x) for x in sorted_values)
+-    elif isinstance(object, frozenset):
++            # Cannot sort set values, fall back to using descriptions as a sort key
++            sorted_values = sorted(obj, key=lambda x: object_description(x, _seen=seen))
++        return '{%s}' % ', '.join(object_description(x, _seen=seen) for x in sorted_values)
++    elif isinstance(obj, frozenset):
++        if id(obj) in seen:
++            return 'frozenset(...)'
++        seen |= {id(obj)}
+         try:
+-            sorted_values = sorted(object)
++            sorted_values = sorted(obj)
+         except TypeError:
+-            pass  # Cannot sort frozenset values, fall back to generic repr
+-        else:
+-            return "frozenset({%s})" % ", ".join(object_description(x)
+-                                                 for x in sorted_values)
+-    elif isinstance(object, enum.Enum):
+-        return f"{object.__class__.__name__}.{object.name}"
++            # Cannot sort frozenset values, fall back to using descriptions as a sort key
++            sorted_values = sorted(obj, key=lambda x: object_description(x, _seen=seen))
++        return 'frozenset({%s})' % ', '.join(object_description(x, _seen=seen)
++                                             for x in sorted_values)
++    elif isinstance(obj, enum.Enum):
++        return f'{obj.__class__.__name__}.{obj.name}'
++    elif isinstance(obj, tuple):
++        if id(obj) in seen:
++            return 'tuple(...)'
++        seen |= frozenset([id(obj)])
++        return '(%s%s)' % (
++            ', '.join(object_description(x, _seen=seen) for x in obj),
++            ',' * (len(obj) == 1),
++        )
++    elif isinstance(obj, list):
++        if id(obj) in seen:
++            return 'list(...)'
++        seen |= {id(obj)}
++        return '[%s]' % ', '.join(object_description(x, _seen=seen) for x in obj)
+ 
+     try:
+-        s = repr(object)
++        s = repr(obj)
+     except Exception as exc:
+         raise ValueError from exc
+     # Strip non-deterministic memory addresses such as
+diff --git a/tests/test_util_inspect.py b/tests/test_util_inspect.py
+index 87a71ba..7020186 100644
+--- a/tests/test_util_inspect.py
++++ b/tests/test_util_inspect.py
+@@ -503,10 +503,32 @@ def test_set_sorting():
+     assert description == "{'a', 'b', 'c', 'd', 'e', 'f', 'g'}"
+ 
+ 
++def test_set_sorting_enum():
++    class MyEnum(enum.Enum):
++        a = 1
++        b = 2
++        c = 3
++
++    set_ = set(MyEnum)
++    description = inspect.object_description(set_)
++    assert description == "{MyEnum.a, MyEnum.b, MyEnum.c}"
++
++
+ def test_set_sorting_fallback():
+     set_ = {None, 1}
+     description = inspect.object_description(set_)
+-    assert description in ("{1, None}", "{None, 1}")
++    assert description == "{1, None}"
++
++
++def test_deterministic_nested_collection_descriptions():
++    # sortable
++    assert inspect.object_description([{1, 2, 3, 10}]) == "[{1, 2, 3, 10}]"
++    assert inspect.object_description(({1, 2, 3, 10},)) == "({1, 2, 3, 10},)"
++    # non-sortable (elements of varying datatype)
++    assert inspect.object_description([{None, 1}]) == "[{1, None}]"
++    assert inspect.object_description(({None, 1},)) == "({1, None},)"
++    assert inspect.object_description([{None, 1, 'A'}]) == "[{'A', 1, None}]"
++    assert inspect.object_description(({None, 1, 'A'},)) == "({'A', 1, None},)"
+ 
+ 
+ def test_frozenset_sorting():
+@@ -518,7 +540,39 @@ def test_frozenset_sorting():
+ def test_frozenset_sorting_fallback():
+     frozenset_ = frozenset((None, 1))
+     description = inspect.object_description(frozenset_)
+-    assert description in ("frozenset({1, None})", "frozenset({None, 1})")
++    assert description == "frozenset({1, None})"
++
++
++def test_nested_tuple_sorting():
++    tuple_ = ({"c", "b", "a"},)  # nb. trailing comma
++    description = inspect.object_description(tuple_)
++    assert description == "({'a', 'b', 'c'},)"
++
++    tuple_ = ({"c", "b", "a"}, {"f", "e", "d"})
++    description = inspect.object_description(tuple_)
++    assert description == "({'a', 'b', 'c'}, {'d', 'e', 'f'})"
++
++
++def test_recursive_collection_description():
++    dict_a_, dict_b_ = {"a": 1}, {"b": 2}
++    dict_a_["link"], dict_b_["link"] = dict_b_, dict_a_
++    description_a, description_b = (
++        inspect.object_description(dict_a_),
++        inspect.object_description(dict_b_),
++    )
++    assert description_a == "{'a': 1, 'link': {'b': 2, 'link': dict(...)}}"
++    assert description_b == "{'b': 2, 'link': {'a': 1, 'link': dict(...)}}"
++
++    list_c_, list_d_ = [1, 2, 3, 4], [5, 6, 7, 8]
++    list_c_.append(list_d_)
++    list_d_.append(list_c_)
++    description_c, description_d = (
++        inspect.object_description(list_c_),
++        inspect.object_description(list_d_),
++    )
++
++    assert description_c == "[1, 2, 3, 4, [5, 6, 7, 8, list(...)]]"
++    assert description_d == "[5, 6, 7, 8, [1, 2, 3, 4, list(...)]]"
+ 
+ 
+ def test_dict_customtype():

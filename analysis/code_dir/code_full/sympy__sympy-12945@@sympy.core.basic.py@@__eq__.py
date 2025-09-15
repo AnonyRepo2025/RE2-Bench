@@ -1,0 +1,243 @@
+def _sympify(a):
+    return sympify(a, strict=True)
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            if not isinstance(a, np.floating):
+                return sympify(np.asscalar(a))
+            else:
+                try:
+                    from sympy.core.numbers import Float
+                    prec = np.finfo(a).nmant
+                    a = str(list(np.reshape(np.asarray(a), (1, np.size(a)))[0]))[1:-1]
+                    return Float(a, precision=prec)
+                except NotImplementedError:
+                    raise SympifyError('Translation for numpy float : %s is not implemented' % a)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    try:
+        from ..tensor.array import Array
+        return Array(a.flat, a.shape)
+    except AttributeError:
+        pass
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+def __hash__(self):
+    return super(NegativeInfinity, self).__hash__()
+
+def __hash__(self):
+    return super(Number, self).__hash__()
+
+def __hash__(self):
+    return super(Infinity, self).__hash__()
+
+def __hash__(self):
+    return hash(True)
+
+def __init__(self, expr, base_exc=None):
+    self.expr = expr
+    self.base_exc = base_exc
+
+def __new__(cls, i):
+    if isinstance(i, string_types):
+        i = i.replace(' ', '')
+    try:
+        ival = int(i)
+    except TypeError:
+        raise TypeError('Integer can only work with integer expressions.')
+    try:
+        return _intcache[ival]
+    except KeyError:
+        obj = Expr.__new__(cls)
+        obj.p = ival
+        _intcache[ival] = obj
+        return obj
+
+def __hash__(self):
+    return hash((self.class_key(), frozenset(self._extra_kwargs.items())))
+
+def class_key(cls):
+    from sympy.sets.fancysets import Naturals0
+    funcs = {'exp': 10, 'log': 11, 'sin': 20, 'cos': 21, 'tan': 22, 'cot': 23, 'sinh': 30, 'cosh': 31, 'tanh': 32, 'coth': 33, 'conjugate': 40, 're': 41, 'im': 42, 'arg': 43}
+    name = cls.__name__
+    try:
+        i = funcs[name]
+    except KeyError:
+        i = 0 if isinstance(cls.nargs, Naturals0) else 10000
+    return (4, i, name)
+
+def nargs(self):
+    from sympy.sets.sets import FiniteSet
+    return FiniteSet(*self._nargs) if self._nargs else S.Naturals0
+
+def __ne__(self, other):
+    return not self == other
+
+def __eq__(self, other):
+    return isinstance(other, self.__class__) and self.class_key() == other.class_key() and (self._extra_kwargs == other._extra_kwargs)
+
+def __hash__(self):
+    return super(NaN, self).__hash__()
+
+def exp(self):
+    return self._args[1]
+
+
+
+from __future__ import print_function, division
+from collections import Mapping, defaultdict
+from .assumptions import BasicMeta, ManagedProperties
+from .cache import cacheit
+from .sympify import _sympify, sympify, SympifyError
+from .compatibility import iterable, Iterator, ordered, string_types, with_metaclass, zip_longest, range
+from .singleton import S
+from inspect import getmro
+from .function import AppliedUndef, UndefinedFunction as UndefFunc
+from sympy import Derivative, Function, Symbol
+from sympy.series.order import Order
+from sympy import Pow
+from sympy.printing import sstr
+from sympy.printing import sstr
+from sympy import Symbol
+from sympy import Symbol
+from sympy.simplify import hypersimp
+from sympy.polys import Poly, PolynomialError
+from sympy.core.containers import Dict
+from sympy.utilities import default_sort_key
+from sympy import Dummy, Symbol
+from sympy.core.function import UndefinedFunction, Function
+from sympy.core.symbol import Dummy
+from sympy.simplify.simplify import bottom_up
+from sympy import count_ops
+from sympy.core.symbol import Wild
+from sympy.utilities.misc import filldedent
+
+class Basic(with_metaclass(ManagedProperties)):
+    __slots__ = ['_mhash', '_args', '_assumptions']
+    is_number = False
+    is_Atom = False
+    is_Symbol = False
+    is_symbol = False
+    is_Indexed = False
+    is_Dummy = False
+    is_Wild = False
+    is_Function = False
+    is_Add = False
+    is_Mul = False
+    is_Pow = False
+    is_Number = False
+    is_Float = False
+    is_Rational = False
+    is_Integer = False
+    is_NumberSymbol = False
+    is_Order = False
+    is_Derivative = False
+    is_Piecewise = False
+    is_Poly = False
+    is_AlgebraicNumber = False
+    is_Relational = False
+    is_Equality = False
+    is_Boolean = False
+    is_Not = False
+    is_Matrix = False
+    is_Vector = False
+    is_Point = False
+    _constructor_postprocessor_mapping = {}
+
+    def __hash__(self):
+        h = self._mhash
+        if h is None:
+            h = hash((type(self).__name__,) + self._hashable_content())
+            self._mhash = h
+        return h
+
+    def _hashable_content(self):
+        return self._args
+
+    def __eq__(self, other):
+        from sympy import Pow
+        if self is other:
+            return True
+        if type(self) is not type(other):
+            if isinstance(self, Pow) and self.exp == 1:
+                return self.base == other
+            if isinstance(other, Pow) and other.exp == 1:
+                return self == other.base
+            try:
+                other = _sympify(other)
+            except SympifyError:
+                return False
+            if type(self) != type(other):
+                return False
+        return self._hashable_content() == other._hashable_content()

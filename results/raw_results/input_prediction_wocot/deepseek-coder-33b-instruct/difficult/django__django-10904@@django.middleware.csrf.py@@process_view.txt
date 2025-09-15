@@ -1,0 +1,214 @@
+
+[INPUT]
+```
+{
+    "self": {
+        "get_response": null
+    },
+    "args": {
+        "request": {
+            "GET": {
+                "_encoding": "utf-8",
+                "_mutable": false
+            },
+            "_post": {
+                "_encoding": "utf-8",
+                "_mutable": false
+            },
+            "COOKIES": {
+                "csrftoken": "12345678901234567890123456789012"
+            },
+            "META": {
+                "CSRF_COOKIE": "12345678901234567890123456789012"
+            },
+            "FILES": {},
+            "path": "/",
+            "path_info": "/",
+            "method": "GET",
+            "resolver_match": null,
+            "content_type": "text/html",
+            "content_params": {},
+            "raise_error": false,
+            "session": {
+                "_csrftoken": "12345678901234567890123456789012"
+            }
+        },
+        "callback": {},
+        "callback_args": [],
+        "callback_kwargs": {}
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[EXAMPLE]
+[PYTHON]
+import os
+import json
+import attr
+from pathlib import Path
+from six import text_type
+
+@attr.s
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[EXAMPLE]
+[PYTHON]
+import logging
+import re
+import string
+from urllib.parse import urlparse
+from django.conf import settings
+from django.core.exceptions import DisallowedHost, ImproperlyConfigured
+from django.urls import get_callable
+from django.utils.cache import patch_vary_headers
+from django.utils.crypto import constant_time_compare, get_random_string
+from django.utils.deprecation import MiddlewareMixin
+from django.utils.http import is_same_domain
+from django.utils.log import log_response
+logger = logging.getLogger('django.security.csrf')
+REASON_NO_REFERER = 'Referer checking failed - no Referer.'
+REASON_BAD_REFERER = 'Referer checking failed - %s does not match any trusted origins.'
+REASON_NO_CSRF_COOKIE = 'CSRF cookie not set.'
+REASON_BAD_TOKEN = 'CSRF token missing or incorrect.'
+REASON_MALFORMED_REFERER = 'Referer checking failed - Referer is malformed.'
+REASON_INSECURE_REFERER = 'Referer checking failed - Referer is insecure while host is secure.'
+CSRF_SECRET_LENGTH = 32
+CSRF_TOKEN_LENGTH = 2 * CSRF_SECRET_LENGTH
+CSRF_ALLOWED_CHARS = string.ascii_letters + string.digits
+CSRF_SESSION_KEY = '_csrftoken'
+
+class CsrfViewMiddleware(MiddlewareMixin):
+
+    def process_view(self, request, callback, callback_args, callback_kwargs):
+        if getattr(request, 'csrf_processing_done', False):
+            return None
+        if getattr(callback, 'csrf_exempt', False):
+            return None
+        if request.method not in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+            if getattr(request, '_dont_enforce_csrf_checks', False):
+                return self._accept(request)
+            if request.is_secure():
+                referer = request.META.get('HTTP_REFERER')
+                if referer is None:
+                    return self._reject(request, REASON_NO_REFERER)
+                referer = urlparse(referer)
+                if '' in (referer.scheme, referer.netloc):

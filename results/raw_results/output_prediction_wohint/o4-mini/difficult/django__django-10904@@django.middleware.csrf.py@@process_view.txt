@@ -1,0 +1,33 @@
+[THOUGHT]
+We call process_view with a POST request.
+
+1. csrf_processing_done? Not set → False  
+2. callback.csrf_exempt? Not set → False  
+3. method is POST, so we enter the CSRF enforcement block.  
+4. _dont_enforce_csrf_checks? Not set → False  
+5. request.is_secure()?  
+   - settings.SECURE_PROXY_SSL_HEADER is unset, so scheme = self._get_scheme()  
+   - request.environ not provided or does not have wsgi.url_scheme → scheme is None → is_secure() is False  
+   → skip all Referer checks.  
+6. csrf_token = request.META.get('CSRF_COOKIE')  
+   → returns the 64-char string from META. Not None → OK.  
+7. request_csrf_token = ''  
+   - method == POST → try request.POST.get('csrfmiddlewaretoken', '') → no such key → ''  
+   - request_csrf_token is '' → request.META.get(settings.CSRF_HEADER_NAME, '')  
+     (default header name HTTP_X_CSRFTOKEN) → not present → still ''  
+8. Sanitize token: _sanitize_token('')  
+   - '' has no invalid chars but length = 0 ≠ 32 or 64 → returns a newly -generated 64-char salted token  
+9. Compare tokens: _compare_salted_tokens(new_random, original_cookie) → fails →  
+   → return self._reject(request, REASON_BAD_TOKEN)  
+   REASON_BAD_TOKEN = 'CSRF token missing or incorrect.'  
+
+So process_view returns the result of `_reject` with that reason, i.e. an HTTP 403 Forbidden response.  
+[/THOUGHT]
+
+[OUTPUT]
+{
+  "response": "HttpResponseForbidden",
+  "status_code": 403,
+  "reason": "CSRF token missing or incorrect."
+}
+[/OUTPUT]

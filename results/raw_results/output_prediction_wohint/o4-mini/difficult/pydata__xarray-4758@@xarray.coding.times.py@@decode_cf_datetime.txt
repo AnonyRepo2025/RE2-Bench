@@ -1,0 +1,54 @@
+[THOUGHT]
+We call decode_cf_datetime with  
+  num_dates = [12300, 12301, 12302, 12303, 12304]  
+  units = "hour since 1680-01-01 00:00:00.500000"  
+  calendar = "standard"  
+  use_cftime = None  
+
+1. In decode_cf_datetime:  
+   - num_dates = np.asarray(num_dates) → array([12300,12301,12302,12303,12304])  
+   - flat_num_dates = num_dates.ravel() (same array)  
+
+2. use_cftime is None, so we try the pandas path:  
+   dates = _decode_datetime_with_pandas(flat_num_dates, units, calendar)  
+
+3. In _decode_datetime_with_pandas:  
+   - calendar is in STANDARD_CALENDARS, so proceed.  
+   - _unpack_netcdf_time_units("hour since 1680-01-01 00:00:00.500000")  
+     → (delta_units="hour", ref_date="1680-01-01 00:00:00.500000")  
+   - _netcdf_to_numpy_timeunit("hour") → "h"  
+   - ref_date = pd.Timestamp("1680-01-01 00:00:00.500000")  
+
+4. Compute flat_num_dates_ns_int = flat_num_dates * _NS_PER_TIME_DELTA["h"]  
+   → multiplier = 1e9 * 60 * 60 = 3 600 000 000 000 ns/hour  
+   → for first element: 12300 * 3.6e12 = 4.428e16 ns, etc.  
+
+5. to_timedelta(...) + ref_date yields a numpy array of dtype datetime64[ns]:  
+   - 1680-01-01 00:00:00.500000 + 12300 hours = add 512 days + 12h  
+     1680 is leap → year length 366 → 12300/24 = 512 days + 12h  
+     Jan 1 1680 + 366d = Jan 1 1681, +146d = May 27 1681 → time 12:00:00.500000  
+   - Next entries are +1 h, +2 h, +3 h, +4 h  
+
+Resulting array (dtype datetime64[ns]):  
+ [1681-05-27T12:00:00.500000000,  
+  1681-05-27T13:00:00.500000000,  
+  1681-05-27T14:00:00.500000000,  
+  1681-05-27T15:00:00.500000000,  
+  1681-05-27T16:00:00.500000000]  
+
+No exception was raised, so decode_cf_datetime returns this array.  
+[/THOUGHT]
+
+[OUTPUT]
+```
+{
+  "return": [
+    "1681-05-27T12:00:00.500000000",
+    "1681-05-27T13:00:00.500000000",
+    "1681-05-27T14:00:00.500000000",
+    "1681-05-27T15:00:00.500000000",
+    "1681-05-27T16:00:00.500000000"
+  ]
+}
+```
+[/OUTPUT]

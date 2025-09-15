@@ -1,0 +1,191 @@
+The function `on_rm_rf_error` is called when an error occurs during the removal of a file or directory. The error can be a `FileNotFoundError`, a `PermissionError`, or any other type of error. The function returns `True` if the error was handled and `False` otherwise.
+
+The input of `on_rm_rf_error` is:
+- `func`: the function that was called when the error occurred.
+- `path`: the path of the file or directory that was being removed when the error occurred.
+- `excinfo`: the exception that was raised when the error occurred.
+- `start_path`: the path of the directory that was being removed when the error occurred.
+
+Given the output `true`, it means that the error was handled. The function `on_rm_rf_error` is called with the following input:
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "func": "os.remove",
+    "path": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0",
+    "excinfo": {
+        "type": "PermissionError",
+        "value": "PermissionError(13, 'Permission denied')",
+        "traceback": null
+    },
+    "start_path": "/tmp/pytest-of-root/pytest-0/test_mktemp0"
+}
+```
+[/INPUT]
+[/PYTHON]
+
+[PYTHON]
+import attr
+import os
+import six
+import tempfile
+from _pytest.tmpdir import make_numbered_dir
+from _pytest.tmpdir import make_numbered_dir_with_cleanup
+from _pytest.tmpdir import ensure_reset_dir
+from _pytest.tmpdir import get_user
+from _pytest.tmpdir import make_numbered_dir
+from _pytest.tmpdir import make_numbered_dir_with_cleanup
+from _pytest.tmpdir import ensure_reset_dir
+from _pytest.tmpdir import get_user
+from _pytest.tmpdir import _force_symlink
+from _pytest.tmpdir import _max
+from pathlib import Path
+
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/PYTHON]
+
+[PYTHON]
+import atexit
+import contextlib
+import fnmatch
+import importlib.util
+import itertools
+import os
+import shutil
+import sys
+import types
+import uuid
+import warnings
+from enum import Enum
+from errno import EBADF
+from errno import ELOOP
+from errno import ENOENT
+from errno import ENOTDIR
+from functools import partial
+from os.path import expanduser
+from os.path import expandvars
+from os.path import isabs
+from os.path import sep
+from pathlib import Path
+from pathlib import PurePath
+from posixpath import sep as posix_sep
+from types import ModuleType
+from typing import Callable
+from typing import Dict
+from typing import Iterable
+from typing import Iterator
+from typing import Optional
+from typing import Set
+from typing import Tuple
+from typing import Type
+from typing import TypeVar
+from typing import Union
+from _pytest.compat import assert_never
+from _pytest.outcomes import skip
+from _pytest.warning_types import PytestWarning
+import stat
+LOCK_TIMEOUT = 60 * 60 * 24 * 3
+_AnyPurePath = TypeVar('_AnyPurePath', bound=PurePath)
+_IGNORED_ERRORS = (ENOENT, ENOTDIR, EBADF, ELOOP)
+_IGNORED_WINERRORS = (21, 1921)
+
+def on_rm_rf_error(func, path: str, excinfo: Union[BaseException, Tuple[Type[BaseException], BaseException, Optional[types.TracebackType]]], *, start_path: Path) -> bool:
+    if isinstance(excinfo, BaseException):
+        exc = excinfo
+    else:
+        exc = excinfo[1]
+    if isinstance(exc, FileNotFoundError):
+        return False
+    if not isinstance(exc, PermissionError):
+        warnings.warn(PytestWarning(f'(rm_rf) error removing {path}\n{type(exc)}: {exc}'))
+        return False
+    if func not in (os.rmdir, os.remove, os.unlink):
+        if func not in (os.open,):
+            warnings.warn(PytestWarning('(rm_rf) unknown function {} when removing {}:\n{}: {}'.format(func, path, type(exc), exc)))
+        return False
+    import stat
+
+    def chmod_rw(p: str) -> None:
+        mode = os.stat(p).st_mode
+        os.chmod(p, mode | stat.S_IRUSR | stat.S_IWUSR)
+    p = Path(path)
+    if p.is_file():
+        for parent in p.parents:
+            chmod_rw(str(parent))
+            if parent == start_path:
+                break
+    chmod_rw(str(path))
+    func(path)
+    return

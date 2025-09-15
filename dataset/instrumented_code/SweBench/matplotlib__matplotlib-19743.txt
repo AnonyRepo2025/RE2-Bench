@@ -1,0 +1,1007 @@
+diff --git a/examples/text_labels_and_annotations/figlegend_demo.py b/examples/text_labels_and_annotations/figlegend_demo.py
+index 6fc3123..c749ae7 100644
+--- a/examples/text_labels_and_annotations/figlegend_demo.py
++++ b/examples/text_labels_and_annotations/figlegend_demo.py
+@@ -28,3 +28,26 @@ fig.legend((l3, l4), ('Line 3', 'Line 4'), loc='upper right')
+ 
+ plt.tight_layout()
+ plt.show()
++
++##############################################################################
++# Sometimes we do not want the legend to overlap the axes.  If you use
++# constrained_layout you can specify "outside right upper", and
++# constrained_layout will make room for the legend.
++
++fig, axs = plt.subplots(1, 2, layout='constrained')
++
++x = np.arange(0.0, 2.0, 0.02)
++y1 = np.sin(2 * np.pi * x)
++y2 = np.exp(-x)
++l1, = axs[0].plot(x, y1)
++l2, = axs[0].plot(x, y2, marker='o')
++
++y3 = np.sin(4 * np.pi * x)
++y4 = np.exp(-2 * x)
++l3, = axs[1].plot(x, y3, color='tab:green')
++l4, = axs[1].plot(x, y4, color='tab:red', marker='^')
++
++fig.legend((l1, l2), ('Line 1', 'Line 2'), loc='upper left')
++fig.legend((l3, l4), ('Line 3', 'Line 4'), loc='outside right upper')
++
++plt.show()
+diff --git a/lib/matplotlib/_constrained_layout.py b/lib/matplotlib/_constrained_layout.py
+index 9966033..7425b4d 100644
+--- a/lib/matplotlib/_constrained_layout.py
++++ b/lib/matplotlib/_constrained_layout.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/matplotlib__matplotlib-19743/lib/matplotlib/_constrained_layout.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ Adjust subplot layouts so that there are no overlapping axes or axes
+ decorations.  All axes decorations are dealt with (labels, ticks, titles,
+@@ -335,6 +528,7 @@ def get_margin_from_padding(obj, *, w_pad=0, h_pad=0,
+     return margin
+ 
+ 
++@inspect_code
+ def make_layout_margins(layoutgrids, fig, renderer, *, w_pad=0, h_pad=0,
+                         hspace=0, wspace=0):
+     """
+@@ -418,6 +612,25 @@ def make_layout_margins(layoutgrids, fig, renderer, *, w_pad=0, h_pad=0,
+         # pass the new margins down to the layout grid for the solution...
+         layoutgrids[gs].edit_outer_margin_mins(margin, ss)
+ 
++    # make margins for figure-level legends:
++    for leg in fig.legends:
++        inv_trans_fig = None
++        if leg._outside_loc and leg._bbox_to_anchor is None:
++            if inv_trans_fig is None:
++                inv_trans_fig = fig.transFigure.inverted().transform_bbox
++            bbox = inv_trans_fig(leg.get_tightbbox(renderer))
++            w = bbox.width + 2 * w_pad
++            h = bbox.height + 2 * h_pad
++            legendloc = leg._outside_loc
++            if legendloc == 'lower':
++                layoutgrids[fig].edit_margin_min('bottom', h)
++            elif legendloc == 'upper':
++                layoutgrids[fig].edit_margin_min('top', h)
++            if legendloc == 'right':
++                layoutgrids[fig].edit_margin_min('right', w)
++            elif legendloc == 'left':
++                layoutgrids[fig].edit_margin_min('left', w)
++
+ 
+ def make_margin_suptitles(layoutgrids, fig, renderer, *, w_pad=0, h_pad=0):
+     # Figure out how large the suptitle is and make the
+diff --git a/lib/matplotlib/axes/_axes.py b/lib/matplotlib/axes/_axes.py
+index 8780095..ded8d4c 100644
+--- a/lib/matplotlib/axes/_axes.py
++++ b/lib/matplotlib/axes/_axes.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/matplotlib__matplotlib-19743/lib/matplotlib/axes/_axes.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import functools
+ import itertools
+ import logging
+@@ -194,6 +387,7 @@ class Axes(_AxesBase):
+             [self], legend_handler_map)
+         return handles, labels
+ 
++    @inspect_code
+     @_docstring.dedent_interpd
+     def legend(self, *args, **kwargs):
+         """
+@@ -294,7 +488,7 @@ class Axes(_AxesBase):
+ 
+         Other Parameters
+         ----------------
+-        %(_legend_kw_doc)s
++        %(_legend_kw_axes)s
+ 
+         See Also
+         --------
+diff --git a/lib/matplotlib/figure.py b/lib/matplotlib/figure.py
+index b006ca4..1edf284 100644
+--- a/lib/matplotlib/figure.py
++++ b/lib/matplotlib/figure.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/matplotlib__matplotlib-19743/lib/matplotlib/figure.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ `matplotlib.figure` implements the following classes:
+ 
+@@ -986,6 +1179,7 @@ default: %(va)s
+     #    " legend(" -> " figlegend(" for the signatures
+     #    "fig.legend(" -> "plt.figlegend" for the code examples
+     #    "ax.plot" -> "plt.plot" for consistency in using pyplot when able
++    @inspect_code
+     @_docstring.dedent_interpd
+     def legend(self, *args, **kwargs):
+         """
+@@ -1085,7 +1279,8 @@ default: %(va)s
+ 
+         Other Parameters
+         ----------------
+-        %(_legend_kw_doc)s
++        %(_legend_kw_figure)s
++
+ 
+         See Also
+         --------
+diff --git a/lib/matplotlib/legend.py b/lib/matplotlib/legend.py
+index 66182c6..e9e0651 100644
+--- a/lib/matplotlib/legend.py
++++ b/lib/matplotlib/legend.py
+@@ -94,51 +94,7 @@ class DraggableLegend(DraggableOffsetBox):
+         self.legend.set_bbox_to_anchor(loc_in_bbox)
+ 
+ 
+-_docstring.interpd.update(_legend_kw_doc="""
+-loc : str or pair of floats, default: :rc:`legend.loc` ('best' for axes, \
+-'upper right' for figures)
+-    The location of the legend.
+-
+-    The strings
+-    ``'upper left', 'upper right', 'lower left', 'lower right'``
+-    place the legend at the corresponding corner of the axes/figure.
+-
+-    The strings
+-    ``'upper center', 'lower center', 'center left', 'center right'``
+-    place the legend at the center of the corresponding edge of the
+-    axes/figure.
+-
+-    The string ``'center'`` places the legend at the center of the axes/figure.
+-
+-    The string ``'best'`` places the legend at the location, among the nine
+-    locations defined so far, with the minimum overlap with other drawn
+-    artists.  This option can be quite slow for plots with large amounts of
+-    data; your plotting speed may benefit from providing a specific location.
+-
+-    The location can also be a 2-tuple giving the coordinates of the lower-left
+-    corner of the legend in axes coordinates (in which case *bbox_to_anchor*
+-    will be ignored).
+-
+-    For back-compatibility, ``'center right'`` (but no other location) can also
+-    be spelled ``'right'``, and each "string" locations can also be given as a
+-    numeric value:
+-
+-        ===============   =============
+-        Location String   Location Code
+-        ===============   =============
+-        'best'            0
+-        'upper right'     1
+-        'upper left'      2
+-        'lower left'      3
+-        'lower right'     4
+-        'right'           5
+-        'center left'     6
+-        'center right'    7
+-        'lower center'    8
+-        'upper center'    9
+-        'center'          10
+-        ===============   =============
+-
++_legend_kw_doc_base = """
+ bbox_to_anchor : `.BboxBase`, 2-tuple, or 4-tuple of floats
+     Box that is used to position the legend in conjunction with *loc*.
+     Defaults to `axes.bbox` (if called as a method to `.Axes.legend`) or
+@@ -295,7 +251,79 @@ handler_map : dict or None
+ 
+ draggable : bool, default: False
+     Whether the legend can be dragged with the mouse.
+-""")
++"""
++
++_loc_doc_base = """
++loc : str or pair of floats, {0}
++    The location of the legend.
++
++    The strings
++    ``'upper left', 'upper right', 'lower left', 'lower right'``
++    place the legend at the corresponding corner of the axes/figure.
++
++    The strings
++    ``'upper center', 'lower center', 'center left', 'center right'``
++    place the legend at the center of the corresponding edge of the
++    axes/figure.
++
++    The string ``'center'`` places the legend at the center of the axes/figure.
++
++    The string ``'best'`` places the legend at the location, among the nine
++    locations defined so far, with the minimum overlap with other drawn
++    artists.  This option can be quite slow for plots with large amounts of
++    data; your plotting speed may benefit from providing a specific location.
++
++    The location can also be a 2-tuple giving the coordinates of the lower-left
++    corner of the legend in axes coordinates (in which case *bbox_to_anchor*
++    will be ignored).
++
++    For back-compatibility, ``'center right'`` (but no other location) can also
++    be spelled ``'right'``, and each "string" locations can also be given as a
++    numeric value:
++
++        ===============   =============
++        Location String   Location Code
++        ===============   =============
++        'best'            0
++        'upper right'     1
++        'upper left'      2
++        'lower left'      3
++        'lower right'     4
++        'right'           5
++        'center left'     6
++        'center right'    7
++        'lower center'    8
++        'upper center'    9
++        'center'          10
++        ===============   =============
++    {1}"""
++
++_legend_kw_axes_st = (_loc_doc_base.format("default: :rc:`legend.loc`", '') +
++                      _legend_kw_doc_base)
++_docstring.interpd.update(_legend_kw_axes=_legend_kw_axes_st)
++
++_outside_doc = """
++    If a figure is using the constrained layout manager, the string codes
++    of the *loc* keyword argument can get better layout behaviour using the
++    prefix 'outside'. There is ambiguity at the corners, so 'outside
++    upper right' will make space for the legend above the rest of the
++    axes in the layout, and 'outside right upper' will make space on the
++    right side of the layout.  In addition to the values of *loc*
++    listed above, we have 'outside right upper', 'outside right lower',
++    'outside left upper', and 'outside left lower'.  See
++    :doc:`/tutorials/intermediate/legend_guide` for more details.
++"""
++
++_legend_kw_figure_st = (_loc_doc_base.format("default: 'upper right'",
++                                             _outside_doc) +
++                        _legend_kw_doc_base)
++_docstring.interpd.update(_legend_kw_figure=_legend_kw_figure_st)
++
++_legend_kw_both_st = (
++    _loc_doc_base.format("default: 'best' for axes, 'upper right' for figures",
++                         _outside_doc) +
++    _legend_kw_doc_base)
++_docstring.interpd.update(_legend_kw_doc=_legend_kw_both_st)
+ 
+ 
+ class Legend(Artist):
+@@ -482,13 +510,37 @@ class Legend(Artist):
+             )
+         self.parent = parent
+ 
++        loc0 = loc
+         self._loc_used_default = loc is None
+         if loc is None:
+             loc = mpl.rcParams["legend.loc"]
+             if not self.isaxes and loc in [0, 'best']:
+                 loc = 'upper right'
++
++        # handle outside legends:
++        self._outside_loc = None
+         if isinstance(loc, str):
++            if loc.split()[0] == 'outside':
++                # strip outside:
++                loc = loc.split('outside ')[1]
++                # strip "center" at the beginning
++                self._outside_loc = loc.replace('center ', '')
++                # strip first
++                self._outside_loc = self._outside_loc.split()[0]
++                locs = loc.split()
++                if len(locs) > 1 and locs[0] in ('right', 'left'):
++                    # locs doesn't accept "left upper", etc, so swap
++                    if locs[0] != 'center':
++                        locs = locs[::-1]
++                    loc = locs[0] + ' ' + locs[1]
++            # check that loc is in acceptable strings
+             loc = _api.check_getitem(self.codes, loc=loc)
++
++        if self.isaxes and self._outside_loc:
++            raise ValueError(
++                f"'outside' option for loc='{loc0}' keyword argument only "
++                "works for figure legends")
++
+         if not self.isaxes and loc == 0:
+             raise ValueError(
+                 "Automatic legend placement (loc='best') not implemented for "
+diff --git a/lib/matplotlib/tests/test_legend.py b/lib/matplotlib/tests/test_legend.py
+index 56794a3..a8d7fd1 100644
+--- a/lib/matplotlib/tests/test_legend.py
++++ b/lib/matplotlib/tests/test_legend.py
+@@ -4,6 +4,7 @@ from unittest import mock
+ import warnings
+ 
+ import numpy as np
++from numpy.testing import assert_allclose
+ import pytest
+ 
+ from matplotlib.testing.decorators import check_figures_equal, image_comparison
+@@ -18,7 +19,6 @@ from matplotlib.legend_handler import HandlerTuple
+ import matplotlib.legend as mlegend
+ from matplotlib import rc_context
+ from matplotlib.font_manager import FontProperties
+-from numpy.testing import assert_allclose
+ 
+ 
+ def test_legend_ordereddict():
+@@ -486,6 +486,47 @@ class TestLegendFigureFunction:
+             "be discarded.")
+ 
+ 
++def test_figure_legend_outside():
++    todos = ['upper ' + pos for pos in ['left', 'center', 'right']]
++    todos += ['lower ' + pos for pos in ['left', 'center', 'right']]
++    todos += ['left ' + pos for pos in ['lower', 'center', 'upper']]
++    todos += ['right ' + pos for pos in ['lower', 'center', 'upper']]
++
++    upperext = [20.347556,  27.722556, 790.583, 545.499]
++    lowerext = [20.347556,  71.056556, 790.583, 588.833]
++    leftext = [151.681556, 27.722556, 790.583, 588.833]
++    rightext = [20.347556,  27.722556, 659.249, 588.833]
++    axbb = [upperext, upperext, upperext,
++            lowerext, lowerext, lowerext,
++            leftext, leftext, leftext,
++            rightext, rightext, rightext]
++
++    legbb = [[10., 555., 133., 590.],     # upper left
++             [338.5, 555., 461.5, 590.],  # upper center
++             [667, 555., 790.,  590.],    # upper right
++             [10., 10., 133.,  45.],      # lower left
++             [338.5, 10., 461.5,  45.],   # lower center
++             [667., 10., 790.,  45.],     # lower right
++             [10., 10., 133., 45.],       # left lower
++             [10., 282.5, 133., 317.5],   # left center
++             [10., 555., 133., 590.],     # left upper
++             [667, 10., 790., 45.],       # right lower
++             [667., 282.5, 790., 317.5],  # right center
++             [667., 555., 790., 590.]]    # right upper
++
++    for nn, todo in enumerate(todos):
++        print(todo)
++        fig, axs = plt.subplots(constrained_layout=True, dpi=100)
++        axs.plot(range(10), label='Boo1')
++        leg = fig.legend(loc='outside ' + todo)
++        fig.draw_without_rendering()
++
++        assert_allclose(axs.get_window_extent().extents,
++                        axbb[nn])
++        assert_allclose(leg.get_window_extent().extents,
++                        legbb[nn])
++
++
+ @image_comparison(['legend_stackplot.png'])
+ def test_legend_stackplot():
+     """Test legend for PolyCollection using stackplot."""
+diff --git a/tutorials/intermediate/legend_guide.py b/tutorials/intermediate/legend_guide.py
+index 596d6df..338fca7 100644
+--- a/tutorials/intermediate/legend_guide.py
++++ b/tutorials/intermediate/legend_guide.py
+@@ -135,7 +135,54 @@ ax_dict['bottom'].plot([3, 2, 1], label="test2")
+ ax_dict['bottom'].legend(bbox_to_anchor=(1.05, 1),
+                          loc='upper left', borderaxespad=0.)
+ 
+-plt.show()
++##############################################################################
++# Figure legends
++# --------------
++#
++# Sometimes it makes more sense to place a legend relative to the (sub)figure
++# rather than individual Axes.  By using ``constrained_layout`` and
++# specifying "outside" at the beginning of the *loc* keyword argument,
++# the legend is drawn outside the Axes on the (sub)figure.
++
++fig, axs = plt.subplot_mosaic([['left', 'right']], layout='constrained')
++
++axs['left'].plot([1, 2, 3], label="test1")
++axs['left'].plot([3, 2, 1], label="test2")
++
++axs['right'].plot([1, 2, 3], 'C2', label="test3")
++axs['right'].plot([3, 2, 1], 'C3', label="test4")
++# Place a legend to the right of this smaller subplot.
++fig.legend(loc='outside upper right')
++
++##############################################################################
++# This accepts a slightly different grammar than the normal *loc* keyword,
++# where "outside right upper" is different from "outside upper right".
++#
++ucl = ['upper', 'center', 'lower']
++lcr = ['left', 'center', 'right']
++fig, ax = plt.subplots(figsize=(6, 4), layout='constrained', facecolor='0.7')
++
++ax.plot([1, 2], [1, 2], label='TEST')
++# Place a legend to the right of this smaller subplot.
++for loc in [
++        'outside upper left',
++        'outside upper center',
++        'outside upper right',
++        'outside lower left',
++        'outside lower center',
++        'outside lower right']:
++    fig.legend(loc=loc, title=loc)
++
++fig, ax = plt.subplots(figsize=(6, 4), layout='constrained', facecolor='0.7')
++ax.plot([1, 2], [1, 2], label='test')
++
++for loc in [
++        'outside left upper',
++        'outside right upper',
++        'outside left lower',
++        'outside right lower']:
++    fig.legend(loc=loc, title=loc)
++
+ 
+ ###############################################################################
+ # Multiple legends on the same Axes

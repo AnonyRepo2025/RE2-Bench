@@ -1,0 +1,465 @@
+diff --git a/django/contrib/postgres/constraints.py b/django/contrib/postgres/constraints.py
+index a844b89..32c6bb6 100644
+--- a/django/contrib/postgres/constraints.py
++++ b/django/contrib/postgres/constraints.py
+@@ -155,12 +155,13 @@ class ExclusionConstraint(BaseConstraint):
+         return super().__eq__(other)
+ 
+     def __repr__(self):
+-        return '<%s: index_type=%s, expressions=%s%s%s%s%s>' % (
++        return '<%s: index_type=%s expressions=%s name=%s%s%s%s%s>' % (
+             self.__class__.__qualname__,
+-            self.index_type,
+-            self.expressions,
+-            '' if self.condition is None else ', condition=%s' % self.condition,
+-            '' if self.deferrable is None else ', deferrable=%s' % self.deferrable,
+-            '' if not self.include else ', include=%s' % repr(self.include),
+-            '' if not self.opclasses else ', opclasses=%s' % repr(self.opclasses),
++            repr(self.index_type),
++            repr(self.expressions),
++            repr(self.name),
++            '' if self.condition is None else ' condition=%s' % self.condition,
++            '' if self.deferrable is None else ' deferrable=%s' % self.deferrable,
++            '' if not self.include else ' include=%s' % repr(self.include),
++            '' if not self.opclasses else ' opclasses=%s' % repr(self.opclasses),
+         )
+diff --git a/django/db/models/constraints.py b/django/db/models/constraints.py
+index fd01ec5..3a97477 100644
+--- a/django/db/models/constraints.py
++++ b/django/db/models/constraints.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14019/django/db/models/constraints.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from enum import Enum
+ 
+ from django.db.models.query_utils import Q
+@@ -57,8 +250,13 @@ class CheckConstraint(BaseConstraint):
+     def remove_sql(self, model, schema_editor):
+         return schema_editor._delete_check_sql(model, self.name)
+ 
++    @inspect_code
+     def __repr__(self):
+-        return "<%s: check='%s' name=%r>" % (self.__class__.__name__, self.check, self.name)
++        return '<%s: check=%s name=%s>' % (
++            self.__class__.__qualname__,
++            self.check,
++            repr(self.name),
++        )
+ 
+     def __eq__(self, other):
+         if isinstance(other, CheckConstraint):
+@@ -160,9 +358,12 @@ class UniqueConstraint(BaseConstraint):
+             include=include, opclasses=self.opclasses,
+         )
+ 
++    @inspect_code
+     def __repr__(self):
+-        return '<%s: fields=%r name=%r%s%s%s%s>' % (
+-            self.__class__.__name__, self.fields, self.name,
++        return '<%s: fields=%s name=%s%s%s%s%s>' % (
++            self.__class__.__qualname__,
++            repr(self.fields),
++            repr(self.name),
+             '' if self.condition is None else ' condition=%s' % self.condition,
+             '' if self.deferrable is None else ' deferrable=%s' % self.deferrable,
+             '' if not self.include else ' include=%s' % repr(self.include),
+diff --git a/django/db/models/indexes.py b/django/db/models/indexes.py
+index 5530d0b..cc91c70 100644
+--- a/django/db/models/indexes.py
++++ b/django/db/models/indexes.py
+@@ -169,15 +169,17 @@ class Index:
+             self.name = 'D%s' % self.name[1:]
+ 
+     def __repr__(self):
+-        return '<%s:%s%s%s%s%s>' % (
+-            self.__class__.__name__,
+-            '' if not self.fields else " fields='%s'" % ', '.join(self.fields),
+-            '' if not self.expressions else " expressions='%s'" % ', '.join([
+-                str(expression) for expression in self.expressions
+-            ]),
++        return '<%s:%s%s%s%s%s%s%s>' % (
++            self.__class__.__qualname__,
++            '' if not self.fields else ' fields=%s' % repr(self.fields),
++            '' if not self.expressions else ' expressions=%s' % repr(self.expressions),
++            '' if not self.name else ' name=%s' % repr(self.name),
++            ''
++            if self.db_tablespace is None
++            else ' db_tablespace=%s' % repr(self.db_tablespace),
+             '' if self.condition is None else ' condition=%s' % self.condition,
+-            '' if not self.include else " include='%s'" % ', '.join(self.include),
+-            '' if not self.opclasses else " opclasses='%s'" % ', '.join(self.opclasses),
++            '' if not self.include else ' include=%s' % repr(self.include),
++            '' if not self.opclasses else ' opclasses=%s' % repr(self.opclasses),
+         )
+ 
+     def __eq__(self, other):
+diff --git a/tests/constraints/tests.py b/tests/constraints/tests.py
+index 2796a0f..cb366d8 100644
+--- a/tests/constraints/tests.py
++++ b/tests/constraints/tests.py
+@@ -58,12 +58,14 @@ class CheckConstraintTests(TestCase):
+         self.assertNotEqual(models.CheckConstraint(check=check1, name='price'), 1)
+ 
+     def test_repr(self):
+-        check = models.Q(price__gt=models.F('discounted_price'))
+-        name = 'price_gt_discounted_price'
+-        constraint = models.CheckConstraint(check=check, name=name)
++        constraint = models.CheckConstraint(
++            check=models.Q(price__gt=models.F('discounted_price')),
++            name='price_gt_discounted_price',
++        )
+         self.assertEqual(
+             repr(constraint),
+-            "<CheckConstraint: check='{}' name='{}'>".format(check, name),
++            "<CheckConstraint: check=(AND: ('price__gt', F(discounted_price))) "
++            "name='price_gt_discounted_price'>",
+         )
+ 
+     def test_invalid_check_types(self):
+diff --git a/tests/migrations/test_operations.py b/tests/migrations/test_operations.py
+index 984aefa..73a0c63 100644
+--- a/tests/migrations/test_operations.py
++++ b/tests/migrations/test_operations.py
+@@ -1840,7 +1840,7 @@ class OperationTests(OperationTestBase):
+         project_state = self.set_up_test_model("test_adin")
+         msg = (
+             "Indexes passed to AddIndex operations require a name argument. "
+-            "<Index: fields='pink'> doesn't have one."
++            "<Index: fields=['pink']> doesn't have one."
+         )
+         with self.assertRaisesMessage(ValueError, msg):
+             migrations.AddIndex("Pony", models.Index(fields=["pink"]))
+diff --git a/tests/migrations/test_state.py b/tests/migrations/test_state.py
+index 5ac9bf8..4d87a1e 100644
+--- a/tests/migrations/test_state.py
++++ b/tests/migrations/test_state.py
+@@ -1046,7 +1046,10 @@ class ModelStateTests(SimpleTestCase):
+     def test_sanity_index_name(self):
+         field = models.IntegerField()
+         options = {'indexes': [models.Index(fields=['field'])]}
+-        msg = "Indexes passed to ModelState require a name attribute. <Index: fields='field'> doesn't have one."
++        msg = (
++            "Indexes passed to ModelState require a name attribute. <Index: "
++            "fields=['field']> doesn't have one."
++        )
+         with self.assertRaisesMessage(ValueError, msg):
+             ModelState('app', 'Model', [('field', field)], options=options)
+ 
+diff --git a/tests/model_indexes/tests.py b/tests/model_indexes/tests.py
+index ab231ed..46f769c 100644
+--- a/tests/model_indexes/tests.py
++++ b/tests/model_indexes/tests.py
+@@ -16,6 +16,7 @@ class SimpleIndexesTests(SimpleTestCase):
+ 
+     def test_repr(self):
+         index = models.Index(fields=['title'])
++        named_index = models.Index(fields=['title'], name='title_idx')
+         multi_col_index = models.Index(fields=['title', 'author'])
+         partial_index = models.Index(fields=['title'], name='long_books_idx', condition=models.Q(pages__gt=400))
+         covering_index = models.Index(
+@@ -28,20 +29,43 @@ class SimpleIndexesTests(SimpleTestCase):
+             name='opclasses_idx',
+             opclasses=['varchar_pattern_ops', 'text_pattern_ops'],
+         )
+-        func_index = models.Index(Lower('title'), name='book_func_idx')
+-        self.assertEqual(repr(index), "<Index: fields='title'>")
+-        self.assertEqual(repr(multi_col_index), "<Index: fields='title, author'>")
+-        self.assertEqual(repr(partial_index), "<Index: fields='title' condition=(AND: ('pages__gt', 400))>")
++        func_index = models.Index(Lower('title'), 'subtitle', name='book_func_idx')
++        tablespace_index = models.Index(
++            fields=['title'],
++            db_tablespace='idx_tbls',
++            name='book_tablespace_idx',
++        )
++        self.assertEqual(repr(index), "<Index: fields=['title']>")
++        self.assertEqual(
++            repr(named_index),
++            "<Index: fields=['title'] name='title_idx'>",
++        )
++        self.assertEqual(repr(multi_col_index), "<Index: fields=['title', 'author']>")
++        self.assertEqual(
++            repr(partial_index),
++            "<Index: fields=['title'] name='long_books_idx' "
++            "condition=(AND: ('pages__gt', 400))>",
++        )
+         self.assertEqual(
+             repr(covering_index),
+-            "<Index: fields='title' include='author, pages'>",
++            "<Index: fields=['title'] name='include_idx' "
++            "include=('author', 'pages')>",
+         )
+         self.assertEqual(
+             repr(opclasses_index),
+-            "<Index: fields='headline, body' "
+-            "opclasses='varchar_pattern_ops, text_pattern_ops'>",
++            "<Index: fields=['headline', 'body'] name='opclasses_idx' "
++            "opclasses=['varchar_pattern_ops', 'text_pattern_ops']>",
++        )
++        self.assertEqual(
++            repr(func_index),
++            "<Index: expressions=(Lower(F(title)), F(subtitle)) "
++            "name='book_func_idx'>",
++        )
++        self.assertEqual(
++            repr(tablespace_index),
++            "<Index: fields=['title'] name='book_tablespace_idx' "
++            "db_tablespace='idx_tbls'>",
+         )
+-        self.assertEqual(repr(func_index), "<Index: expressions='Lower(F(title))'>")
+ 
+     def test_eq(self):
+         index = models.Index(fields=['title'])
+diff --git a/tests/postgres_tests/test_constraints.py b/tests/postgres_tests/test_constraints.py
+index 1bf52d0..80c2bb7 100644
+--- a/tests/postgres_tests/test_constraints.py
++++ b/tests/postgres_tests/test_constraints.py
+@@ -282,8 +282,8 @@ class ExclusionConstraintTests(PostgreSQLTestCase):
+         )
+         self.assertEqual(
+             repr(constraint),
+-            "<ExclusionConstraint: index_type=GIST, expressions=["
+-            "(F(datespan), '&&'), (F(room), '=')]>",
++            "<ExclusionConstraint: index_type='GIST' expressions=["
++            "(F(datespan), '&&'), (F(room), '=')] name='exclude_overlapping'>",
+         )
+         constraint = ExclusionConstraint(
+             name='exclude_overlapping',
+@@ -293,8 +293,9 @@ class ExclusionConstraintTests(PostgreSQLTestCase):
+         )
+         self.assertEqual(
+             repr(constraint),
+-            "<ExclusionConstraint: index_type=SPGiST, expressions=["
+-            "(F(datespan), '-|-')], condition=(AND: ('cancelled', False))>",
++            "<ExclusionConstraint: index_type='SPGiST' expressions=["
++            "(F(datespan), '-|-')] name='exclude_overlapping' "
++            "condition=(AND: ('cancelled', False))>",
+         )
+         constraint = ExclusionConstraint(
+             name='exclude_overlapping',
+@@ -303,8 +304,9 @@ class ExclusionConstraintTests(PostgreSQLTestCase):
+         )
+         self.assertEqual(
+             repr(constraint),
+-            "<ExclusionConstraint: index_type=GIST, expressions=["
+-            "(F(datespan), '-|-')], deferrable=Deferrable.IMMEDIATE>",
++            "<ExclusionConstraint: index_type='GIST' expressions=["
++            "(F(datespan), '-|-')] name='exclude_overlapping' "
++            "deferrable=Deferrable.IMMEDIATE>",
+         )
+         constraint = ExclusionConstraint(
+             name='exclude_overlapping',
+@@ -313,8 +315,9 @@ class ExclusionConstraintTests(PostgreSQLTestCase):
+         )
+         self.assertEqual(
+             repr(constraint),
+-            "<ExclusionConstraint: index_type=GIST, expressions=["
+-            "(F(datespan), '-|-')], include=('cancelled', 'room')>",
++            "<ExclusionConstraint: index_type='GIST' expressions=["
++            "(F(datespan), '-|-')] name='exclude_overlapping' "
++            "include=('cancelled', 'room')>",
+         )
+         constraint = ExclusionConstraint(
+             name='exclude_overlapping',
+@@ -323,8 +326,9 @@ class ExclusionConstraintTests(PostgreSQLTestCase):
+         )
+         self.assertEqual(
+             repr(constraint),
+-            "<ExclusionConstraint: index_type=GIST, expressions=["
+-            "(F(datespan), '-|-')], opclasses=['range_ops']>",
++            "<ExclusionConstraint: index_type='GIST' expressions=["
++            "(F(datespan), '-|-')] name='exclude_overlapping' "
++            "opclasses=['range_ops']>",
+         )
+ 
+     def test_eq(self):

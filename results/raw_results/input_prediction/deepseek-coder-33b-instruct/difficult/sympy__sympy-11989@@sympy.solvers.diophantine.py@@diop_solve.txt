@@ -1,0 +1,152 @@
+1. The output is a list of two equations.
+2. The equations are linear, and they are in the form of "3*t_0 - 5" and "2*t_0 - 5".
+3. The variable is "t_0".
+4. The coefficients are 3 and 2.
+5. The constant terms are -5 and -5.
+6. The type of the diophantine equation is "linear".
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {},
+    "args": {
+        "eq": "3*t_0 - 5"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/PYTHON]
+[PYTHON]
+from sympy import symbols, Eq, solve
+from sympy.solvers.diophantine import diop_solve
+
+x, y = symbols('x y')
+eq = Eq(x**2 - y**2 + 2*x*y, 0)
+sol = diop_solve(eq)
+print(sol)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.solvers.diophantine.diop_solve
+
+def diop_solve(eq, param=symbols('t', integer=True)):
+    var, coeff, eq_type = classify_diop(eq, _dict=False)
+    if eq_type == 'linear':
+        return _diop_linear(var, coeff, param)
+    elif eq_type == 'binary_quadratic':
+        return _diop_quadratic(var, coeff, param)
+    elif eq_type == 'homogeneous_ternary_quadratic':
+        x_0, y_0, z_0 = _diop_ternary_quadratic(var, coeff)
+        return _parametrize_ternary_quadratic((x_0, y_0, z_0), var, coeff)
+    elif eq_type == 'homogeneous_ternary_quadratic_normal':
+        x_0, y_0, z_0 = _diop_ternary_quadratic_normal(var, coeff)
+        return _parametrize_ternary_quadratic((x_0, y_0, z_0), var, coeff)
+    elif eq_type == 'general_pythagorean':
+        return _diop_general_pythagorean(var, coeff, param)
+    elif eq_type == 'univariate':
+        return set([(int(i),) for i in solveset_real(eq, var[0]).intersect(S.Integers)])
+    elif eq_type == 'general_sum_of_squares':
+        return _diop_general_sum_of_squares(var, -int(coeff[1]), limit=S.Infinity)
+    elif eq_type == 'general_sum_of_even_powers':
+        for k in coeff.keys():
+            if k.is_Pow and coeff[k]:
+                p = k.exp
+        return _diop_general_sum_of_even_powers(var, p, -int(coeff[1]), limit=S.Infinity)
+    if eq_type is not None and eq_type not in diop_known:
+        raise ValueError(filldedent('\n    Alhough this type of equation was identified, it is not yet\n    handled. It should, however, be listed in `diop_known` at the\n    top of this file. Developers should see comments at the end of\n    `classify_diop`.\n            '))
+    else:
+        raise NotImplementedError('No solver has been written for %s.' % eq_type)
+
+.sympy.solvers.diophantine.classify_diop
+
+def classify_diop(eq, _dict=True):
+    try:
+        var = list(eq.free_symbols)
+        assert var
+    except (AttributeError, AssertionError):
+        raise ValueError('equation should have 1 or more free symbols')
+    var.sort(key=default_sort_key)
+    eq = eq.expand(force=True)
+    coeff = eq.as_coefficients_dict()
+    if not all((_is_int(c) for c in coeff.values())):
+        raise TypeError('Coefficients should be Integers')
+    diop_type = None
+    total_degree = Poly(eq).total_degree()
+    homogeneous = 1 not in coeff
+    if total_degree == 1:
+        diop_type = 'linear'
+    elif len(var) == 1:
+        diop_type = 'univariate'
+    elif total_degree == 2 and len(var) == 2:
+        diop_type = 'binary_quadratic'
+    elif total_degree == 2 and len(var) == 3 and homogeneous:
+        if set(coeff) & set(var):
+            diop_type = 'inhomogeneous_ternary_quadratic'
+        else:
+            nonzero = [k for k in coeff if coeff[k]]
+            if len(nonzero) == 3 and all((i ** 2 in nonzero for i in var)):
+                diop_type = 'homogeneous_ternary_quadratic_normal'
+            else:
+                diop_type = 'homogeneous_ternary_quadratic'
+    elif total_degree == 2 and len(var) >= 3:
+        if set(coeff) & set(var):
+            diop_type = 'inhomogeneous_general_quadratic'
+        elif any((k.is_Mul for k in coeff)):
+            if not homogeneous:
+                diop_type = 'inhomogeneous_general_quadratic'
+            else:
+                diop_type = 'homogeneous_general_quadratic'
+        elif all((coeff[k] == 1 for k in coeff if k != 1)):
+            diop_type = 'general_sum_of_squares'
+        elif all((is_square(abs(coeff[k])) for k in coeff)):
+            if abs(sum((sign(coeff[k]) for k in coeff))) == len(var) - 2:
+                diop_type = 'general_pythagorean'
+    elif total_degree == 3 and len(var) == 2:
+        diop_type = 'cubic_thue'
+    elif total_degree > 3 and total_degree % 2 == 0 and all((k.is_Pow and k.exp == total_degree for k in coeff if k != 1)):
+        if all((coeff[k] == 1 for k in coeff if k != 1)):
+            diop_type = 'general_sum_of_even_powers'
+    if diop_type is not None:
+        return (var, dict(coeff) if _dict else coeff, diop_type)
+    raise NotImplementedError(filldedent('\n        This equation is not yet recognized or else has not been\n        simplified sufficiently to put it in a form recognized by\n        diop_classify().'))
+
+.sympy.core.basic.Basic.free_symbols
+
+def free_symbols(self):
+    return set().union(*[a.free_symbols for a in self.args])
+
+.sympy.core.basic.Basic.args
+
+def args(self):
+    return self._args
+
+.sympy.core.symbol.Symbol.free_symbols
+
+def free_symbols(self):
+    return {self}
+
+.sympy.core.basic.Basic.__hash__
+
+def __hash__(self):
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+.sympy.core.compatibility.default_sort_key
+
+def default_sort_key(item, order=None):
+    from .singleton import S
+    from .basic import Basic
+    from .sympify import sympify, SympifyError
+    from .compatibility import iterable
+    if isinstance(item, Basic):
+        return item.sort_key(order=order)
+    if iterable(item, exclude=string_types):
+        if isinstance(item, dict):
+            args = item.items()
+            unordered =

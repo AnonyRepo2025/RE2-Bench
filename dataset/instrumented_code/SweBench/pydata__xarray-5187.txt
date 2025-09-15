@@ -1,0 +1,883 @@
+diff --git a/xarray/core/dask_array_ops.py b/xarray/core/dask_array_ops.py
+index 25f082e..87f6702 100644
+--- a/xarray/core/dask_array_ops.py
++++ b/xarray/core/dask_array_ops.py
+@@ -51,3 +51,24 @@ def least_squares(lhs, rhs, rcond=None, skipna=False):
+         # See issue dask/dask#6516
+         coeffs, residuals, _, _ = da.linalg.lstsq(lhs_da, rhs)
+     return coeffs, residuals
++
++
++def push(array, n, axis):
++    """
++    Dask-aware bottleneck.push
++    """
++    from bottleneck import push
++
++    if len(array.chunks[axis]) > 1 and n is not None and n < array.shape[axis]:
++        raise NotImplementedError(
++            "Cannot fill along a chunked axis when limit is not None."
++            "Either rechunk to a single chunk along this axis or call .compute() or .load() first."
++        )
++    if all(c == 1 for c in array.chunks[axis]):
++        array = array.rechunk({axis: 2})
++    pushed = array.map_blocks(push, axis=axis, n=n)
++    if len(array.chunks[axis]) > 1:
++        pushed = pushed.map_overlap(
++            push, axis=axis, n=n, depth={axis: (1, 0)}, boundary="none"
++        )
++    return pushed
+diff --git a/xarray/core/dataarray.py b/xarray/core/dataarray.py
+index 7a65c2b..3ea8056 100644
+--- a/xarray/core/dataarray.py
++++ b/xarray/core/dataarray.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-5187/xarray/core/dataarray.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import datetime
+ import warnings
+ from numbers import Number
+@@ -2501,6 +2694,7 @@ class DataArray(AbstractArray, DataWithCoords, DataArrayArithmetic):
+             **kwargs,
+         )
+ 
++    @inspect_code
+     def ffill(self, dim: Hashable, limit: int = None) -> "DataArray":
+         """Fill NaN values by propogating values forward
+ 
+@@ -2515,7 +2709,8 @@ class DataArray(AbstractArray, DataWithCoords, DataArrayArithmetic):
+             The maximum number of consecutive NaN values to forward fill. In
+             other words, if there is a gap with more than this number of
+             consecutive NaNs, it will only be partially filled. Must be greater
+-            than 0 or None for no limit.
++            than 0 or None for no limit. Must be None or greater than or equal
++            to axis length if filling along chunked axes (dimensions).
+ 
+         Returns
+         -------
+@@ -2539,7 +2734,8 @@ class DataArray(AbstractArray, DataWithCoords, DataArrayArithmetic):
+             The maximum number of consecutive NaN values to backward fill. In
+             other words, if there is a gap with more than this number of
+             consecutive NaNs, it will only be partially filled. Must be greater
+-            than 0 or None for no limit.
++            than 0 or None for no limit. Must be None or greater than or equal
++            to axis length if filling along chunked axes (dimensions).
+ 
+         Returns
+         -------
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index 223e21a..419246d 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-5187/xarray/core/dataset.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import copy
+ import datetime
+ import inspect
+@@ -4640,6 +4833,7 @@ class Dataset(DataWithCoords, DatasetArithmetic, Mapping):
+         )
+         return new
+ 
++    @inspect_code
+     def ffill(self, dim: Hashable, limit: int = None) -> "Dataset":
+         """Fill NaN values by propogating values forward
+ 
+@@ -4654,7 +4848,8 @@ class Dataset(DataWithCoords, DatasetArithmetic, Mapping):
+             The maximum number of consecutive NaN values to forward fill. In
+             other words, if there is a gap with more than this number of
+             consecutive NaNs, it will only be partially filled. Must be greater
+-            than 0 or None for no limit.
++            than 0 or None for no limit. Must be None or greater than or equal
++            to axis length if filling along chunked axes (dimensions).
+ 
+         Returns
+         -------
+@@ -4679,7 +4874,8 @@ class Dataset(DataWithCoords, DatasetArithmetic, Mapping):
+             The maximum number of consecutive NaN values to backward fill. In
+             other words, if there is a gap with more than this number of
+             consecutive NaNs, it will only be partially filled. Must be greater
+-            than 0 or None for no limit.
++            than 0 or None for no limit. Must be None or greater than or equal
++            to axis length if filling along chunked axes (dimensions).
+ 
+         Returns
+         -------
+diff --git a/xarray/core/duck_array_ops.py b/xarray/core/duck_array_ops.py
+index 9dcd790..491f092 100644
+--- a/xarray/core/duck_array_ops.py
++++ b/xarray/core/duck_array_ops.py
+@@ -631,3 +631,12 @@ def least_squares(lhs, rhs, rcond=None, skipna=False):
+         return dask_array_ops.least_squares(lhs, rhs, rcond=rcond, skipna=skipna)
+     else:
+         return nputils.least_squares(lhs, rhs, rcond=rcond, skipna=skipna)
++
++
++def push(array, n, axis):
++    from bottleneck import push
++
++    if is_duck_dask_array(array):
++        return dask_array_ops.push(array, n, axis)
++    else:
++        return push(array, n, axis)
+diff --git a/xarray/core/missing.py b/xarray/core/missing.py
+index e6dd8b5..de816a4 100644
+--- a/xarray/core/missing.py
++++ b/xarray/core/missing.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/pydata__xarray-5187/xarray/core/missing.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import datetime as dt
+ import warnings
+ from distutils.version import LooseVersion
+@@ -11,7 +204,7 @@ import pandas as pd
+ from . import utils
+ from .common import _contains_datetime_like_objects, ones_like
+ from .computation import apply_ufunc
+-from .duck_array_ops import datetime_to_numeric, timedelta_to_numeric
++from .duck_array_ops import datetime_to_numeric, push, timedelta_to_numeric
+ from .options import _get_keep_attrs
+ from .pycompat import is_duck_dask_array
+ from .utils import OrderedSet, is_scalar
+@@ -388,32 +581,30 @@ def func_interpolate_na(interpolator, y, x, **kwargs):
+     return out
+ 
+ 
++@inspect_code
+ def _bfill(arr, n=None, axis=-1):
+     """inverse of ffill"""
+-    import bottleneck as bn
+-
+     arr = np.flip(arr, axis=axis)
+ 
+     # fill
+-    arr = bn.push(arr, axis=axis, n=n)
++    arr = push(arr, axis=axis, n=n)
+ 
+     # reverse back to original
+     return np.flip(arr, axis=axis)
+ 
+ 
++@inspect_code
+ def ffill(arr, dim=None, limit=None):
+     """forward fill missing values"""
+-    import bottleneck as bn
+-
+     axis = arr.get_axis_num(dim)
+ 
+     # work around for bottleneck 178
+     _limit = limit if limit is not None else arr.shape[axis]
+ 
+     return apply_ufunc(
+-        bn.push,
++        push,
+         arr,
+-        dask="parallelized",
++        dask="allowed",
+         keep_attrs=True,
+         output_dtypes=[arr.dtype],
+         kwargs=dict(n=_limit, axis=axis),
+@@ -430,7 +621,7 @@ def bfill(arr, dim=None, limit=None):
+     return apply_ufunc(
+         _bfill,
+         arr,
+-        dask="parallelized",
++        dask="allowed",
+         keep_attrs=True,
+         output_dtypes=[arr.dtype],
+         kwargs=dict(n=_limit, axis=axis),
+diff --git a/xarray/tests/test_duck_array_ops.py b/xarray/tests/test_duck_array_ops.py
+index 1dd26ba..d1ee1c1 100644
+--- a/xarray/tests/test_duck_array_ops.py
++++ b/xarray/tests/test_duck_array_ops.py
+@@ -20,6 +20,7 @@ from xarray.core.duck_array_ops import (
+     mean,
+     np_timedelta64_to_float,
+     pd_timedelta_to_float,
++    push,
+     py_timedelta_to_float,
+     stack,
+     timedelta_to_numeric,
+@@ -34,6 +35,7 @@ from . import (
+     has_dask,
+     has_scipy,
+     raise_if_dask_computes,
++    requires_bottleneck,
+     requires_cftime,
+     requires_dask,
+ )
+@@ -858,3 +860,26 @@ def test_least_squares(use_dask, skipna):
+ 
+     np.testing.assert_allclose(coeffs, [1.5, 1.25])
+     np.testing.assert_allclose(residuals, [2.0])
++
++
++@requires_dask
++@requires_bottleneck
++def test_push_dask():
++    import bottleneck
++    import dask.array
++
++    array = np.array([np.nan, np.nan, np.nan, 1, 2, 3, np.nan, np.nan, 4, 5, np.nan, 6])
++    expected = bottleneck.push(array, axis=0)
++    for c in range(1, 11):
++        with raise_if_dask_computes():
++            actual = push(dask.array.from_array(array, chunks=c), axis=0, n=None)
++        np.testing.assert_equal(actual, expected)
++
++    # some chunks of size-1 with NaN
++    with raise_if_dask_computes():
++        actual = push(
++            dask.array.from_array(array, chunks=(1, 2, 3, 2, 2, 1, 1)),
++            axis=0,
++            n=None,
++        )
++    np.testing.assert_equal(actual, expected)
+diff --git a/xarray/tests/test_missing.py b/xarray/tests/test_missing.py
+index 202cf99..e4c74b4 100644
+--- a/xarray/tests/test_missing.py
++++ b/xarray/tests/test_missing.py
+@@ -17,6 +17,7 @@ from xarray.tests import (
+     assert_allclose,
+     assert_array_equal,
+     assert_equal,
++    raise_if_dask_computes,
+     requires_bottleneck,
+     requires_cftime,
+     requires_dask,
+@@ -393,37 +394,39 @@ def test_ffill():
+ 
+ @requires_bottleneck
+ @requires_dask
+-def test_ffill_dask():
++@pytest.mark.parametrize("method", ["ffill", "bfill"])
++def test_ffill_bfill_dask(method):
+     da, _ = make_interpolate_example_data((40, 40), 0.5)
+     da = da.chunk({"x": 5})
+-    actual = da.ffill("time")
+-    expected = da.load().ffill("time")
+-    assert isinstance(actual.data, dask_array_type)
+-    assert_equal(actual, expected)
+ 
+-    # with limit
+-    da = da.chunk({"x": 5})
+-    actual = da.ffill("time", limit=3)
+-    expected = da.load().ffill("time", limit=3)
+-    assert isinstance(actual.data, dask_array_type)
++    dask_method = getattr(da, method)
++    numpy_method = getattr(da.compute(), method)
++    # unchunked axis
++    with raise_if_dask_computes():
++        actual = dask_method("time")
++    expected = numpy_method("time")
+     assert_equal(actual, expected)
+ 
+-
+-@requires_bottleneck
+-@requires_dask
+-def test_bfill_dask():
+-    da, _ = make_interpolate_example_data((40, 40), 0.5)
+-    da = da.chunk({"x": 5})
+-    actual = da.bfill("time")
+-    expected = da.load().bfill("time")
+-    assert isinstance(actual.data, dask_array_type)
++    # chunked axis
++    with raise_if_dask_computes():
++        actual = dask_method("x")
++    expected = numpy_method("x")
+     assert_equal(actual, expected)
+ 
+     # with limit
+-    da = da.chunk({"x": 5})
+-    actual = da.bfill("time", limit=3)
+-    expected = da.load().bfill("time", limit=3)
+-    assert isinstance(actual.data, dask_array_type)
++    with raise_if_dask_computes():
++        actual = dask_method("time", limit=3)
++    expected = numpy_method("time", limit=3)
++    assert_equal(actual, expected)
++
++    # limit < axis size
++    with pytest.raises(NotImplementedError):
++        actual = dask_method("x", limit=2)
++
++    # limit > axis size
++    with raise_if_dask_computes():
++        actual = dask_method("x", limit=41)
++    expected = numpy_method("x", limit=41)
+     assert_equal(actual, expected)
+ 
+ 

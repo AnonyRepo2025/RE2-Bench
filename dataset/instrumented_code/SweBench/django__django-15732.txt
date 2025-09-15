@@ -1,0 +1,366 @@
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+index f2ca8c8..f1333bb 100644
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-15732/django/db/backends/base/schema.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import logging
+ import operator
+ from datetime import datetime
+@@ -517,6 +710,7 @@ class BaseDatabaseSchemaEditor:
+         if sql:
+             self.execute(sql)
+ 
++    @inspect_code
+     def alter_unique_together(self, model, old_unique_together, new_unique_together):
+         """
+         Deal with a model changing its unique_together. The input
+@@ -528,7 +722,10 @@ class BaseDatabaseSchemaEditor:
+         # Deleted uniques
+         for fields in olds.difference(news):
+             self._delete_composed_index(
+-                model, fields, {"unique": True}, self.sql_delete_unique
++                model,
++                fields,
++                {"unique": True, "primary_key": False},
++                self.sql_delete_unique,
+             )
+         # Created uniques
+         for field_names in news.difference(olds):
+@@ -556,6 +753,7 @@ class BaseDatabaseSchemaEditor:
+             fields = [model._meta.get_field(field) for field in field_names]
+             self.execute(self._create_index_sql(model, fields=fields, suffix="_idx"))
+ 
++    @inspect_code
+     def _delete_composed_index(self, model, fields, constraint_kwargs, sql):
+         meta_constraint_names = {
+             constraint.name for constraint in model._meta.constraints
+@@ -568,6 +766,17 @@ class BaseDatabaseSchemaEditor:
+             exclude=meta_constraint_names | meta_index_names,
+             **constraint_kwargs,
+         )
++        if (
++            constraint_kwargs.get("unique") is True
++            and constraint_names
++            and self.connection.features.allows_multiple_constraints_on_same_fields
++        ):
++            # Constraint matching the unique_together name.
++            default_name = str(
++                self._unique_constraint_name(model._meta.db_table, columns, quote=False)
++            )
++            if default_name in constraint_names:
++                constraint_names = [default_name]
+         if len(constraint_names) != 1:
+             raise ValueError(
+                 "Found wrong number (%s) of constraints for %s(%s)"
+@@ -1536,6 +1745,7 @@ class BaseDatabaseSchemaEditor:
+             "constraint": constraint,
+         }
+ 
++    @inspect_code
+     def _create_unique_sql(
+         self,
+         model,
+@@ -1560,16 +1770,13 @@ class BaseDatabaseSchemaEditor:
+         ):
+             return None
+ 
+-        def create_unique_name(*args, **kwargs):
+-            return self.quote_name(self._create_index_name(*args, **kwargs))
+-
+         compiler = Query(model, alias_cols=False).get_compiler(
+             connection=self.connection
+         )
+         table = model._meta.db_table
+         columns = [field.column for field in fields]
+         if name is None:
+-            name = IndexName(table, columns, "_uniq", create_unique_name)
++            name = self._unique_constraint_name(table, columns, quote=True)
+         else:
+             name = self.quote_name(name)
+         if condition or include or opclasses or expressions:
+@@ -1592,6 +1799,18 @@ class BaseDatabaseSchemaEditor:
+             include=self._index_include_sql(model, include),
+         )
+ 
++    @inspect_code
++    def _unique_constraint_name(self, table, columns, quote=True):
++        if quote:
++
++            def create_unique_name(*args, **kwargs):
++                return self.quote_name(self._create_index_name(*args, **kwargs))
++
++        else:
++            create_unique_name = self._create_index_name
++
++        return IndexName(table, columns, "_uniq", create_unique_name)
++
+     def _delete_unique_sql(
+         self,
+         model,
+diff --git a/tests/migrations/test_operations.py b/tests/migrations/test_operations.py
+index f3c4ea8..2373ef3 100644
+--- a/tests/migrations/test_operations.py
++++ b/tests/migrations/test_operations.py
+@@ -2809,6 +2809,69 @@ class OperationTests(OperationTestBase):
+             operation.describe(), "Alter unique_together for Pony (0 constraint(s))"
+         )
+ 
++    @skipUnlessDBFeature("allows_multiple_constraints_on_same_fields")
++    def test_remove_unique_together_on_pk_field(self):
++        app_label = "test_rutopkf"
++        project_state = self.apply_operations(
++            app_label,
++            ProjectState(),
++            operations=[
++                migrations.CreateModel(
++                    "Pony",
++                    fields=[("id", models.AutoField(primary_key=True))],
++                    options={"unique_together": {("id",)}},
++                ),
++            ],
++        )
++        table_name = f"{app_label}_pony"
++        pk_constraint_name = f"{table_name}_pkey"
++        unique_together_constraint_name = f"{table_name}_id_fb61f881_uniq"
++        self.assertConstraintExists(table_name, pk_constraint_name, value=False)
++        self.assertConstraintExists(
++            table_name, unique_together_constraint_name, value=False
++        )
++
++        new_state = project_state.clone()
++        operation = migrations.AlterUniqueTogether("Pony", set())
++        operation.state_forwards(app_label, new_state)
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++        self.assertConstraintExists(table_name, pk_constraint_name, value=False)
++        self.assertConstraintNotExists(table_name, unique_together_constraint_name)
++
++    @skipUnlessDBFeature("allows_multiple_constraints_on_same_fields")
++    def test_remove_unique_together_on_unique_field(self):
++        app_label = "test_rutouf"
++        project_state = self.apply_operations(
++            app_label,
++            ProjectState(),
++            operations=[
++                migrations.CreateModel(
++                    "Pony",
++                    fields=[
++                        ("id", models.AutoField(primary_key=True)),
++                        ("name", models.CharField(max_length=30, unique=True)),
++                    ],
++                    options={"unique_together": {("name",)}},
++                ),
++            ],
++        )
++        table_name = f"{app_label}_pony"
++        unique_constraint_name = f"{table_name}_name_key"
++        unique_together_constraint_name = f"{table_name}_name_694f3b9f_uniq"
++        self.assertConstraintExists(table_name, unique_constraint_name, value=False)
++        self.assertConstraintExists(
++            table_name, unique_together_constraint_name, value=False
++        )
++
++        new_state = project_state.clone()
++        operation = migrations.AlterUniqueTogether("Pony", set())
++        operation.state_forwards(app_label, new_state)
++        with connection.schema_editor() as editor:
++            operation.database_forwards(app_label, editor, project_state, new_state)
++        self.assertConstraintExists(table_name, unique_constraint_name, value=False)
++        self.assertConstraintNotExists(table_name, unique_together_constraint_name)
++
+     def test_add_index(self):
+         """
+         Test the AddIndex operation.

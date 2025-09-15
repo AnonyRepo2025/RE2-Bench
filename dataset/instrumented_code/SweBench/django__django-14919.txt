@@ -1,0 +1,407 @@
+diff --git a/django/db/backends/base/base.py b/django/db/backends/base/base.py
+index b6800e5..14e96b2 100644
+--- a/django/db/backends/base/base.py
++++ b/django/db/backends/base/base.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14919/django/db/backends/base/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import _thread
+ import copy
+ import threading
+@@ -56,6 +249,7 @@ class BaseDatabaseWrapper:
+ 
+     queries_limit = 9000
+ 
++    @inspect_code
+     def __init__(self, settings_dict, alias=DEFAULT_DB_ALIAS):
+         # Connection related attributes.
+         # The underlying database connection.
+@@ -79,6 +273,8 @@ class BaseDatabaseWrapper:
+         self.savepoint_state = 0
+         # List of savepoints created by 'atomic'.
+         self.savepoint_ids = []
++        # Stack of active 'atomic' blocks.
++        self.atomic_blocks = []
+         # Tracks if the outermost 'atomic' block should commit on exit,
+         # ie. if autocommit was active on entry.
+         self.commit_on_exit = True
+@@ -200,6 +396,7 @@ class BaseDatabaseWrapper:
+         # In case the previous connection was closed while in an atomic block
+         self.in_atomic_block = False
+         self.savepoint_ids = []
++        self.atomic_blocks = []
+         self.needs_rollback = False
+         # Reset parameters defining when to close the connection
+         max_age = self.settings_dict['CONN_MAX_AGE']
+diff --git a/django/db/transaction.py b/django/db/transaction.py
+index 6d39e4a..b617857 100644
+--- a/django/db/transaction.py
++++ b/django/db/transaction.py
+@@ -165,19 +165,21 @@ class Atomic(ContextDecorator):
+ 
+     This is a private API.
+     """
+-    # This private flag is provided only to disable the durability checks in
+-    # TestCase.
+-    _ensure_durability = True
+ 
+     def __init__(self, using, savepoint, durable):
+         self.using = using
+         self.savepoint = savepoint
+         self.durable = durable
++        self._from_testcase = False
+ 
+     def __enter__(self):
+         connection = get_connection(self.using)
+ 
+-        if self.durable and self._ensure_durability and connection.in_atomic_block:
++        if (
++            self.durable and
++            connection.atomic_blocks and
++            not connection.atomic_blocks[-1]._from_testcase
++        ):
+             raise RuntimeError(
+                 'A durable atomic block cannot be nested within another '
+                 'atomic block.'
+@@ -207,9 +209,15 @@ class Atomic(ContextDecorator):
+             connection.set_autocommit(False, force_begin_transaction_with_broken_autocommit=True)
+             connection.in_atomic_block = True
+ 
++        if connection.in_atomic_block:
++            connection.atomic_blocks.append(self)
++
+     def __exit__(self, exc_type, exc_value, traceback):
+         connection = get_connection(self.using)
+ 
++        if connection.in_atomic_block:
++            connection.atomic_blocks.pop()
++
+         if connection.savepoint_ids:
+             sid = connection.savepoint_ids.pop()
+         else:
+diff --git a/django/test/testcases.py b/django/test/testcases.py
+index e65a466..462cce2 100644
+--- a/django/test/testcases.py
++++ b/django/test/testcases.py
+@@ -1146,8 +1146,10 @@ class TestCase(TransactionTestCase):
+         """Open atomic blocks for multiple databases."""
+         atomics = {}
+         for db_name in cls._databases_names():
+-            atomics[db_name] = transaction.atomic(using=db_name)
+-            atomics[db_name].__enter__()
++            atomic = transaction.atomic(using=db_name)
++            atomic._from_testcase = True
++            atomic.__enter__()
++            atomics[db_name] = atomic
+         return atomics
+ 
+     @classmethod
+@@ -1166,35 +1168,27 @@ class TestCase(TransactionTestCase):
+         super().setUpClass()
+         if not cls._databases_support_transactions():
+             return
+-        # Disable the durability check to allow testing durable atomic blocks
+-        # in a transaction for performance reasons.
+-        transaction.Atomic._ensure_durability = False
++        cls.cls_atomics = cls._enter_atomics()
++
++        if cls.fixtures:
++            for db_name in cls._databases_names(include_mirrors=False):
++                try:
++                    call_command('loaddata', *cls.fixtures, **{'verbosity': 0, 'database': db_name})
++                except Exception:
++                    cls._rollback_atomics(cls.cls_atomics)
++                    raise
++        pre_attrs = cls.__dict__.copy()
+         try:
+-            cls.cls_atomics = cls._enter_atomics()
+-
+-            if cls.fixtures:
+-                for db_name in cls._databases_names(include_mirrors=False):
+-                    try:
+-                        call_command('loaddata', *cls.fixtures, **{'verbosity': 0, 'database': db_name})
+-                    except Exception:
+-                        cls._rollback_atomics(cls.cls_atomics)
+-                        raise
+-            pre_attrs = cls.__dict__.copy()
+-            try:
+-                cls.setUpTestData()
+-            except Exception:
+-                cls._rollback_atomics(cls.cls_atomics)
+-                raise
+-            for name, value in cls.__dict__.items():
+-                if value is not pre_attrs.get(name):
+-                    setattr(cls, name, TestData(name, value))
++            cls.setUpTestData()
+         except Exception:
+-            transaction.Atomic._ensure_durability = True
++            cls._rollback_atomics(cls.cls_atomics)
+             raise
++        for name, value in cls.__dict__.items():
++            if value is not pre_attrs.get(name):
++                setattr(cls, name, TestData(name, value))
+ 
+     @classmethod
+     def tearDownClass(cls):
+-        transaction.Atomic._ensure_durability = True
+         if cls._databases_support_transactions():
+             cls._rollback_atomics(cls.cls_atomics)
+             for conn in connections.all():
+diff --git a/tests/transactions/tests.py b/tests/transactions/tests.py
+index ccad5ca..dda4b36 100644
+--- a/tests/transactions/tests.py
++++ b/tests/transactions/tests.py
+@@ -501,7 +501,7 @@ class NonAutocommitTests(TransactionTestCase):
+         Reporter.objects.create(first_name="Tintin")
+ 
+ 
+-class DurableTests(TransactionTestCase):
++class DurableTestsBase:
+     available_apps = ['transactions']
+ 
+     def test_commit(self):
+@@ -533,42 +533,18 @@ class DurableTests(TransactionTestCase):
+                 with transaction.atomic(durable=True):
+                     pass
+ 
+-
+-class DisableDurabiltityCheckTests(TestCase):
+-    """
+-    TestCase runs all tests in a transaction by default. Code using
+-    durable=True would always fail when run from TestCase. This would mean
+-    these tests would be forced to use the slower TransactionTestCase even when
+-    not testing durability. For this reason, TestCase disables the durability
+-    check.
+-    """
+-    available_apps = ['transactions']
+-
+-    def test_commit(self):
++    def test_sequence_of_durables(self):
+         with transaction.atomic(durable=True):
+-            reporter = Reporter.objects.create(first_name='Tintin')
+-        self.assertEqual(Reporter.objects.get(), reporter)
+-
+-    def test_nested_outer_durable(self):
++            reporter = Reporter.objects.create(first_name='Tintin 1')
++        self.assertEqual(Reporter.objects.get(first_name='Tintin 1'), reporter)
+         with transaction.atomic(durable=True):
+-            reporter1 = Reporter.objects.create(first_name='Tintin')
+-            with transaction.atomic():
+-                reporter2 = Reporter.objects.create(
+-                    first_name='Archibald',
+-                    last_name='Haddock',
+-                )
+-        self.assertSequenceEqual(Reporter.objects.all(), [reporter2, reporter1])
++            reporter = Reporter.objects.create(first_name='Tintin 2')
++        self.assertEqual(Reporter.objects.get(first_name='Tintin 2'), reporter)
+ 
+-    def test_nested_both_durable(self):
+-        with transaction.atomic(durable=True):
+-            # Error is not raised.
+-            with transaction.atomic(durable=True):
+-                reporter = Reporter.objects.create(first_name='Tintin')
+-        self.assertEqual(Reporter.objects.get(), reporter)
+ 
+-    def test_nested_inner_durable(self):
+-        with transaction.atomic():
+-            # Error is not raised.
+-            with transaction.atomic(durable=True):
+-                reporter = Reporter.objects.create(first_name='Tintin')
+-        self.assertEqual(Reporter.objects.get(), reporter)
++class DurableTransactionTests(DurableTestsBase, TransactionTestCase):
++    pass
++
++
++class DurableTests(DurableTestsBase, TestCase):
++    pass

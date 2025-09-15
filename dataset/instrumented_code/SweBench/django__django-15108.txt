@@ -1,0 +1,422 @@
+diff --git a/django/contrib/postgres/aggregates/mixins.py b/django/contrib/postgres/aggregates/mixins.py
+index 0796abb..4fedb9b 100644
+--- a/django/contrib/postgres/aggregates/mixins.py
++++ b/django/contrib/postgres/aggregates/mixins.py
+@@ -1,48 +1,27 @@
+-from django.db.models import F, OrderBy
++from django.db.models.expressions import OrderByList
+ 
+ 
+ class OrderableAggMixin:
+ 
+     def __init__(self, *expressions, ordering=(), **extra):
+-        if not isinstance(ordering, (list, tuple)):
+-            ordering = [ordering]
+-        ordering = ordering or []
+-        # Transform minus sign prefixed strings into an OrderBy() expression.
+-        ordering = (
+-            (OrderBy(F(o[1:]), descending=True) if isinstance(o, str) and o[0] == '-' else o)
+-            for o in ordering
+-        )
++        if isinstance(ordering, (list, tuple)):
++            self.order_by = OrderByList(*ordering)
++        else:
++            self.order_by = OrderByList(ordering)
+         super().__init__(*expressions, **extra)
+-        self.ordering = self._parse_expressions(*ordering)
+ 
+     def resolve_expression(self, *args, **kwargs):
+-        self.ordering = [expr.resolve_expression(*args, **kwargs) for expr in self.ordering]
++        self.order_by = self.order_by.resolve_expression(*args, **kwargs)
+         return super().resolve_expression(*args, **kwargs)
+ 
+-    def as_sql(self, compiler, connection):
+-        if self.ordering:
+-            ordering_params = []
+-            ordering_expr_sql = []
+-            for expr in self.ordering:
+-                expr_sql, expr_params = compiler.compile(expr)
+-                ordering_expr_sql.append(expr_sql)
+-                ordering_params.extend(expr_params)
+-            sql, sql_params = super().as_sql(compiler, connection, ordering=(
+-                'ORDER BY ' + ', '.join(ordering_expr_sql)
+-            ))
+-            return sql, (*sql_params, *ordering_params)
+-        return super().as_sql(compiler, connection, ordering='')
++    def get_source_expressions(self):
++        return super().get_source_expressions() + [self.order_by]
+ 
+     def set_source_expressions(self, exprs):
+-        # Extract the ordering expressions because ORDER BY clause is handled
+-        # in a custom way.
+-        self.ordering = exprs[self._get_ordering_expressions_index():]
+-        return super().set_source_expressions(exprs[:self._get_ordering_expressions_index()])
++        *exprs, self.order_by = exprs
++        return super().set_source_expressions(exprs)
+ 
+-    def get_source_expressions(self):
+-        return super().get_source_expressions() + self.ordering
+-
+-    def _get_ordering_expressions_index(self):
+-        """Return the index at which the ordering expressions start."""
+-        source_expressions = self.get_source_expressions()
+-        return len(source_expressions) - len(self.ordering)
++    def as_sql(self, compiler, connection):
++        order_by_sql, order_by_params = compiler.compile(self.order_by)
++        sql, sql_params = super().as_sql(compiler, connection, ordering=order_by_sql)
++        return sql, (*sql_params, *order_by_params)
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index cb97740..1ef1afe 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-15108/django/db/models/expressions.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import copy
+ import datetime
+ import functools
+@@ -915,8 +1108,8 @@ class Ref(Expression):
+ class ExpressionList(Func):
+     """
+     An expression containing multiple expressions. Can be used to provide a
+-    list of expressions as an argument to another expression, like an
+-    ordering clause.
++    list of expressions as an argument to another expression, like a partition
++    clause.
+     """
+     template = '%(expressions)s'
+ 
+@@ -933,6 +1126,26 @@ class ExpressionList(Func):
+         return self.as_sql(compiler, connection, **extra_context)
+ 
+ 
++class OrderByList(Func):
++    template = 'ORDER BY %(expressions)s'
++
++    def __init__(self, *expressions, **extra):
++        expressions = (
++            (
++                OrderBy(F(expr[1:]), descending=True)
++                if isinstance(expr, str) and expr[0] == '-'
++                else expr
++            )
++            for expr in expressions
++        )
++        super().__init__(*expressions, **extra)
++
++    def as_sql(self, *args, **kwargs):
++        if not self.source_expressions:
++            return '', ()
++        return super().as_sql(*args, **kwargs)
++
++
+ class ExpressionWrapper(SQLiteNumericMixin, Expression):
+     """
+     An expression that can wrap another expression so that it can provide
+@@ -1313,11 +1526,13 @@ class Window(SQLiteNumericMixin, Expression):
+ 
+         if self.order_by is not None:
+             if isinstance(self.order_by, (list, tuple)):
+-                self.order_by = ExpressionList(*self.order_by)
+-            elif not isinstance(self.order_by, BaseExpression):
++                self.order_by = OrderByList(*self.order_by)
++            elif isinstance(self.order_by, (BaseExpression, str)):
++                self.order_by = OrderByList(self.order_by)
++            else:
+                 raise ValueError(
+-                    'order_by must be either an Expression or a sequence of '
+-                    'expressions.'
++                    'Window.order_by must be either a string reference to a '
++                    'field, an expression, or a list or tuple of them.'
+                 )
+         super().__init__(output_field=output_field)
+         self.source_expression = self._parse_expressions(expression)[0]
+@@ -1331,6 +1546,7 @@ class Window(SQLiteNumericMixin, Expression):
+     def set_source_expressions(self, exprs):
+         self.source_expression, self.partition_by, self.order_by, self.frame = exprs
+ 
++    @inspect_code
+     def as_sql(self, compiler, connection, template=None):
+         connection.ops.check_expression_support(self)
+         if not connection.features.supports_over_clause:
+@@ -1343,18 +1559,17 @@ class Window(SQLiteNumericMixin, Expression):
+                 compiler=compiler, connection=connection,
+                 template='PARTITION BY %(expressions)s',
+             )
+-            window_sql.extend(sql_expr)
++            window_sql.append(sql_expr)
+             window_params.extend(sql_params)
+ 
+         if self.order_by is not None:
+-            window_sql.append(' ORDER BY ')
+             order_sql, order_params = compiler.compile(self.order_by)
+-            window_sql.extend(order_sql)
++            window_sql.append(order_sql)
+             window_params.extend(order_params)
+ 
+         if self.frame:
+             frame_sql, frame_params = compiler.compile(self.frame)
+-            window_sql.append(' ' + frame_sql)
++            window_sql.append(frame_sql)
+             window_params.extend(frame_params)
+ 
+         params.extend(window_params)
+@@ -1362,7 +1577,7 @@ class Window(SQLiteNumericMixin, Expression):
+ 
+         return template % {
+             'expression': expr_sql,
+-            'window': ''.join(window_sql).strip()
++            'window': ' '.join(window_sql).strip()
+         }, params
+ 
+     def as_sqlite(self, compiler, connection):
+@@ -1375,11 +1590,12 @@ class Window(SQLiteNumericMixin, Expression):
+             return super(Window, copy).as_sqlite(compiler, connection)
+         return self.as_sql(compiler, connection)
+ 
++    @inspect_code
+     def __str__(self):
+         return '{} OVER ({}{}{})'.format(
+             str(self.source_expression),
+             'PARTITION BY ' + str(self.partition_by) if self.partition_by else '',
+-            'ORDER BY ' + str(self.order_by) if self.order_by else '',
++            str(self.order_by or ''),
+             str(self.frame or ''),
+         )
+ 
+diff --git a/tests/expressions_window/tests.py b/tests/expressions_window/tests.py
+index 8b1b4a8..5bd31b8 100644
+--- a/tests/expressions_window/tests.py
++++ b/tests/expressions_window/tests.py
+@@ -51,6 +51,7 @@ class WindowFunctionTests(TestCase):
+         tests = [
+             ExtractYear(F('hire_date')).asc(),
+             F('hire_date__year').asc(),
++            'hire_date__year',
+         ]
+         for order_by in tests:
+             with self.subTest(order_by=order_by):
+@@ -473,7 +474,7 @@ class WindowFunctionTests(TestCase):
+         """
+         qs = Employee.objects.annotate(ntile=Window(
+             expression=Ntile(num_buckets=4),
+-            order_by=F('salary').desc(),
++            order_by='-salary',
+         )).order_by('ntile', '-salary', 'name')
+         self.assertQuerysetEqual(qs, [
+             ('Miller', 'Management', 100000, 1),
+@@ -875,7 +876,7 @@ class NonQueryWindowTests(SimpleTestCase):
+         )
+         self.assertEqual(
+             repr(Window(expression=Avg('salary'), order_by=F('department').asc())),
+-            '<Window: Avg(F(salary)) OVER (ORDER BY OrderBy(F(department), descending=False))>'
++            '<Window: Avg(F(salary)) OVER (OrderByList(OrderBy(F(department), descending=False)))>'
+         )
+ 
+     def test_window_frame_repr(self):
+@@ -942,9 +943,12 @@ class NonQueryWindowTests(SimpleTestCase):
+             qs.filter(equal=True)
+ 
+     def test_invalid_order_by(self):
+-        msg = 'order_by must be either an Expression or a sequence of expressions'
++        msg = (
++            'Window.order_by must be either a string reference to a field, an '
++            'expression, or a list or tuple of them.'
++        )
+         with self.assertRaisesMessage(ValueError, msg):
+-            Window(expression=Sum('power'), order_by='-horse')
++            Window(expression=Sum('power'), order_by={'-horse'})
+ 
+     def test_invalid_source_expression(self):
+         msg = "Expression 'Upper' isn't compatible with OVER clauses."

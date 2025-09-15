@@ -1,0 +1,378 @@
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index 4286693..8cb5d76 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -1,6 +1,199 @@
+ """The CheckExternalLinksBuilder class."""
+ 
+ from __future__ import annotations
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/sphinx-doc__sphinx-11503/sphinx/builders/linkcheck.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ 
+ import json
+ import re
+@@ -279,12 +472,16 @@ class HyperlinkAvailabilityCheckWorker(Thread):
+         self.tls_verify = config.tls_verify
+         self.tls_cacerts = config.tls_cacerts
+ 
++        self._session = requests._Session()
++
+         super().__init__(daemon=True)
+ 
+     def run(self) -> None:
+         while True:
+             next_check, hyperlink = self.wqueue.get()
+             if hyperlink is None:
++                # An empty hyperlink is a signal to shutdown the worker; cleanup resources here
++                self._session.close()
+                 break
+ 
+             uri, docname, _docpath, lineno = hyperlink
+@@ -346,6 +543,15 @@ class HyperlinkAvailabilityCheckWorker(Thread):
+ 
+         return status, info, code
+ 
++    @inspect_code
++    def _retrieval_methods(self,
++                           check_anchors: bool,
++                           anchor: str) -> Iterator[tuple[Callable, dict]]:
++        if not check_anchors or not anchor:
++            yield self._session.head, {'allow_redirects': True}
++        yield self._session.get, {'stream': True}
++
++    @inspect_code
+     def _check_uri(self, uri: str, hyperlink: Hyperlink) -> tuple[str, str, int]:
+         req_url, delimiter, anchor = uri.partition('#')
+         for rex in self.anchors_ignore if delimiter and anchor else []:
+@@ -377,7 +583,7 @@ class HyperlinkAvailabilityCheckWorker(Thread):
+         error_message = None
+         status_code = -1
+         response_url = retry_after = ''
+-        for retrieval_method, kwargs in _retrieval_methods(self.check_anchors, anchor):
++        for retrieval_method, kwargs in self._retrieval_methods(self.check_anchors, anchor):
+             try:
+                 with retrieval_method(
+                     url=req_url, auth=auth_info,
+@@ -508,12 +714,6 @@ def _get_request_headers(
+     return {}
+ 
+ 
+-def _retrieval_methods(check_anchors: bool, anchor: str) -> Iterator[tuple[Callable, dict]]:
+-    if not check_anchors or not anchor:
+-        yield requests.head, {'allow_redirects': True}
+-    yield requests.get, {'stream': True}
+-
+-
+ def contains_anchor(response: Response, anchor: str) -> bool:
+     """Determine if an anchor is contained within an HTTP response."""
+ 
+diff --git a/sphinx/util/requests.py b/sphinx/util/requests.py
+index fb89d12..ec3d8d2 100644
+--- a/sphinx/util/requests.py
++++ b/sphinx/util/requests.py
+@@ -3,8 +3,7 @@
+ from __future__ import annotations
+ 
+ import warnings
+-from contextlib import contextmanager
+-from typing import Any, Iterator
++from typing import Any
+ from urllib.parse import urlsplit
+ 
+ import requests
+@@ -16,15 +15,6 @@ _USER_AGENT = (f'Mozilla/5.0 (X11; Linux x86_64; rv:100.0) Gecko/20100101 Firefo
+                f'Sphinx/{sphinx.__version__}')
+ 
+ 
+-@contextmanager
+-def ignore_insecure_warning(verify: bool) -> Iterator[None]:
+-    with warnings.catch_warnings():
+-        if not verify:
+-            # ignore InsecureRequestWarning if verify=False
+-            warnings.filterwarnings("ignore", category=InsecureRequestWarning)
+-        yield
+-
+-
+ def _get_tls_cacert(url: str, certs: str | dict[str, str] | None) -> str | bool:
+     """Get additional CA cert for a specific URL."""
+     if not certs:
+@@ -39,41 +29,45 @@ def _get_tls_cacert(url: str, certs: str | dict[str, str] | None) -> str | bool:
+         return certs.get(hostname, True)
+ 
+ 
+-def get(url: str,
+-        _user_agent: str = '',
+-        _tls_info: tuple[bool, str | dict[str, str] | None] = (),  # type: ignore[assignment]
+-        **kwargs: Any) -> requests.Response:
+-    """Sends a HEAD request like requests.head().
++def get(url: str, **kwargs: Any) -> requests.Response:
++    """Sends a GET request like requests.get().
+ 
+     This sets up User-Agent header and TLS verification automatically."""
+-    headers = kwargs.setdefault('headers', {})
+-    headers.setdefault('User-Agent', _user_agent or _USER_AGENT)
+-    if _tls_info:
+-        tls_verify, tls_cacerts = _tls_info
+-        verify = bool(kwargs.get('verify', tls_verify))
+-        kwargs.setdefault('verify', verify and _get_tls_cacert(url, tls_cacerts))
+-    else:
+-        verify = kwargs.get('verify', True)
++    with _Session() as session:
++        return session.get(url, **kwargs)
+ 
+-    with ignore_insecure_warning(verify):
+-        return requests.get(url, **kwargs)
+ 
+-
+-def head(url: str,
+-         _user_agent: str = '',
+-         _tls_info: tuple[bool, str | dict[str, str] | None] = (),  # type: ignore[assignment]
+-         **kwargs: Any) -> requests.Response:
++def head(url: str, **kwargs: Any) -> requests.Response:
+     """Sends a HEAD request like requests.head().
+ 
+     This sets up User-Agent header and TLS verification automatically."""
+-    headers = kwargs.setdefault('headers', {})
+-    headers.setdefault('User-Agent', _user_agent or _USER_AGENT)
+-    if _tls_info:
+-        tls_verify, tls_cacerts = _tls_info
+-        verify = bool(kwargs.get('verify', tls_verify))
+-        kwargs.setdefault('verify', verify and _get_tls_cacert(url, tls_cacerts))
+-    else:
+-        verify = kwargs.get('verify', True)
++    with _Session() as session:
++        return session.head(url, **kwargs)
+ 
+-    with ignore_insecure_warning(verify):
+-        return requests.head(url, **kwargs)
++
++class _Session(requests.Session):
++    def request(  # type: ignore[override]
++        self, method: str, url: str,
++        _user_agent: str = '',
++        _tls_info: tuple[bool, str | dict[str, str] | None] = (),  # type: ignore[assignment]
++        **kwargs: Any,
++    ) -> requests.Response:
++        """Sends a request with an HTTP verb and url.
++
++        This sets up User-Agent header and TLS verification automatically."""
++        headers = kwargs.setdefault('headers', {})
++        headers.setdefault('User-Agent', _user_agent or _USER_AGENT)
++        if _tls_info:
++            tls_verify, tls_cacerts = _tls_info
++            verify = bool(kwargs.get('verify', tls_verify))
++            kwargs.setdefault('verify', verify and _get_tls_cacert(url, tls_cacerts))
++        else:
++            verify = kwargs.get('verify', True)
++
++        if verify:
++            return super().request(method, url, **kwargs)
++
++        with warnings.catch_warnings():
++            # ignore InsecureRequestWarning if verify=False
++            warnings.filterwarnings("ignore", category=InsecureRequestWarning)
++            return super().request(method, url, **kwargs)
+diff --git a/tests/test_build_linkcheck.py b/tests/test_build_linkcheck.py
+index 0d032f9..cd0daaa 100644
+--- a/tests/test_build_linkcheck.py
++++ b/tests/test_build_linkcheck.py
+@@ -104,7 +104,7 @@ def test_defaults(app):
+     with http_server(DefaultsHandler):
+         with ConnectionMeasurement() as m:
+             app.build()
+-        assert m.connection_count <= 10
++        assert m.connection_count <= 5
+ 
+     # Text output
+     assert (app.outdir / 'output.txt').exists()

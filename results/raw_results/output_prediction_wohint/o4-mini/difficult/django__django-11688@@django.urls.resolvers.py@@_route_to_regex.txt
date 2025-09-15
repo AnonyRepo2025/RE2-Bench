@@ -1,0 +1,62 @@
+[THOUGHT]
+We call `_route_to_regex` with
+    route = "\"<lang>\"/\"<path:url>\"/"
+    is_endpoint = True
+
+1. No whitespace → okay.
+2. Initialize  
+       parts = ['^']  
+       converters = {}
+
+3. First regex search finds `<lang>` at positions 1–7.  
+   - `route[:1]` is '"' → `re.escape('"')` → `\"`  
+     parts → ['^', '\\"']  
+   - Strip off `<lang>` → new route = `'"'/<path:url>" /'`
+
+   Since there was no converter in `<lang>`, raw_converter=None → use 'str' converter  
+   (but its regex is `[^/]+`). We didn’t store it because code only stores converters for named groups,
+   and `<lang>` yields `parameter='lang'` so we should actually store it!  
+   Oops—good catch: the code *does* store every match, not only path. So for `<lang>` we get:
+     converters['lang'] = StringConverter()  (regex=`[^/]+`)  
+   And parts append `(?P<lang>[^/]+)`.
+
+4. Next search on remaining route `'"'/<path:url>" /'` finds `<path:url>` at positions 3–13.  
+   - `route[:3]` is `"/"` → `re.escape('"/"')` → `\"\/\"`  
+     parts → ['^','\\"','(?P<lang>[^/]+)','\\"\\/\\\"']  
+   - Strip off `<path:url>` → new route = `'"'/`
+
+   For `<path:url>` we get converter=`PathConverter()` with `regex='.+'`  
+     converters['url'] = PathConverter()  
+   parts append `(?P<url>.+)`
+
+5. No more `<…>`. Append the tail `'"'/` → `re.escape('"/')` → `\"\/`  
+   parts → [..., '(?P<url>.+)', '\\"\\/']
+
+6. Since `is_endpoint=True`, append `$`.
+
+7. Join parts:
+
+   '^' +
+   '\\"' +
+   '(?P<lang>[^/]+)' +
+   '\\"\\/\\\"' +
+   '(?P<url>.+)' +
+   '\\"\\/' +
+   '$'
+
+   That string, when printed in Python (i.e. via `repr`), looks like
+     '^\\\"(?P<lang>[^/]+)\\\"\\/\\\"(?P<url>.+)\\\"\\/$'
+
+8. Final return value is:
+   (that regex string, {'lang': <str converter>, 'url': <path converter>})
+
+[/THOUGHT]
+[OUTPUT]
+(
+  '^\\\"(?P<lang>[^/]+)\\\"\\/\\\"(?P<url>.+)\\\"\\/$',
+  {
+    'lang': <django.urls.converters.StringConverter object>,
+    'url':  <django.urls.converters.PathConverter object>
+  }
+)
+[/OUTPUT]

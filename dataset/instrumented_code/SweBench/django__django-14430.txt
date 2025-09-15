@@ -1,0 +1,474 @@
+diff --git a/django/contrib/postgres/aggregates/statistics.py b/django/contrib/postgres/aggregates/statistics.py
+index c3254e3..f3e1450 100644
+--- a/django/contrib/postgres/aggregates/statistics.py
++++ b/django/contrib/postgres/aggregates/statistics.py
+@@ -36,9 +36,7 @@ class RegrAvgY(StatAggregate):
+ class RegrCount(StatAggregate):
+     function = 'REGR_COUNT'
+     output_field = IntegerField()
+-
+-    def convert_value(self, value, expression, connection):
+-        return 0 if value is None else value
++    empty_aggregate_value = 0
+ 
+ 
+ class RegrIntercept(StatAggregate):
+diff --git a/django/db/models/aggregates.py b/django/db/models/aggregates.py
+index 8b10829..8598ba9 100644
+--- a/django/db/models/aggregates.py
++++ b/django/db/models/aggregates.py
+@@ -20,6 +20,7 @@ class Aggregate(Func):
+     filter_template = '%s FILTER (WHERE %%(filter)s)'
+     window_compatible = True
+     allow_distinct = False
++    empty_aggregate_value = None
+ 
+     def __init__(self, *expressions, distinct=False, filter=None, **extra):
+         if distinct and not self.allow_distinct:
+@@ -107,6 +108,7 @@ class Count(Aggregate):
+     name = 'Count'
+     output_field = IntegerField()
+     allow_distinct = True
++    empty_aggregate_value = 0
+ 
+     def __init__(self, expression, filter=None, **extra):
+         if expression == '*':
+@@ -115,9 +117,6 @@ class Count(Aggregate):
+             raise ValueError('Star cannot be used with filter. Please specify a field.')
+         super().__init__(expression, filter=filter, **extra)
+ 
+-    def convert_value(self, value, expression, connection):
+-        return 0 if value is None else value
+-
+ 
+ class Max(Aggregate):
+     function = 'MAX'
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index feb04d4..b30d1f9 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -153,6 +153,7 @@ class BaseExpression:
+     # aggregate specific fields
+     is_summary = False
+     _output_field_resolved_to_none = False
++    empty_aggregate_value = NotImplemented
+     # Can the expression be used in a WHERE clause?
+     filterable = True
+     # Can the expression can be used as a source expression in Window?
+@@ -795,6 +796,10 @@ class Value(SQLiteNumericMixin, Expression):
+         if isinstance(self.value, UUID):
+             return fields.UUIDField()
+ 
++    @property
++    def empty_aggregate_value(self):
++        return self.value
++
+ 
+ class RawSQL(Expression):
+     def __init__(self, sql, params, output_field=None):
+diff --git a/django/db/models/functions/comparison.py b/django/db/models/functions/comparison.py
+index 8a1c344..2dac47a 100644
+--- a/django/db/models/functions/comparison.py
++++ b/django/db/models/functions/comparison.py
+@@ -65,6 +65,14 @@ class Coalesce(Func):
+             raise ValueError('Coalesce must take at least two expressions')
+         super().__init__(*expressions, **extra)
+ 
++    @property
++    def empty_aggregate_value(self):
++        for expression in self.get_source_expressions():
++            result = expression.empty_aggregate_value
++            if result is NotImplemented or result is not None:
++                return result
++        return None
++
+     def as_oracle(self, compiler, connection, **extra_context):
+         # Oracle prohibits mixing TextField (NCLOB) and CharField (NVARCHAR2),
+         # so convert all fields to NCLOB when that type is expected.
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index 6082017..49d54e4 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-14430/django/db/models/sql/compiler.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import collections
+ import re
+ from functools import partial
+@@ -26,10 +219,13 @@ class SQLCompiler:
+         re.MULTILINE | re.DOTALL,
+     )
+ 
+-    def __init__(self, query, connection, using):
++    def __init__(self, query, connection, using, elide_empty=True):
+         self.query = query
+         self.connection = connection
+         self.using = using
++        # Some queries, e.g. coalesced aggregation, need to be executed even if
++        # they would return an empty result set.
++        self.elide_empty = elide_empty
+         self.quote_cache = {'*': '*'}
+         # The select, klass_info, and annotations are needed by QuerySet.iterator()
+         # these are set as a side-effect of executing the query. Note that we calculate
+@@ -455,10 +651,11 @@ class SQLCompiler:
+             sql, params = node.as_sql(self, self.connection)
+         return sql, params
+ 
++    @inspect_code
+     def get_combinator_sql(self, combinator, all):
+         features = self.connection.features
+         compilers = [
+-            query.get_compiler(self.using, self.connection)
++            query.get_compiler(self.using, self.connection, self.elide_empty)
+             for query in self.query.combined_queries if not query.is_empty()
+         ]
+         if not features.supports_slicing_ordering_in_compound:
+@@ -510,6 +707,7 @@ class SQLCompiler:
+             params.extend(part)
+         return result, params
+ 
++    @inspect_code
+     def as_sql(self, with_limits=True, with_col_aliases=False):
+         """
+         Create the SQL for this query. Return the SQL string and list of
+@@ -535,7 +733,13 @@ class SQLCompiler:
+                 # This must come after 'select', 'ordering', and 'distinct'
+                 # (see docstring of get_from_clause() for details).
+                 from_, f_params = self.get_from_clause()
+-                where, w_params = self.compile(self.where) if self.where is not None else ("", [])
++                try:
++                    where, w_params = self.compile(self.where) if self.where is not None else ('', [])
++                except EmptyResultSet:
++                    if self.elide_empty:
++                        raise
++                    # Use a predicate that's always False.
++                    where, w_params = '0 = 1', []
+                 having, h_params = self.compile(self.having) if self.having is not None else ("", [])
+                 result = ['SELECT']
+                 params = []
+@@ -1636,6 +1840,7 @@ class SQLUpdateCompiler(SQLCompiler):
+ 
+ 
+ class SQLAggregateCompiler(SQLCompiler):
++    @inspect_code
+     def as_sql(self):
+         """
+         Create the SQL for this query. Return the SQL string and list of
+@@ -1652,7 +1857,7 @@ class SQLAggregateCompiler(SQLCompiler):
+         params = tuple(params)
+ 
+         inner_query_sql, inner_query_params = self.query.inner_query.get_compiler(
+-            self.using
++            self.using, elide_empty=self.elide_empty,
+         ).as_sql(with_col_aliases=True)
+         sql = 'SELECT %s FROM (%s) subquery' % (sql, inner_query_sql)
+         params = params + inner_query_params
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 814271a..87be8ea 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -273,12 +273,12 @@ class Query(BaseExpression):
+         memo[id(self)] = result
+         return result
+ 
+-    def get_compiler(self, using=None, connection=None):
++    def get_compiler(self, using=None, connection=None, elide_empty=True):
+         if using is None and connection is None:
+             raise ValueError("Need either using or connection")
+         if using:
+             connection = connections[using]
+-        return connection.ops.compiler(self.compiler)(self, connection, using)
++        return connection.ops.compiler(self.compiler)(self, connection, using, elide_empty)
+ 
+     def get_meta(self):
+         """
+@@ -490,14 +490,19 @@ class Query(BaseExpression):
+             self.default_cols = False
+             self.extra = {}
+ 
++        empty_aggregate_result = [
++            expression.empty_aggregate_value
++            for expression in outer_query.annotation_select.values()
++        ]
++        elide_empty = not any(result is NotImplemented for result in empty_aggregate_result)
+         outer_query.clear_ordering(force=True)
+         outer_query.clear_limits()
+         outer_query.select_for_update = False
+         outer_query.select_related = False
+-        compiler = outer_query.get_compiler(using)
++        compiler = outer_query.get_compiler(using, elide_empty=elide_empty)
+         result = compiler.execute_sql(SINGLE)
+         if result is None:
+-            result = [None] * len(outer_query.annotation_select)
++            result = empty_aggregate_result
+ 
+         converters = compiler.get_converters(outer_query.annotation_select.values())
+         result = next(compiler.apply_converters((result,), converters))
+diff --git a/tests/aggregation/tests.py b/tests/aggregation/tests.py
+index 4912339..f7b2331 100644
+--- a/tests/aggregation/tests.py
++++ b/tests/aggregation/tests.py
+@@ -8,6 +8,7 @@ from django.db.models import (
+     Avg, Case, Count, DecimalField, DurationField, Exists, F, FloatField,
+     IntegerField, Max, Min, OuterRef, Subquery, Sum, Value, When,
+ )
++from django.db.models.expressions import Func, RawSQL
+ from django.db.models.functions import Coalesce, Greatest
+ from django.test import TestCase
+ from django.test.testcases import skipUnlessDBFeature
+@@ -1340,3 +1341,64 @@ class AggregateTestCase(TestCase):
+             ('Stuart Russell', 1),
+             ('Peter Norvig', 2),
+         ], lambda a: (a.name, a.contact_count), ordered=False)
++
++    def test_empty_result_optimization(self):
++        with self.assertNumQueries(0):
++            self.assertEqual(
++                Publisher.objects.none().aggregate(
++                    sum_awards=Sum('num_awards'),
++                    books_count=Count('book'),
++                ), {
++                    'sum_awards': None,
++                    'books_count': 0,
++                }
++            )
++        # Expression without empty_aggregate_value forces queries to be
++        # executed even if they would return an empty result set.
++        raw_books_count = Func('book', function='COUNT')
++        raw_books_count.contains_aggregate = True
++        with self.assertNumQueries(1):
++            self.assertEqual(
++                Publisher.objects.none().aggregate(
++                    sum_awards=Sum('num_awards'),
++                    books_count=raw_books_count,
++                ), {
++                    'sum_awards': None,
++                    'books_count': 0,
++                }
++            )
++
++    def test_coalesced_empty_result_set(self):
++        with self.assertNumQueries(0):
++            self.assertEqual(
++                Publisher.objects.none().aggregate(
++                    sum_awards=Coalesce(Sum('num_awards'), 0),
++                )['sum_awards'],
++                0,
++            )
++        # Multiple expressions.
++        with self.assertNumQueries(0):
++            self.assertEqual(
++                Publisher.objects.none().aggregate(
++                    sum_awards=Coalesce(Sum('num_awards'), None, 0),
++                )['sum_awards'],
++                0,
++            )
++        # Nested coalesce.
++        with self.assertNumQueries(0):
++            self.assertEqual(
++                Publisher.objects.none().aggregate(
++                    sum_awards=Coalesce(Coalesce(Sum('num_awards'), None), 0),
++                )['sum_awards'],
++                0,
++            )
++        # Expression coalesce.
++        with self.assertNumQueries(1):
++            self.assertIsInstance(
++                Store.objects.none().aggregate(
++                    latest_opening=Coalesce(
++                        Max('original_opening'), RawSQL('CURRENT_TIMESTAMP', []),
++                    ),
++                )['latest_opening'],
++                datetime.datetime,
++            )

@@ -1,0 +1,1377 @@
+diff --git a/django/db/backends/oracle/operations.py b/django/db/backends/oracle/operations.py
+index 7018123..29ecd86 100644
+--- a/django/db/backends/oracle/operations.py
++++ b/django/db/backends/oracle/operations.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-10301/django/db/backends/oracle/operations.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import datetime
+ import re
+ import uuid
+@@ -565,11 +758,12 @@ END;
+         # UNION operator. To prevent incorrect SQL, move UNION to a subquery.
+         return 'SELECT * FROM (%s)' % ' UNION ALL '.join(query)
+ 
++    @inspect_code
+     def subtract_temporals(self, internal_type, lhs, rhs):
+         if internal_type == 'DateField':
+             lhs_sql, lhs_params = lhs
+             rhs_sql, rhs_params = rhs
+-            return "NUMTODSINTERVAL(%s - %s, 'DAY')" % (lhs_sql, rhs_sql), lhs_params + rhs_params
++            return "NUMTODSINTERVAL(TO_NUMBER(%s - %s), 'DAY')" % (lhs_sql, rhs_sql), lhs_params + rhs_params
+         return super().subtract_temporals(internal_type, lhs, rhs)
+ 
+     def bulk_batch_size(self, fields, objs):
+diff --git a/django/db/backends/sqlite3/base.py b/django/db/backends/sqlite3/base.py
+index a6542db..f2dbe10 100644
+--- a/django/db/backends/sqlite3/base.py
++++ b/django/db/backends/sqlite3/base.py
+@@ -1,8 +1,202 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-10301/django/db/backends/sqlite3/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ """
+ SQLite3 backend for the sqlite3 module in the standard library.
+ """
+ import datetime
+ import decimal
++import functools
+ import math
+ import operator
+ import re
+@@ -34,6 +228,20 @@ def decoder(conv_func):
+     return lambda s: conv_func(s.decode())
+ 
+ 
++@inspect_code
++def none_guard(func):
++    """
++    Decorator that returns None if any of the arguments to the decorated
++    function are None. Many SQL functions return NULL if any of their arguments
++    are NULL. This decorator simplifies the implementation of this for the
++    custom functions registered below.
++    """
++    @functools.wraps(func)
++    def wrapper(*args, **kwargs):
++        return None if None in args else func(*args, **kwargs)
++    return wrapper
++
++
+ Database.register_converter("bool", b'1'.__eq__)
+ Database.register_converter("time", decoder(parse_time))
+ Database.register_converter("datetime", decoder(parse_datetime))
+@@ -171,30 +379,30 @@ class DatabaseWrapper(BaseDatabaseWrapper):
+         conn.create_function("django_time_trunc", 2, _sqlite_time_trunc)
+         conn.create_function("django_time_diff", 2, _sqlite_time_diff)
+         conn.create_function("django_timestamp_diff", 2, _sqlite_timestamp_diff)
+-        conn.create_function("regexp", 2, _sqlite_regexp)
+         conn.create_function("django_format_dtdelta", 3, _sqlite_format_dtdelta)
++        conn.create_function('regexp', 2, _sqlite_regexp)
++        conn.create_function('ACOS', 1, none_guard(math.acos))
++        conn.create_function('ASIN', 1, none_guard(math.asin))
++        conn.create_function('ATAN', 1, none_guard(math.atan))
++        conn.create_function('ATAN2', 2, none_guard(math.atan2))
++        conn.create_function('CEILING', 1, none_guard(math.ceil))
++        conn.create_function('COS', 1, none_guard(math.cos))
++        conn.create_function('COT', 1, none_guard(lambda x: 1 / math.tan(x)))
++        conn.create_function('DEGREES', 1, none_guard(math.degrees))
++        conn.create_function('EXP', 1, none_guard(math.exp))
++        conn.create_function('FLOOR', 1, none_guard(math.floor))
++        conn.create_function('LN', 1, none_guard(math.log))
++        conn.create_function('LOG', 2, none_guard(lambda x, y: math.log(y, x)))
+         conn.create_function('LPAD', 3, _sqlite_lpad)
+-        conn.create_function('REPEAT', 2, operator.mul)
+-        conn.create_function('RPAD', 3, _sqlite_rpad)
+-        conn.create_function('ACOS', 1, math.acos)
+-        conn.create_function('ASIN', 1, math.asin)
+-        conn.create_function('ATAN', 1, math.atan)
+-        conn.create_function('ATAN2', 2, math.atan2)
+-        conn.create_function('CEILING', 1, math.ceil)
+-        conn.create_function('COS', 1, math.cos)
+-        conn.create_function('COT', 1, lambda x: 1 / math.tan(x))
+-        conn.create_function('DEGREES', 1, math.degrees)
+-        conn.create_function('EXP', 1, math.exp)
+-        conn.create_function('FLOOR', 1, math.floor)
+-        conn.create_function('LN', 1, math.log)
+-        conn.create_function('LOG', 2, lambda x, y: math.log(y, x))
+-        conn.create_function('MOD', 2, math.fmod)
++        conn.create_function('MOD', 2, none_guard(math.fmod))
+         conn.create_function('PI', 0, lambda: math.pi)
+-        conn.create_function('POWER', 2, operator.pow)
+-        conn.create_function('RADIANS', 1, math.radians)
+-        conn.create_function('SIN', 1, math.sin)
+-        conn.create_function('SQRT', 1, math.sqrt)
+-        conn.create_function('TAN', 1, math.tan)
++        conn.create_function('POWER', 2, none_guard(operator.pow))
++        conn.create_function('RADIANS', 1, none_guard(math.radians))
++        conn.create_function('REPEAT', 2, none_guard(operator.mul))
++        conn.create_function('RPAD', 3, _sqlite_rpad)
++        conn.create_function('SIN', 1, none_guard(math.sin))
++        conn.create_function('SQRT', 1, none_guard(math.sqrt))
++        conn.create_function('TAN', 1, none_guard(math.tan))
+         conn.execute('PRAGMA foreign_keys = ON')
+         return conn
+ 
+@@ -325,6 +533,7 @@ class SQLiteCursorWrapper(Database.Cursor):
+         return FORMAT_QMARK_REGEX.sub('?', query).replace('%%', '%')
+ 
+ 
++@inspect_code
+ def _sqlite_datetime_parse(dt, tzname=None):
+     if dt is None:
+         return None
+@@ -356,6 +565,8 @@ def _sqlite_date_trunc(lookup_type, dt):
+ 
+ 
+ def _sqlite_time_trunc(lookup_type, dt):
++    if dt is None:
++        return None
+     try:
+         dt = backend_utils.typecast_time(dt)
+     except (ValueError, TypeError):
+@@ -432,6 +643,7 @@ def _sqlite_time_extract(lookup_type, dt):
+     return getattr(dt, lookup_type)
+ 
+ 
++@none_guard
+ def _sqlite_format_dtdelta(conn, lhs, rhs):
+     """
+     LHS and RHS can be either:
+@@ -452,6 +664,7 @@ def _sqlite_format_dtdelta(conn, lhs, rhs):
+     return str(out)
+ 
+ 
++@none_guard
+ def _sqlite_time_diff(lhs, rhs):
+     left = backend_utils.typecast_time(lhs)
+     right = backend_utils.typecast_time(rhs)
+@@ -467,21 +680,25 @@ def _sqlite_time_diff(lhs, rhs):
+     )
+ 
+ 
++@none_guard
+ def _sqlite_timestamp_diff(lhs, rhs):
+     left = backend_utils.typecast_timestamp(lhs)
+     right = backend_utils.typecast_timestamp(rhs)
+     return duration_microseconds(left - right)
+ 
+ 
++@none_guard
+ def _sqlite_regexp(re_pattern, re_string):
+-    return bool(re.search(re_pattern, str(re_string))) if re_string is not None else False
++    return bool(re.search(re_pattern, str(re_string)))
+ 
+ 
++@none_guard
+ def _sqlite_lpad(text, length, fill_text):
+     if len(text) >= length:
+         return text[:length]
+     return (fill_text * length)[:length - len(text)] + text
+ 
+ 
++@none_guard
+ def _sqlite_rpad(text, length, fill_text):
+     return (text + fill_text * length)[:length]
+diff --git a/django/db/models/functions/datetime.py b/django/db/models/functions/datetime.py
+index 0a68f07..51be840 100644
+--- a/django/db/models/functions/datetime.py
++++ b/django/db/models/functions/datetime.py
+@@ -218,16 +218,20 @@ class TruncBase(TimezoneMixin, Transform):
+ 
+     def convert_value(self, value, expression, connection):
+         if isinstance(self.output_field, DateTimeField):
+-            if settings.USE_TZ:
+-                if value is None:
+-                    raise ValueError(
+-                        "Database returned an invalid datetime value. "
+-                        "Are time zone definitions for your database installed?"
+-                    )
++            if not settings.USE_TZ:
++                pass
++            elif value is not None:
+                 value = value.replace(tzinfo=None)
+                 value = timezone.make_aware(value, self.tzinfo)
++            elif not connection.features.has_zoneinfo_database:
++                raise ValueError(
++                    'Database returned an invalid datetime value. Are time '
++                    'zone definitions for your database installed?'
++                )
+         elif isinstance(value, datetime):
+-            if isinstance(self.output_field, DateField):
++            if value is None:
++                pass
++            elif isinstance(self.output_field, DateField):
+                 value = value.date()
+             elif isinstance(self.output_field, TimeField):
+                 value = value.time()
+diff --git a/django/db/models/functions/text.py b/django/db/models/functions/text.py
+index 8cf10bb..9deaa84 100644
+--- a/django/db/models/functions/text.py
++++ b/django/db/models/functions/text.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-10301/django/db/models/functions/text.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ from django.db.models import Func, IntegerField, Transform, Value, fields
+ from django.db.models.functions import Coalesce
+ 
+@@ -138,8 +331,9 @@ class Lower(Transform):
+ class LPad(BytesToCharFieldConversionMixin, Func):
+     function = 'LPAD'
+ 
++    @inspect_code
+     def __init__(self, expression, length, fill_text=Value(' '), **extra):
+-        if not hasattr(length, 'resolve_expression') and length < 0:
++        if not hasattr(length, 'resolve_expression') and length is not None and length < 0:
+             raise ValueError("'length' must be greater or equal to 0.")
+         super().__init__(expression, length, fill_text, **extra)
+ 
+@@ -165,13 +359,14 @@ class Repeat(BytesToCharFieldConversionMixin, Func):
+     function = 'REPEAT'
+ 
+     def __init__(self, expression, number, **extra):
+-        if not hasattr(number, 'resolve_expression') and number < 0:
++        if not hasattr(number, 'resolve_expression') and number is not None and number < 0:
+             raise ValueError("'number' must be greater or equal to 0.")
+         super().__init__(expression, number, **extra)
+ 
+     def as_oracle(self, compiler, connection, **extra_context):
+         expression, number = self.source_expressions
+-        rpad = RPad(expression, Length(expression) * number, expression)
++        length = None if number is None else Length(expression) * number
++        rpad = RPad(expression, length, expression)
+         return rpad.as_sql(compiler, connection, **extra_context)
+ 
+ 
+diff --git a/tests/backends/sqlite/tests.py b/tests/backends/sqlite/tests.py
+index c82ed16..86723a7 100644
+--- a/tests/backends/sqlite/tests.py
++++ b/tests/backends/sqlite/tests.py
+@@ -59,6 +59,22 @@ class Tests(TestCase):
+         creation = DatabaseWrapper(settings_dict).creation
+         self.assertEqual(creation._get_test_db_name(), creation.connection.settings_dict['TEST']['NAME'])
+ 
++    def test_regexp_function(self):
++        tests = (
++            ('test', r'[0-9]+', False),
++            ('test', r'[a-z]+', True),
++            ('test', None, None),
++            (None, r'[a-z]+', None),
++            (None, None, None),
++        )
++        for string, pattern, expected in tests:
++            with self.subTest((string, pattern)):
++                with connection.cursor() as cursor:
++                    cursor.execute('SELECT %s REGEXP %s', [string, pattern])
++                    value = cursor.fetchone()[0]
++                value = bool(value) if value in {0, 1} else value
++                self.assertIs(value, expected)
++
+ 
+ @unittest.skipUnless(connection.vendor == 'sqlite', 'SQLite tests')
+ @isolate_apps('backends')
+diff --git a/tests/db_functions/datetime/test_extract_trunc.py b/tests/db_functions/datetime/test_extract_trunc.py
+index 99d33b2..065a06f 100644
+--- a/tests/db_functions/datetime/test_extract_trunc.py
++++ b/tests/db_functions/datetime/test_extract_trunc.py
+@@ -66,11 +66,14 @@ class DateFunctionTests(TestCase):
+ 
+     def create_model(self, start_datetime, end_datetime):
+         return DTModel.objects.create(
+-            name=start_datetime.isoformat(),
+-            start_datetime=start_datetime, end_datetime=end_datetime,
+-            start_date=start_datetime.date(), end_date=end_datetime.date(),
+-            start_time=start_datetime.time(), end_time=end_datetime.time(),
+-            duration=(end_datetime - start_datetime),
++            name=start_datetime.isoformat() if start_datetime else 'None',
++            start_datetime=start_datetime,
++            end_datetime=end_datetime,
++            start_date=start_datetime.date() if start_datetime else None,
++            end_date=end_datetime.date() if end_datetime else None,
++            start_time=start_datetime.time() if start_datetime else None,
++            end_time=end_datetime.time() if end_datetime else None,
++            duration=(end_datetime - start_datetime) if start_datetime and end_datetime else None,
+         )
+ 
+     def test_extract_year_exact_lookup(self):
+@@ -215,6 +218,12 @@ class DateFunctionTests(TestCase):
+         self.assertEqual(DTModel.objects.filter(start_date__month=Extract('start_date', 'month')).count(), 2)
+         self.assertEqual(DTModel.objects.filter(start_time__hour=Extract('start_time', 'hour')).count(), 2)
+ 
++    def test_extract_none(self):
++        self.create_model(None, None)
++        for t in (Extract('start_datetime', 'year'), Extract('start_date', 'year'), Extract('start_time', 'hour')):
++            with self.subTest(t):
++                self.assertIsNone(DTModel.objects.annotate(extracted=t).first().extracted)
++
+     @skipUnlessDBFeature('has_native_duration_field')
+     def test_extract_duration(self):
+         start_datetime = datetime(2015, 6, 15, 14, 30, 50, 321)
+@@ -608,6 +617,12 @@ class DateFunctionTests(TestCase):
+         qs = DTModel.objects.filter(start_datetime__date=Trunc('start_datetime', 'day', output_field=DateField()))
+         self.assertEqual(qs.count(), 2)
+ 
++    def test_trunc_none(self):
++        self.create_model(None, None)
++        for t in (Trunc('start_datetime', 'year'), Trunc('start_date', 'year'), Trunc('start_time', 'hour')):
++            with self.subTest(t):
++                self.assertIsNone(DTModel.objects.annotate(truncated=t).first().truncated)
++
+     def test_trunc_year_func(self):
+         start_datetime = datetime(2015, 6, 15, 14, 30, 50, 321)
+         end_datetime = truncate_to(datetime(2016, 6, 15, 14, 10, 50, 123), 'year')
+@@ -761,6 +776,10 @@ class DateFunctionTests(TestCase):
+         with self.assertRaisesMessage(ValueError, "Cannot truncate TimeField 'start_time' to DateField"):
+             list(DTModel.objects.annotate(truncated=TruncDate('start_time', output_field=TimeField())))
+ 
++    def test_trunc_date_none(self):
++        self.create_model(None, None)
++        self.assertIsNone(DTModel.objects.annotate(truncated=TruncDate('start_datetime')).first().truncated)
++
+     def test_trunc_time_func(self):
+         start_datetime = datetime(2015, 6, 15, 14, 30, 50, 321)
+         end_datetime = datetime(2016, 6, 15, 14, 10, 50, 123)
+@@ -785,6 +804,10 @@ class DateFunctionTests(TestCase):
+         with self.assertRaisesMessage(ValueError, "Cannot truncate DateField 'start_date' to TimeField"):
+             list(DTModel.objects.annotate(truncated=TruncTime('start_date', output_field=DateField())))
+ 
++    def test_trunc_time_none(self):
++        self.create_model(None, None)
++        self.assertIsNone(DTModel.objects.annotate(truncated=TruncTime('start_datetime')).first().truncated)
++
+     def test_trunc_day_func(self):
+         start_datetime = datetime(2015, 6, 15, 14, 30, 50, 321)
+         end_datetime = truncate_to(datetime(2016, 6, 15, 14, 10, 50, 123), 'day')
+diff --git a/tests/db_functions/math/test_abs.py b/tests/db_functions/math/test_abs.py
+index 484cd2e..b87f684 100644
+--- a/tests/db_functions/math/test_abs.py
++++ b/tests/db_functions/math/test_abs.py
+@@ -10,6 +10,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class AbsTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_abs=Abs('normal')).first()
++        self.assertIsNone(obj.null_abs)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-0.8'), n2=Decimal('1.2'))
+         obj = DecimalModel.objects.annotate(n1_abs=Abs('n1'), n2_abs=Abs('n2')).first()
+diff --git a/tests/db_functions/math/test_acos.py b/tests/db_functions/math/test_acos.py
+index a9ba079..04fdf2c 100644
+--- a/tests/db_functions/math/test_acos.py
++++ b/tests/db_functions/math/test_acos.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class ACosTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_acos=ACos('normal')).first()
++        self.assertIsNone(obj.null_acos)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-0.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_acos=ACos('n1'), n2_acos=ACos('n2')).first()
+diff --git a/tests/db_functions/math/test_asin.py b/tests/db_functions/math/test_asin.py
+index dc135a6..a9074e4 100644
+--- a/tests/db_functions/math/test_asin.py
++++ b/tests/db_functions/math/test_asin.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class ASinTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_asin=ASin('normal')).first()
++        self.assertIsNone(obj.null_asin)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('0.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_asin=ASin('n1'), n2_asin=ASin('n2')).first()
+diff --git a/tests/db_functions/math/test_atan.py b/tests/db_functions/math/test_atan.py
+index 36c07ae..fbeeded 100644
+--- a/tests/db_functions/math/test_atan.py
++++ b/tests/db_functions/math/test_atan.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class ATanTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_atan=ATan('normal')).first()
++        self.assertIsNone(obj.null_atan)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_atan=ATan('n1'), n2_atan=ATan('n2')).first()
+diff --git a/tests/db_functions/math/test_atan2.py b/tests/db_functions/math/test_atan2.py
+index 195892d..ca12e64 100644
+--- a/tests/db_functions/math/test_atan2.py
++++ b/tests/db_functions/math/test_atan2.py
+@@ -9,6 +9,15 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class ATan2Tests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create(big=100)
++        obj = IntegerModel.objects.annotate(
++            null_atan2_sn=ATan2('small', 'normal'),
++            null_atan2_nb=ATan2('normal', 'big'),
++        ).first()
++        self.assertIsNone(obj.null_atan2_sn)
++        self.assertIsNone(obj.null_atan2_nb)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-9.9'), n2=Decimal('4.6'))
+         obj = DecimalModel.objects.annotate(n_atan2=ATan2('n1', 'n2')).first()
+diff --git a/tests/db_functions/math/test_ceil.py b/tests/db_functions/math/test_ceil.py
+index a62c33a..af4ee44 100644
+--- a/tests/db_functions/math/test_ceil.py
++++ b/tests/db_functions/math/test_ceil.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class CeilTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_ceil=Ceil('normal')).first()
++        self.assertIsNone(obj.null_ceil)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_ceil=Ceil('n1'), n2_ceil=Ceil('n2')).first()
+diff --git a/tests/db_functions/math/test_cos.py b/tests/db_functions/math/test_cos.py
+index 15975e2..99cf966 100644
+--- a/tests/db_functions/math/test_cos.py
++++ b/tests/db_functions/math/test_cos.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class CosTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_cos=Cos('normal')).first()
++        self.assertIsNone(obj.null_cos)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_cos=Cos('n1'), n2_cos=Cos('n2')).first()
+diff --git a/tests/db_functions/math/test_cot.py b/tests/db_functions/math/test_cot.py
+index 0407f3b..5af0403 100644
+--- a/tests/db_functions/math/test_cot.py
++++ b/tests/db_functions/math/test_cot.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class CotTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_cot=Cot('normal')).first()
++        self.assertIsNone(obj.null_cot)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_cot=Cot('n1'), n2_cot=Cot('n2')).first()
+diff --git a/tests/db_functions/math/test_degrees.py b/tests/db_functions/math/test_degrees.py
+index e5a5519..a474d27 100644
+--- a/tests/db_functions/math/test_degrees.py
++++ b/tests/db_functions/math/test_degrees.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class DegreesTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_degrees=Degrees('normal')).first()
++        self.assertIsNone(obj.null_degrees)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_degrees=Degrees('n1'), n2_degrees=Degrees('n2')).first()
+diff --git a/tests/db_functions/math/test_exp.py b/tests/db_functions/math/test_exp.py
+index 0981d4f..fac2f6c 100644
+--- a/tests/db_functions/math/test_exp.py
++++ b/tests/db_functions/math/test_exp.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class ExpTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_exp=Exp('normal')).first()
++        self.assertIsNone(obj.null_exp)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_exp=Exp('n1'), n2_exp=Exp('n2')).first()
+diff --git a/tests/db_functions/math/test_floor.py b/tests/db_functions/math/test_floor.py
+index ee567cf..0c193ef 100644
+--- a/tests/db_functions/math/test_floor.py
++++ b/tests/db_functions/math/test_floor.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class FloorTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_floor=Floor('normal')).first()
++        self.assertIsNone(obj.null_floor)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_floor=Floor('n1'), n2_floor=Floor('n2')).first()
+diff --git a/tests/db_functions/math/test_ln.py b/tests/db_functions/math/test_ln.py
+index 96d4599..3c690d5 100644
+--- a/tests/db_functions/math/test_ln.py
++++ b/tests/db_functions/math/test_ln.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class LnTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_ln=Ln('normal')).first()
++        self.assertIsNone(obj.null_ln)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_ln=Ln('n1'), n2_ln=Ln('n2')).first()
+diff --git a/tests/db_functions/math/test_log.py b/tests/db_functions/math/test_log.py
+index 02cbe08..469bb7c 100644
+--- a/tests/db_functions/math/test_log.py
++++ b/tests/db_functions/math/test_log.py
+@@ -9,6 +9,15 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class LogTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create(big=100)
++        obj = IntegerModel.objects.annotate(
++            null_log_small=Log('small', 'normal'),
++            null_log_normal=Log('normal', 'big'),
++        ).first()
++        self.assertIsNone(obj.null_log_small)
++        self.assertIsNone(obj.null_log_normal)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('12.9'), n2=Decimal('3.6'))
+         obj = DecimalModel.objects.annotate(n_log=Log('n1', 'n2')).first()
+diff --git a/tests/db_functions/math/test_mod.py b/tests/db_functions/math/test_mod.py
+index 0e90175..dc36343 100644
+--- a/tests/db_functions/math/test_mod.py
++++ b/tests/db_functions/math/test_mod.py
+@@ -9,6 +9,15 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class ModTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create(big=100)
++        obj = IntegerModel.objects.annotate(
++            null_mod_small=Mod('small', 'normal'),
++            null_mod_normal=Mod('normal', 'big'),
++        ).first()
++        self.assertIsNone(obj.null_mod_small)
++        self.assertIsNone(obj.null_mod_normal)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-9.9'), n2=Decimal('4.6'))
+         obj = DecimalModel.objects.annotate(n_mod=Mod('n1', 'n2')).first()
+diff --git a/tests/db_functions/math/test_power.py b/tests/db_functions/math/test_power.py
+index 01ca2b3..a2d6156 100644
+--- a/tests/db_functions/math/test_power.py
++++ b/tests/db_functions/math/test_power.py
+@@ -8,6 +8,15 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class PowerTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create(big=100)
++        obj = IntegerModel.objects.annotate(
++            null_power_small=Power('small', 'normal'),
++            null_power_normal=Power('normal', 'big'),
++        ).first()
++        self.assertIsNone(obj.null_power_small)
++        self.assertIsNone(obj.null_power_normal)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('1.0'), n2=Decimal('-0.6'))
+         obj = DecimalModel.objects.annotate(n_power=Power('n1', 'n2')).first()
+diff --git a/tests/db_functions/math/test_radians.py b/tests/db_functions/math/test_radians.py
+index 873659e..3c257bb 100644
+--- a/tests/db_functions/math/test_radians.py
++++ b/tests/db_functions/math/test_radians.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class RadiansTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_radians=Radians('normal')).first()
++        self.assertIsNone(obj.null_radians)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_radians=Radians('n1'), n2_radians=Radians('n2')).first()
+diff --git a/tests/db_functions/math/test_round.py b/tests/db_functions/math/test_round.py
+index d242f2d..4c2634c 100644
+--- a/tests/db_functions/math/test_round.py
++++ b/tests/db_functions/math/test_round.py
+@@ -10,6 +10,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class RoundTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_round=Round('normal')).first()
++        self.assertIsNone(obj.null_round)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_round=Round('n1'), n2_round=Round('n2')).first()
+diff --git a/tests/db_functions/math/test_sin.py b/tests/db_functions/math/test_sin.py
+index 0f7e0c7..f2e2edd 100644
+--- a/tests/db_functions/math/test_sin.py
++++ b/tests/db_functions/math/test_sin.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class SinTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_sin=Sin('normal')).first()
++        self.assertIsNone(obj.null_sin)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_sin=Sin('n1'), n2_sin=Sin('n2')).first()
+diff --git a/tests/db_functions/math/test_sqrt.py b/tests/db_functions/math/test_sqrt.py
+index 81f1336..0e6238a 100644
+--- a/tests/db_functions/math/test_sqrt.py
++++ b/tests/db_functions/math/test_sqrt.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class SqrtTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_sqrt=Sqrt('normal')).first()
++        self.assertIsNone(obj.null_sqrt)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_sqrt=Sqrt('n1'), n2_sqrt=Sqrt('n2')).first()
+diff --git a/tests/db_functions/math/test_tan.py b/tests/db_functions/math/test_tan.py
+index 82dcec9..6db7607 100644
+--- a/tests/db_functions/math/test_tan.py
++++ b/tests/db_functions/math/test_tan.py
+@@ -11,6 +11,11 @@ from ..models import DecimalModel, FloatModel, IntegerModel
+ 
+ class TanTests(TestCase):
+ 
++    def test_null(self):
++        IntegerModel.objects.create()
++        obj = IntegerModel.objects.annotate(null_tan=Tan('normal')).first()
++        self.assertIsNone(obj.null_tan)
++
+     def test_decimal(self):
+         DecimalModel.objects.create(n1=Decimal('-12.9'), n2=Decimal('0.6'))
+         obj = DecimalModel.objects.annotate(n1_tan=Tan('n1'), n2_tan=Tan('n2')).first()
+diff --git a/tests/db_functions/text/test_pad.py b/tests/db_functions/text/test_pad.py
+index 2cec280..88309e5 100644
+--- a/tests/db_functions/text/test_pad.py
++++ b/tests/db_functions/text/test_pad.py
+@@ -1,3 +1,4 @@
++from django.db import connection
+ from django.db.models import CharField, Value
+ from django.db.models.functions import Length, LPad, RPad
+ from django.test import TestCase
+@@ -8,6 +9,7 @@ from ..models import Author
+ class PadTests(TestCase):
+     def test_pad(self):
+         Author.objects.create(name='John', alias='j')
++        none_value = '' if connection.features.interprets_empty_strings_as_nulls else None
+         tests = (
+             (LPad('name', 7, Value('xy')), 'xyxJohn'),
+             (RPad('name', 7, Value('xy')), 'Johnxyx'),
+@@ -21,6 +23,10 @@ class PadTests(TestCase):
+             (RPad('name', 2), 'Jo'),
+             (LPad('name', 0), ''),
+             (RPad('name', 0), ''),
++            (LPad('name', None), none_value),
++            (RPad('name', None), none_value),
++            (LPad('goes_by', 1), none_value),
++            (RPad('goes_by', 1), none_value),
+         )
+         for function, padded_name in tests:
+             with self.subTest(function=function):
+diff --git a/tests/db_functions/text/test_repeat.py b/tests/db_functions/text/test_repeat.py
+index f45544d..d302e6d 100644
+--- a/tests/db_functions/text/test_repeat.py
++++ b/tests/db_functions/text/test_repeat.py
+@@ -1,3 +1,4 @@
++from django.db import connection
+ from django.db.models import CharField, Value
+ from django.db.models.functions import Length, Repeat
+ from django.test import TestCase
+@@ -8,11 +9,14 @@ from ..models import Author
+ class RepeatTests(TestCase):
+     def test_basic(self):
+         Author.objects.create(name='John', alias='xyz')
++        none_value = '' if connection.features.interprets_empty_strings_as_nulls else None
+         tests = (
+             (Repeat('name', 0), ''),
+             (Repeat('name', 2), 'JohnJohn'),
+             (Repeat('name', Length('alias'), output_field=CharField()), 'JohnJohnJohn'),
+             (Repeat(Value('x'), 3, output_field=CharField()), 'xxx'),
++            (Repeat('name', None), none_value),
++            (Repeat('goes_by', 1), none_value),
+         )
+         for function, repeated_text in tests:
+             with self.subTest(function=function):
+diff --git a/tests/expressions/tests.py b/tests/expressions/tests.py
+index 9a64608..f12a938 100644
+--- a/tests/expressions/tests.py
++++ b/tests/expressions/tests.py
+@@ -1249,6 +1249,12 @@ class FTimeDeltaTests(TestCase):
+         ]
+         self.assertEqual(delta_math, ['e4'])
+ 
++        queryset = Experiment.objects.annotate(shifted=ExpressionWrapper(
++            F('start') + Value(None, output_field=models.DurationField()),
++            output_field=models.DateTimeField(),
++        ))
++        self.assertIsNone(queryset.first().shifted)
++
+     @skipUnlessDBFeature('supports_temporal_subtraction')
+     def test_date_subtraction(self):
+         queryset = Experiment.objects.annotate(
+@@ -1266,6 +1272,18 @@ class FTimeDeltaTests(TestCase):
+         less_than_5_days = {e.name for e in queryset.filter(completion_duration__lt=datetime.timedelta(days=5))}
+         self.assertEqual(less_than_5_days, {'e0', 'e1', 'e2'})
+ 
++        queryset = Experiment.objects.annotate(difference=ExpressionWrapper(
++            F('completed') - Value(None, output_field=models.DateField()),
++            output_field=models.DurationField(),
++        ))
++        self.assertIsNone(queryset.first().difference)
++
++        queryset = Experiment.objects.annotate(shifted=ExpressionWrapper(
++            F('completed') - Value(None, output_field=models.DurationField()),
++            output_field=models.DateField(),
++        ))
++        self.assertIsNone(queryset.first().shifted)
++
+     @skipUnlessDBFeature('supports_temporal_subtraction')
+     def test_time_subtraction(self):
+         Time.objects.create(time=datetime.time(12, 30, 15, 2345))
+@@ -1280,6 +1298,18 @@ class FTimeDeltaTests(TestCase):
+             datetime.timedelta(hours=1, minutes=15, seconds=15, microseconds=2345)
+         )
+ 
++        queryset = Time.objects.annotate(difference=ExpressionWrapper(
++            F('time') - Value(None, output_field=models.TimeField()),
++            output_field=models.DurationField(),
++        ))
++        self.assertIsNone(queryset.first().difference)
++
++        queryset = Time.objects.annotate(shifted=ExpressionWrapper(
++            F('time') - Value(None, output_field=models.DurationField()),
++            output_field=models.TimeField(),
++        ))
++        self.assertIsNone(queryset.first().shifted)
++
+     @skipUnlessDBFeature('supports_temporal_subtraction')
+     def test_datetime_subtraction(self):
+         under_estimate = [
+@@ -1292,6 +1322,18 @@ class FTimeDeltaTests(TestCase):
+         ]
+         self.assertEqual(over_estimate, ['e4'])
+ 
++        queryset = Experiment.objects.annotate(difference=ExpressionWrapper(
++            F('start') - Value(None, output_field=models.DateTimeField()),
++            output_field=models.DurationField(),
++        ))
++        self.assertIsNone(queryset.first().difference)
++
++        queryset = Experiment.objects.annotate(shifted=ExpressionWrapper(
++            F('start') - Value(None, output_field=models.DurationField()),
++            output_field=models.DateTimeField(),
++        ))
++        self.assertIsNone(queryset.first().shifted)
++
+     @skipUnlessDBFeature('supports_temporal_subtraction')
+     def test_datetime_subtraction_microseconds(self):
+         delta = datetime.timedelta(microseconds=8999999999999999)

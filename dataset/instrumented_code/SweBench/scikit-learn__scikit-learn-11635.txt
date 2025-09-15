@@ -1,0 +1,915 @@
+diff --git a/sklearn/feature_selection/_base.py b/sklearn/feature_selection/_base.py
+index bcd9834..734662a 100644
+--- a/sklearn/feature_selection/_base.py
++++ b/sklearn/feature_selection/_base.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-11635/sklearn/feature_selection/_base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # -*- coding: utf-8 -*-
+ """Generic feature selection mixin"""
+ 
+@@ -58,6 +251,7 @@ class SelectorMixin(TransformerMixin, metaclass=ABCMeta):
+             retention.
+         """
+ 
++    @inspect_code
+     def transform(self, X):
+         """Reduce X to the selected features.
+ 
+@@ -71,7 +265,9 @@ class SelectorMixin(TransformerMixin, metaclass=ABCMeta):
+         X_r : array of shape [n_samples, n_selected_features]
+             The input samples with only the selected features.
+         """
+-        X = check_array(X, dtype=None, accept_sparse='csr')
++        tags = self._get_tags()
++        X = check_array(X, dtype=None, accept_sparse='csr',
++                        force_all_finite=not tags.get('allow_nan', True))
+         mask = self.get_support()
+         if not mask.any():
+             warn("No features were selected: either the data is"
+diff --git a/sklearn/feature_selection/_from_model.py b/sklearn/feature_selection/_from_model.py
+index 3e324fb..674127f 100644
+--- a/sklearn/feature_selection/_from_model.py
++++ b/sklearn/feature_selection/_from_model.py
+@@ -131,6 +131,10 @@ class SelectFromModel(MetaEstimatorMixin, SelectorMixin, BaseEstimator):
+     threshold_ : float
+         The threshold value used for feature selection.
+ 
++    Notes
++    -----
++    Allows NaN/Inf in the input if the underlying estimator does as well.
++
+     Examples
+     --------
+     >>> from sklearn.feature_selection import SelectFromModel
+@@ -249,3 +253,7 @@ class SelectFromModel(MetaEstimatorMixin, SelectorMixin, BaseEstimator):
+             self.estimator_ = clone(self.estimator)
+         self.estimator_.partial_fit(X, y, **fit_params)
+         return self
++
++    def _more_tags(self):
++        estimator_tags = self.estimator._get_tags()
++        return {'allow_nan': estimator_tags.get('allow_nan', True)}
+diff --git a/sklearn/feature_selection/_rfe.py b/sklearn/feature_selection/_rfe.py
+index 86362f2..819364c 100644
+--- a/sklearn/feature_selection/_rfe.py
++++ b/sklearn/feature_selection/_rfe.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-11635/sklearn/feature_selection/_rfe.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # Authors: Alexandre Gramfort <alexandre.gramfort@inria.fr>
+ #          Vincent Michel <vincent.michel@inria.fr>
+ #          Gilles Louppe <g.louppe@gmail.com>
+@@ -103,6 +296,10 @@ class RFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
+     >>> selector.ranking_
+     array([1, 1, 1, 1, 1, 6, 4, 3, 2, 5])
+ 
++    Notes
++    -----
++    Allows NaN/Inf in the input if the underlying estimator does as well.
++
+     See also
+     --------
+     RFECV : Recursive feature elimination with built-in cross-validated
+@@ -144,13 +341,16 @@ class RFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
+         """
+         return self._fit(X, y)
+ 
++    @inspect_code
+     def _fit(self, X, y, step_score=None):
+         # Parameter step_score controls the calculation of self.scores_
+         # step_score is not exposed to users
+         # and is used when implementing RFECV
+         # self.scores_ will not be calculated when calling _fit through fit
+ 
+-        X, y = check_X_y(X, y, "csc", ensure_min_features=2)
++        tags = self._get_tags()
++        X, y = check_X_y(X, y, "csc", ensure_min_features=2,
++                         force_all_finite=not tags.get('allow_nan', True))
+         # Initialization
+         n_features = X.shape[1]
+         if self.n_features_to_select is None:
+@@ -325,8 +525,11 @@ class RFE(SelectorMixin, MetaEstimatorMixin, BaseEstimator):
+         check_is_fitted(self)
+         return self.estimator_.predict_log_proba(self.transform(X))
+ 
++    @inspect_code
+     def _more_tags(self):
+-        return {'poor_score': True}
++        estimator_tags = self.estimator._get_tags()
++        return {'poor_score': True,
++                'allow_nan': estimator_tags.get('allow_nan', True)}
+ 
+ 
+ class RFECV(RFE):
+@@ -421,6 +624,8 @@ class RFECV(RFE):
+     ``ceil((n_features - min_features_to_select) / step) + 1``,
+     where step is the number of features removed at each iteration.
+ 
++    Allows NaN/Inf in the input if the underlying estimator does as well.
++
+     Examples
+     --------
+     The following example shows how to retrieve the a-priori not known 5
+@@ -460,6 +665,7 @@ class RFECV(RFE):
+         self.n_jobs = n_jobs
+         self.min_features_to_select = min_features_to_select
+ 
++    @inspect_code
+     def fit(self, X, y, groups=None):
+         """Fit the RFE model and automatically tune the number of selected
+            features.
+@@ -479,7 +685,8 @@ class RFECV(RFE):
+             train/test set. Only used in conjunction with a "Group" :term:`cv`
+             instance (e.g., :class:`~sklearn.model_selection.GroupKFold`).
+         """
+-        X, y = check_X_y(X, y, "csr", ensure_min_features=2)
++        X, y = check_X_y(X, y, "csr", ensure_min_features=2,
++                         force_all_finite=False)
+ 
+         # Initialization
+         cv = check_cv(self.cv, y, is_classifier(self.estimator))
+diff --git a/sklearn/feature_selection/_variance_threshold.py b/sklearn/feature_selection/_variance_threshold.py
+index 15576fe..e356e48 100644
+--- a/sklearn/feature_selection/_variance_threshold.py
++++ b/sklearn/feature_selection/_variance_threshold.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/scikit-learn__scikit-learn-11635/sklearn/feature_selection/_variance_threshold.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ # Author: Lars Buitinck
+ # License: 3-clause BSD
+ 
+@@ -29,6 +222,10 @@ class VarianceThreshold(SelectorMixin, BaseEstimator):
+     variances_ : array, shape (n_features,)
+         Variances of individual features.
+ 
++    Notes
++    -----
++    Allows NaN in the input.
++
+     Examples
+     --------
+     The following dataset has integer features, two of which are the same
+@@ -45,6 +242,7 @@ class VarianceThreshold(SelectorMixin, BaseEstimator):
+     def __init__(self, threshold=0.):
+         self.threshold = threshold
+ 
++    @inspect_code
+     def fit(self, X, y=None):
+         """Learn empirical variances from X.
+ 
+@@ -61,7 +259,8 @@ class VarianceThreshold(SelectorMixin, BaseEstimator):
+         -------
+         self
+         """
+-        X = check_array(X, ('csr', 'csc'), dtype=np.float64)
++        X = check_array(X, ('csr', 'csc'), dtype=np.float64,
++                        force_all_finite='allow-nan')
+ 
+         if hasattr(X, "toarray"):   # sparse matrix
+             _, self.variances_ = mean_variance_axis(X, axis=0)
+@@ -69,16 +268,18 @@ class VarianceThreshold(SelectorMixin, BaseEstimator):
+                 mins, maxes = min_max_axis(X, axis=0)
+                 peak_to_peaks = maxes - mins
+         else:
+-            self.variances_ = np.var(X, axis=0)
++            self.variances_ = np.nanvar(X, axis=0)
+             if self.threshold == 0:
+                 peak_to_peaks = np.ptp(X, axis=0)
+ 
+         if self.threshold == 0:
+             # Use peak-to-peak to avoid numeric precision issues
+             # for constant features
+-            self.variances_ = np.minimum(self.variances_, peak_to_peaks)
++            compare_arr = np.array([self.variances_, peak_to_peaks])
++            self.variances_ = np.nanmin(compare_arr, axis=0)
+ 
+-        if np.all(self.variances_ <= self.threshold):
++        if np.all(~np.isfinite(self.variances_) |
++                  (self.variances_ <= self.threshold)):
+             msg = "No feature in X meets the variance threshold {0:.5f}"
+             if X.shape[0] == 1:
+                 msg += " (X contains only one sample)"
+@@ -90,3 +291,6 @@ class VarianceThreshold(SelectorMixin, BaseEstimator):
+         check_is_fitted(self)
+ 
+         return self.variances_ > self.threshold
++
++    def _more_tags(self):
++        return {'allow_nan': True}
+diff --git a/sklearn/feature_selection/tests/test_from_model.py b/sklearn/feature_selection/tests/test_from_model.py
+index a1f6a9d..57bd88a 100644
+--- a/sklearn/feature_selection/tests/test_from_model.py
++++ b/sklearn/feature_selection/tests/test_from_model.py
+@@ -10,10 +10,28 @@ from sklearn import datasets
+ from sklearn.linear_model import LogisticRegression, SGDClassifier, Lasso
+ from sklearn.svm import LinearSVC
+ from sklearn.feature_selection import SelectFromModel
+-from sklearn.ensemble import RandomForestClassifier
++from sklearn.experimental import enable_hist_gradient_boosting  # noqa
++from sklearn.ensemble import (RandomForestClassifier,
++                              HistGradientBoostingClassifier)
+ from sklearn.linear_model import PassiveAggressiveClassifier
+ from sklearn.base import BaseEstimator
+ 
++
++class NaNTag(BaseEstimator):
++    def _more_tags(self):
++        return {'allow_nan': True}
++
++
++class NoNaNTag(BaseEstimator):
++    def _more_tags(self):
++        return {'allow_nan': False}
++
++
++class NaNTagRandomForest(RandomForestClassifier):
++    def _more_tags(self):
++        return {'allow_nan': True}
++
++
+ iris = datasets.load_iris()
+ data, y = iris.data, iris.target
+ rng = np.random.RandomState(0)
+@@ -320,3 +338,40 @@ def test_threshold_without_refitting():
+     # Set a higher threshold to filter out more features.
+     model.threshold = "1.0 * mean"
+     assert X_transform.shape[1] > model.transform(data).shape[1]
++
++
++def test_fit_accepts_nan_inf():
++    # Test that fit doesn't check for np.inf and np.nan values.
++    clf = HistGradientBoostingClassifier(random_state=0)
++
++    model = SelectFromModel(estimator=clf)
++
++    nan_data = data.copy()
++    nan_data[0] = np.NaN
++    nan_data[1] = np.Inf
++
++    model.fit(data, y)
++
++
++def test_transform_accepts_nan_inf():
++    # Test that transform doesn't check for np.inf and np.nan values.
++    clf = NaNTagRandomForest(n_estimators=100, random_state=0)
++    nan_data = data.copy()
++
++    model = SelectFromModel(estimator=clf)
++    model.fit(nan_data, y)
++
++    nan_data[0] = np.NaN
++    nan_data[1] = np.Inf
++
++    model.transform(nan_data)
++
++
++def test_allow_nan_tag_comes_from_estimator():
++    allow_nan_est = NaNTag()
++    model = SelectFromModel(estimator=allow_nan_est)
++    assert model._get_tags()['allow_nan'] is True
++
++    no_nan_est = NoNaNTag()
++    model = SelectFromModel(estimator=no_nan_est)
++    assert model._get_tags()['allow_nan'] is False
+diff --git a/sklearn/feature_selection/tests/test_rfe.py b/sklearn/feature_selection/tests/test_rfe.py
+index 724c749..ccd3c0a 100644
+--- a/sklearn/feature_selection/tests/test_rfe.py
++++ b/sklearn/feature_selection/tests/test_rfe.py
+@@ -2,6 +2,7 @@
+ Testing Recursive feature elimination
+ """
+ 
++import pytest
+ import numpy as np
+ from numpy.testing import assert_array_almost_equal, assert_array_equal
+ from scipy import sparse
+@@ -54,6 +55,9 @@ class MockClassifier:
+     def set_params(self, **params):
+         return self
+ 
++    def _get_tags(self):
++        return {}
++
+ 
+ def test_rfe_features_importance():
+     generator = check_random_state(0)
+@@ -369,3 +373,25 @@ def test_rfe_cv_groups():
+     )
+     est_groups.fit(X, y, groups=groups)
+     assert est_groups.n_features_ > 0
++
++
++@pytest.mark.parametrize("cv", [
++    None,
++    5
++])
++def test_rfe_allow_nan_inf_in_x(cv):
++    iris = load_iris()
++    X = iris.data
++    y = iris.target
++
++    # add nan and inf value to X
++    X[0][0] = np.NaN
++    X[0][1] = np.Inf
++
++    clf = MockClassifier()
++    if cv is not None:
++        rfe = RFECV(estimator=clf, cv=cv)
++    else:
++        rfe = RFE(estimator=clf)
++    rfe.fit(X, y)
++    rfe.transform(X)
+diff --git a/sklearn/feature_selection/tests/test_variance_threshold.py b/sklearn/feature_selection/tests/test_variance_threshold.py
+index 9dc7eff..77d9c94 100644
+--- a/sklearn/feature_selection/tests/test_variance_threshold.py
++++ b/sklearn/feature_selection/tests/test_variance_threshold.py
+@@ -46,3 +46,15 @@ def test_zero_variance_floating_point_error():
+         msg = "No feature in X meets the variance threshold 0.00000"
+         with pytest.raises(ValueError, match=msg):
+             VarianceThreshold().fit(X)
++
++
++def test_variance_nan():
++    arr = np.array(data, dtype=np.float64)
++    # add single NaN and feature should still be included
++    arr[0, 0] = np.NaN
++    # make all values in feature NaN and feature should be rejected
++    arr[:, 1] = np.NaN
++
++    for X in [arr, csr_matrix(arr), csc_matrix(arr), bsr_matrix(arr)]:
++        sel = VarianceThreshold().fit(X)
++        assert_array_equal([0, 3, 4], sel.get_support(indices=True))

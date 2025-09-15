@@ -1,0 +1,372 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. The input structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict input variable values to fill out placeholders XXX in the structure, and print input between [INPUT] and [\INPUT]. You should maintain the structure when printing inputs. Do not change anything else.  ONLY print the input, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import numbers
+import array
+from collections.abc import Iterable
+import numpy as np
+from scipy import linalg
+import scipy.sparse as sp
+from ..preprocessing import MultiLabelBinarizer
+from ..utils import check_array, check_random_state
+from ..utils import shuffle as util_shuffle
+from ..utils.random import sample_without_replacement
+
+def make_classification(n_samples=100, n_features=20, n_informative=2, n_redundant=2, n_repeated=0, n_classes=2, n_clusters_per_class=2, weights=None, flip_y=0.01, class_sep=1.0, hypercube=True, shift=0.0, scale=1.0, shuffle=True, random_state=None):
+    generator = check_random_state(random_state)
+    if n_informative + n_redundant + n_repeated > n_features:
+        raise ValueError('Number of informative, redundant and repeated features must sum to less than the number of total features')
+    if n_informative < np.log2(n_classes * n_clusters_per_class):
+        msg = 'n_classes({}) * n_clusters_per_class({}) must be'
+        msg += ' smaller or equal 2**n_informative({})={}'
+        raise ValueError(msg.format(n_classes, n_clusters_per_class, n_informative, 2 ** n_informative))
+    if weights is not None:
+        if len(weights) not in [n_classes, n_classes - 1]:
+            raise ValueError('Weights specified but incompatible with number of classes.')
+        if len(weights) == n_classes - 1:
+            if isinstance(weights, list):
+                weights = weights + [1.0 - sum(weights)]
+            else:
+                weights = np.resize(weights, n_classes)
+                weights[-1] = 1.0 - sum(weights[:-1])
+    else:
+        weights = [1.0 / n_classes] * n_classes
+    n_useless = n_features - n_informative - n_redundant - n_repeated
+    n_clusters = n_classes * n_clusters_per_class
+    n_samples_per_cluster = [int(n_samples * weights[k % n_classes] / n_clusters_per_class) for k in range(n_clusters)]
+    for i in range(n_samples - sum(n_samples_per_cluster)):
+        n_samples_per_cluster[i % n_clusters] += 1
+    X = np.zeros((n_samples, n_features))
+    y = np.zeros(n_samples, dtype=np.int)
+    centroids = _generate_hypercube(n_clusters, n_informative, generator).astype(float, copy=False)
+    centroids *= 2 * class_sep
+    centroids -= class_sep
+    if not hypercube:
+        centroids *= generator.rand(n_clusters, 1)
+        centroids *= generator.rand(1, n_informative)
+    X[:, :n_informative] = generator.randn(n_samples, n_informative)
+    stop = 0
+    for k, centroid in enumerate(centroids):
+        start, stop = (stop, stop + n_samples_per_cluster[k])
+        y[start:stop] = k % n_classes
+        X_k = X[start:stop, :n_informative]
+        A = 2 * generator.rand(n_informative, n_informative) - 1
+        X_k[...] = np.dot(X_k, A)
+        X_k += centroid
+    if n_redundant > 0:
+        B = 2 * generator.rand(n_informative, n_redundant) - 1
+        X[:, n_informative:n_informative + n_redundant] = np.dot(X[:, :n_informative], B)
+    if n_repeated > 0:
+        n = n_informative + n_redundant
+        indices = ((n - 1) * generator.rand(n_repeated) + 0.5).astype(np.intp)
+        X[:, n:n + n_repeated] = X[:, indices]
+    if n_useless > 0:
+        X[:, -n_useless:] = generator.randn(n_samples, n_useless)
+    if flip_y >= 0.0:
+        flip_mask = generator.rand(n_samples) < flip_y
+        y[flip_mask] = generator.randint(n_classes, size=flip_mask.sum())
+    if shift is None:
+        shift = (2 * generator.rand(n_features) - 1) * class_sep
+    X += shift
+    if scale is None:
+        scale = 1 + 100 * generator.rand(n_features)
+    X *= scale
+    if shuffle:
+        X, y = util_shuffle(X, y, random_state=generator)
+        indices = np.arange(n_features)
+        generator.shuffle(indices)
+        X[:, :] = X[:, indices]
+    return (X, y)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sklearn.utils.validation.check_random_state
+
+def check_random_state(seed):
+    if seed is None or seed is np.random:
+        return np.random.mtrand._rand
+    if isinstance(seed, numbers.Integral):
+        return np.random.RandomState(seed)
+    if isinstance(seed, np.random.RandomState):
+        return seed
+    raise ValueError('%r cannot be used to seed a numpy.random.RandomState instance' % seed)
+
+.sklearn.datasets.samples_generator._generate_hypercube
+
+def _generate_hypercube(samples, dimensions, rng):
+    if dimensions > 30:
+        return np.hstack([rng.randint(2, size=(samples, dimensions - 30)), _generate_hypercube(samples, 30, rng)])
+    out = sample_without_replacement(2 ** dimensions, samples, random_state=rng).astype(dtype='>u4', copy=False)
+    out = np.unpackbits(out.view('>u1')).reshape((-1, 32))[:, -dimensions:]
+    return out
+
+.sklearn.utils.__init__.shuffle
+
+def shuffle(*arrays, **options):
+    options['replace'] = False
+    return resample(*arrays, **options)
+
+.sklearn.utils.__init__.resample
+
+def resample(*arrays, **options):
+    random_state = check_random_state(options.pop('random_state', None))
+    replace = options.pop('replace', True)
+    max_n_samples = options.pop('n_samples', None)
+    stratify = options.pop('stratify', None)
+    if options:
+        raise ValueError('Unexpected kw arguments: %r' % options.keys())
+    if len(arrays) == 0:
+        return None
+    first = arrays[0]
+    n_samples = first.shape[0] if hasattr(first, 'shape') else len(first)
+    if max_n_samples is None:
+        max_n_samples = n_samples
+    elif max_n_samples > n_samples and (not replace):
+        raise ValueError('Cannot sample %d out of arrays with dim %d when replace is False' % (max_n_samples, n_samples))
+    check_consistent_length(*arrays)
+    if stratify is None:
+        if replace:
+            indices = random_state.randint(0, n_samples, size=(max_n_samples,))
+        else:
+            indices = np.arange(n_samples)
+            random_state.shuffle(indices)
+            indices = indices[:max_n_samples]
+    else:
+        y = check_array(stratify, ensure_2d=False, dtype=None)
+        if y.ndim == 2:
+            y = np.array([' '.join(row.astype('str')) for row in y])
+        classes, y_indices = np.unique(y, return_inverse=True)
+        n_classes = classes.shape[0]
+        class_counts = np.bincount(y_indices)
+        class_indices = np.split(np.argsort(y_indices, kind='mergesort'), np.cumsum(class_counts)[:-1])
+        n_i = _approximate_mode(class_counts, max_n_samples, random_state)
+        indices = []
+        for i in range(n_classes):
+            indices_i = random_state.choice(class_indices[i], n_i[i], replace=replace)
+            indices.extend(indices_i)
+        indices = random_state.permutation(indices)
+    arrays = [a.tocsr() if issparse(a) else a for a in arrays]
+    resampled_arrays = [safe_indexing(a, indices) for a in arrays]
+    if len(resampled_arrays) == 1:
+        return resampled_arrays[0]
+    else:
+        return resampled_arrays
+
+.sklearn.utils.validation.check_consistent_length
+
+def check_consistent_length(*arrays):
+    lengths = [_num_samples(X) for X in arrays if X is not None]
+    uniques = np.unique(lengths)
+    if len(uniques) > 1:
+        raise ValueError('Found input variables with inconsistent numbers of samples: %r' % [int(l) for l in lengths])
+
+.sklearn.utils.validation._num_samples
+
+def _num_samples(x):
+    message = 'Expected sequence or array-like, got %s' % type(x)
+    if hasattr(x, 'fit') and callable(x.fit):
+        raise TypeError(message)
+    if not hasattr(x, '__len__') and (not hasattr(x, 'shape')):
+        if hasattr(x, '__array__'):
+            x = np.asarray(x)
+        else:
+            raise TypeError(message)
+    if hasattr(x, 'shape') and x.shape is not None:
+        if len(x.shape) == 0:
+            raise TypeError('Singleton array %r cannot be considered a valid collection.' % x)
+        if isinstance(x.shape[0], numbers.Integral):
+            return x.shape[0]
+    try:
+        return len(x)
+    except TypeError:
+        raise TypeError(message)
+
+.sklearn.utils.__init__.safe_indexing
+
+def safe_indexing(X, indices, axis=0):
+    if axis == 0:
+        return _safe_indexing_row(X, indices)
+    elif axis == 1:
+        return _safe_indexing_column(X, indices)
+    else:
+        raise ValueError("'axis' should be either 0 (to index rows) or 1 (to index  column). Got {} instead.".format(axis))
+
+.sklearn.utils.__init__._safe_indexing_row
+
+def _safe_indexing_row(X, indices):
+    if hasattr(X, 'iloc'):
+        indices = np.asarray(indices)
+        indices = indices if indices.flags.writeable else indices.copy()
+        try:
+            return X.iloc[indices]
+        except ValueError:
+            warnings.warn('Copying input dataframe for slicing.', DataConversionWarning)
+            return X.copy().iloc[indices]
+    elif hasattr(X, 'shape'):
+        if hasattr(X, 'take') and (hasattr(indices, 'dtype') and indices.dtype.kind == 'i'):
+            return X.take(indices, axis=0)
+        else:
+            return _array_indexing(X, indices, axis=0)
+    else:
+        return [X[idx] for idx in indices]
+
+
+[/PYTHON]
+What will be the input of `make_classification`, given the following output:
+[OUTPUT]
+```
+{
+    "output": [
+        "[[-232508.21854632 -354474.97313909]\n [-232507.78202776 -354475.55933516]\n [-232509.04155622 -354475.72108172]\n [-232508.30965461 -354475.12219317]\n [-232508.22031629 -354475.30960402]\n [-232508.67668887 -354474.73059655]\n [-232506.92838897 -354475.06217028]\n [-232505.71958381 -354476.65177236]\n [-232507.5565817  -354474.85872632]\n [-232508.17594927 -354474.08618978]\n [-232507.33363999 -354475.3444439 ]\n [-232510.36116169 -354475.14071856]\n [-232507.99265806 -354475.44247185]\n [-232504.69121707 -354475.28043252]\n [-232507.30189072 -354475.59752861]\n [-232509.81419565 -354475.1999835 ]\n [-232506.81343987 -354475.4973174 ]\n [-232505.09210759 -354475.49086075]\n [-232507.79180483 -354476.62589014]\n [-232506.56488091 -354475.51420334]\n [-232507.06307336 -354476.13635774]\n [-232505.74919045 -354476.03610987]\n [-232507.01436531 -354475.88657891]\n [-232505.83294859 -354475.32560203]\n [-232507.86998062 -354475.53228489]\n [-232507.83507816 -354475.46039811]\n [-232506.52189511 -354475.58583165]\n [-232506.48920074 -354475.60268725]\n [-232505.01184368 -354475.31384355]\n [-232507.24613233 -354475.23440939]\n [-232506.39874641 -354476.21498338]\n [-232506.67357356 -354475.80626214]\n [-232508.28683197 -354475.1374934 ]\n [-232507.33002652 -354474.61760395]\n [-232507.17888078 -354475.0677223 ]\n [-232506.08701897 -354475.63028021]\n [-232507.23744774 -354475.55672213]\n [-232507.26681025 -354476.13089412]\n [-232506.40036453 -354474.82427427]\n [-232510.73913203 -354475.2680624 ]\n [-232508.40529123 -354474.86966023]\n [-232507.50670207 -354476.13030311]\n [-232508.29925349 -354475.89224975]\n [-232508.63180048 -354475.57243553]\n [-232508.50512933 -354475.44136729]\n [-232509.24245641 -354475.86169845]\n [-232507.98976918 -354475.46033289]\n [-232507.9176491  -354474.27597038]\n [-232507.23533376 -354476.1926667 ]\n [-232508.28567055 -354476.39978757]\n [-302992.81909281  461936.39288892]\n [-302994.50557604  461937.94635199]\n [-302994.03731228  461938.00766299]\n [-302995.02828286  461935.5150888 ]\n [-302994.08269343  461936.22425886]\n [-302993.22238198  461937.43031942]\n [-302994.12713702  461936.94640646]\n [-302992.48188981  461937.12606905]\n [-302994.47826239  461936.60373377]\n [-302993.32706857  461936.04324626]\n [-302994.95234228  461935.88622631]\n [-302993.70097042  461937.09238463]\n [-302993.89725148  461935.85004596]\n [-302993.47481754  461936.02619291]\n [-302994.00169288  461935.93742449]\n [-302993.20126932  461937.1274232 ]\n [-302992.48589852  461937.14140742]\n [-302993.85932291  461935.25985765]\n [-302993.91868808  461936.62271824]\n [-302994.03737858  461938.43570217]\n [-302994.38033248  461935.62071445]\n [-302993.10890212  461935.57737977]\n [-302994.81834071  461936.22155061]\n [-302992.77447024  461936.1281945 ]\n [-302992.86878985  461936.64316239]\n [-302992.45205563  461937.75575139]\n [-302993.11812579  461935.71510915]\n [-302995.02208374  461935.8180428 ]\n [-302993.42139502  461937.38652089]\n [-302994.17557382  461935.40808942]\n [-302992.20031348  461936.04765826]\n [-302993.59515493  461937.54480803]\n [-302993.61293778  461937.31892038]\n [-302992.82067027  461937.44729177]\n [-302994.03026215  461935.60011791]\n [-302992.89043972  461936.05292586]\n [-302993.44967179  461936.21360874]\n [-302992.30026979  461936.5612675 ]\n [-302991.62137021  461936.47636668]\n [-302992.05400736  461937.43067419]\n [-302993.51777751  461935.65930903]\n [-302994.71950003  461935.68684704]\n [-302993.705712    461935.45977201]\n [-302992.4508815   461936.78804069]\n [-302993.23469959  461937.07550047]\n [-302994.03646905  461937.09811732]\n [-302994.37268545  461938.17629976]\n [-302993.23351448  461936.33482695]\n [-302993.87831742  461937.40656049]\n [-302992.04086561  461937.44605579]\n [ 255363.43986111 -389320.98241016]\n [ 255363.30683155 -389321.36092184]\n [ 255362.80876612 -389321.74284852]\n [ 255362.73502501 -389321.35760177]\n [ 255364.39541809 -389320.83769968]\n [ 255363.70601948 -389321.47835275]\n [ 255361.43736131 -389322.00868576]\n [ 255364.42201987 -389320.86238945]\n [ 255364.15589543 -389321.38299641]\n [ 255365.07847724 -389320.85912101]\n [ 255363.50500175 -389321.46803414]\n [ 255364.10724636 -389321.02302581]\n [ 255364.8313544  -389320.64993342]\n [ 255364.21531103 -389321.32913357]\n [ 255364.88807326 -389321.29741943]\n [ 255361.66929241 -389320.87195568]\n [ 255363.35708554 -389321.7494551 ]\n [ 255364.10646132 -389320.93998553]\n [ 255363.65075896 -389321.14276587]\n [ 255363.48140581 -389320.47834044]\n [ 255362.76476649 -389322.15595022]\n [ 255364.01246656 -389320.41218739]\n [ 255362.96065276 -389321.2257766 ]\n [ 255363.38402428 -389321.21976083]\n [ 255363.10906661 -389321.84084277]\n [ 255363.94927258 -389320.47651587]\n [ 255365.25231891 -389321.08760736]\n [ 255364.60429039 -389320.71800613]\n [ 255364.15160519 -389321.1052427 ]\n [ 255365.48541318 -389320.790093  ]\n [ 255363.12033823 -389321.52015679]\n [ 255363.91671802 -389321.26135436]\n [ 255362.53970242 -389320.21667867]\n [ 255361.83169818 -389322.10422332]\n [ 255364.12224949 -389320.93806471]\n [ 255363.09902257 -389321.42029376]\n [ 255366.03376836 -389321.58918729]\n [ 255363.95169752 -389321.73215879]\n [ 255364.63112242 -389321.77720464]\n [ 255363.4735579  -389321.6753378 ]\n [ 255364.88764407 -389321.52231569]\n [ 255363.25911577 -389322.10855558]\n [ 255364.07709149 -389320.90592008]\n [ 255361.14611924 -389321.57301628]\n [ 255364.0044043  -389321.77573436]\n [ 255363.64667561 -389321.60452484]\n [ 255364.06762838 -389321.35395349]\n [ 255365.24548377 -389321.63757933]\n [ 255363.54327882 -389320.97843508]\n [ 255362.85053067 -389321.32236408]\n [ 230842.94232064  351937.33976208]\n [ 230841.94820124  351936.24465735]\n [ 230842.6194443   351937.36387095]\n [ 230842.91694887  351937.42091885]\n [ 230842.61353507  351937.17287092]\n [ 230842.35577513  351936.76057849]\n [ 230842.39477472  351936.84566537]\n [ 230842.66785716  351937.07578371]\n [ 230842.07874811  351936.28127723]\n [ 230842.99921994  351937.60777987]\n [ 230842.81524982  351937.84272939]\n [ 230842.930161    351937.75021585]\n [ 230841.75838178  351935.80159202]\n [ 230841.74403258  351935.78353672]\n [ 230844.01274872  351939.12082134]\n [ 230843.46442074  351938.36588081]\n [ 230843.0286604   351938.01405406]\n [ 230841.6853373   351935.84189201]\n [ 230842.58753704  351936.89472845]\n [ 230842.58825794  351937.06960696]\n [ 230842.61143668  351937.18170694]\n [ 230842.09366877  351936.53211289]\n [ 230842.59731815  351936.8660077 ]\n [ 230841.47707626  351935.52217887]\n [ 230842.67380285  351937.13801008]\n [ 230843.37171569  351938.07011008]\n [ 230842.74970512  351937.45114181]\n [ 230841.97068302  351936.30484975]\n [ 230841.88706758  351936.25676401]\n [ 230842.40948724  351936.91510878]\n [ 230842.42531249  351936.83253723]\n [ 230842.3569449   351936.60545142]\n [ 230842.05953966  351936.23680653]\n [ 230841.84850207  351936.09591081]\n [ 230842.42301323  351936.99502821]\n [ 230841.75979504  351935.73236809]\n [ 230842.63145773  351937.34297663]\n [ 230843.42105611  351938.29660839]\n [ 230843.5271581   351938.17448896]\n [ 230842.09753184  351936.16350199]\n [ 230842.72056935  351937.02285344]\n [ 230841.44415034  351935.63759838]\n [ 230842.01188921  351936.31722754]\n [ 230842.33133243  351936.48055423]\n [ 230842.42748392  351936.76711785]\n [ 230842.05358052  351936.62645787]\n [ 230841.65573873  351936.04595944]\n [ 230842.55091323  351936.86452584]\n [ 230841.98547667  351936.39010095]\n [ 230843.45703635  351938.3383238 ]]",
+        "[0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 2 2\n 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n 2 2 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3\n 3 3 3 3 3 3 3 3 3 3 3 3 3 3 3]"
+    ]
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {},
+    "args": {},
+    "kwargs": {
+        "class_sep": XXX,
+        "n_redundant": XXX,
+        "n_repeated": XXX,
+        "flip_y": XXX,
+        "shift": XXX,
+        "scale": XXX,
+        "shuffle": XXX,
+        "n_samples": XXX,
+        "n_classes": XXX,
+        "weights": XXX,
+        "n_features": XXX,
+        "n_informative": XXX,
+        "n_clusters_per_class": XXX,
+        "hypercube": XXX,
+        "random_state": XXX
+    }
+}
+```
+[/STRUCTURE]

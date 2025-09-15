@@ -1,0 +1,331 @@
+def getit(self):
+    try:
+        return self._assumptions[fact]
+    except KeyError:
+        if self._assumptions is self.default_assumptions:
+            self._assumptions = self.default_assumptions.copy()
+        return _ask(fact, self)
+
+def copy(self):
+    return self.__class__(self)
+
+def __init__(self, facts=None):
+    if not facts:
+        self._generator = {}
+    elif not isinstance(facts, FactKB):
+        self._generator = facts.copy()
+    else:
+        self._generator = facts.generator
+    if facts:
+        self.deduce_all_facts(facts)
+
+def generator(self):
+    return self._generator.copy()
+
+def deduce_all_facts(self, facts):
+    full_implications = self.rules.full_implications
+    beta_triggers = self.rules.beta_triggers
+    beta_rules = self.rules.beta_rules
+    if isinstance(facts, dict):
+        facts = facts.items()
+    while facts:
+        beta_maytrigger = set()
+        for k, v in facts:
+            if not self._tell(k, v) or v is None:
+                continue
+            for key, value in full_implications[k, v]:
+                self._tell(key, value)
+            beta_maytrigger.update(beta_triggers[k, v])
+        facts = []
+        for bidx in beta_maytrigger:
+            bcond, bimpl = beta_rules[bidx]
+            if all((self.get(k) is v for k, v in bcond)):
+                facts.append(bimpl)
+
+def _tell(self, k, v):
+    if k in self and self[k] is not None:
+        if self[k] == v:
+            return False
+        else:
+            raise InconsistentAssumptions(self, k, v)
+    else:
+        self[k] = v
+        return True
+
+def _ask(fact, obj):
+    assumptions = obj._assumptions
+    handler_map = obj._prop_handler
+    assumptions._tell(fact, None)
+    try:
+        evaluate = handler_map[fact]
+    except KeyError:
+        pass
+    else:
+        a = evaluate(obj)
+        if a is not None:
+            assumptions.deduce_all_facts(((fact, a),))
+            return a
+    prereq = list(_assume_rules.prereq[fact])
+    shuffle(prereq)
+    for pk in prereq:
+        if pk in assumptions:
+            continue
+        if pk in handler_map:
+            _ask(pk, obj)
+            ret_val = assumptions.get(fact)
+            if ret_val is not None:
+                return ret_val
+    return None
+
+def _eval_is_infinite(self):
+    if self._mpf_ in (_mpf_inf, _mpf_ninf):
+        return True
+    return False
+
+def _eval_is_finite(self):
+    return True
+
+def __eq__(self, other):
+    if isinstance(other, float):
+        o = Float(other)
+        try:
+            ompf = o._as_mpf_val(self._prec)
+        except ValueError:
+            return False
+        return bool(mlib.mpf_eq(self._mpf_, ompf))
+    try:
+        other = _sympify(other)
+    except SympifyError:
+        return NotImplemented
+    if isinstance(other, NumberSymbol):
+        if other.is_irrational:
+            return False
+        return other.__eq__(self)
+    if isinstance(other, Float):
+        return bool(mlib.mpf_eq(self._mpf_, other._mpf_))
+    if isinstance(other, Number):
+        ompf = other._as_mpf_val(self._prec)
+        return bool(mlib.mpf_eq(self._mpf_, ompf))
+    return False
+
+def _sympify(a):
+    return sympify(a, strict=True)
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            if not isinstance(a, np.floating):
+                func = converter[complex] if np.iscomplex(a) else sympify
+                return func(np.asscalar(a))
+            else:
+                try:
+                    from sympy.core.numbers import Float
+                    prec = np.finfo(a).nmant
+                    a = str(list(np.reshape(np.asarray(a), (1, np.size(a)))[0]))[1:-1]
+                    return Float(a, precision=prec)
+                except NotImplementedError:
+                    raise SympifyError('Translation for numpy float : %s is not implemented' % a)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    try:
+        from ..tensor.array import Array
+        return Array(a.flat, a.shape)
+    except AttributeError:
+        pass
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+def __hash__(self):
+    return super(Rational, self).__hash__()
+
+def __hash__(self):
+    return super(Number, self).__hash__()
+
+def __hash__(self):
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+
+
+from __future__ import print_function, division
+from sympy.core.numbers import nan
+from .function import Function
+from sympy.core.add import Add
+from sympy.core.mul import Mul
+from sympy.core.singleton import S
+from sympy.core.exprtools import gcd_terms
+from sympy.polys.polytools import gcd
+from sympy.core.logic import fuzzy_and, fuzzy_not
+
+class Mod(Function):
+
+    @classmethod
+    def eval(cls, p, q):
+        from sympy.core.add import Add
+        from sympy.core.mul import Mul
+        from sympy.core.singleton import S
+        from sympy.core.exprtools import gcd_terms
+        from sympy.polys.polytools import gcd
+
+        def doit(p, q):
+            if p.is_infinite or q.is_infinite or p is nan or (q is nan):
+                return nan
+            if p == q or p == -q or (p.is_Pow and p.exp.is_integer and (p.base == q) and q.is_integer and p.exp.is_positive) or (p.is_integer and q == 1):
+                return S.Zero
+            if q.is_Number:
+                if p.is_Number:
+                    return p % q
+                if q == 2:
+                    if p.is_even:
+                        return S.Zero
+                    elif p.is_odd:
+                        return S.One
+            r = p / q
+            try:
+                d = int(r)
+            except TypeError:
+                pass
+            else:
+                if type(d) is int:
+                    rv = p - d * q
+                    if (rv * q < 0) == True:
+                        rv += q
+                    return rv
+            d = p - q
+            if d.is_negative:
+                if q.is_negative:
+                    return d
+                elif q.is_positive:
+                    return p
+        rv = doit(p, q)
+        if rv is not None:
+            return rv
+        if p.func is cls:
+            qinner = p.args[1]
+            if qinner == q:
+                return p
+        G = gcd(p, q)
+        if G != 1:
+            p, q = [gcd_terms(i / G, clear=False, fraction=False) for i in (p, q)]
+        pwas, qwas = (p, q)
+        if p.is_Add:
+            args = []
+            for i in p.args:
+                a = cls(i, q)
+                if a.count(cls) > i.count(cls):
+                    args.append(i)
+                else:
+                    args.append(a)
+            if args != list(p.args):
+                p = Add(*args)
+        else:
+            cp, p = p.as_coeff_Mul()
+            cq, q = q.as_coeff_Mul()
+            ok = False
+            if not cp.is_Rational or not cq.is_Rational:
+                r = cp % cq
+                if r == 0:
+                    G *= cq
+                    p *= int(cp / cq)
+                    ok = True
+            if not ok:
+                p = cp * p
+                q = cq * q
+        if p.could_extract_minus_sign() and q.could_extract_minus_sign():
+            G, p, q = [-i for i in (G, p, q)]
+        rv = doit(p, q)
+        if rv is not None:
+            return rv * G
+        if G.is_Float and G == 1:
+            p *= G
+            return cls(p, q, evaluate=False)
+        elif G.is_Mul and G.args[0].is_Float and (G.args[0] == 1):
+            p = G.args[0] * p
+            G = Mul._from_args(G.args[1:])
+        return G * cls(p, q, evaluate=(p, q) != (pwas, qwas))
+
+    def _eval_is_integer(self):
+        from sympy.core.logic import fuzzy_and, fuzzy_not
+        p, q = self.args
+        if fuzzy_and([p.is_integer, q.is_integer, fuzzy_not(q.is_zero)]):
+            return True
+
+    def _eval_is_nonnegative(self):
+        if self.args[1].is_positive:
+            return True
+
+    def _eval_is_nonpositive(self):
+        if self.args[1].is_negative:
+            return True

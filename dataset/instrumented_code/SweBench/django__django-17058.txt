@@ -1,0 +1,1231 @@
+diff --git a/django/db/backends/base/features.py b/django/db/backends/base/features.py
+index 11dd079..79abad8 100644
+--- a/django/db/backends/base/features.py
++++ b/django/db/backends/base/features.py
+@@ -27,6 +27,11 @@ class BaseDatabaseFeatures:
+     # Does the backend allow inserting duplicate rows when a unique_together
+     # constraint exists and some fields are nullable but not all of them?
+     supports_partially_nullable_unique_constraints = True
++
++    # Does the backend supports specifying whether NULL values should be
++    # considered distinct in unique constraints?
++    supports_nulls_distinct_unique_constraints = False
++
+     # Does the backend support initially deferrable unique constraints?
+     supports_deferrable_unique_constraints = False
+ 
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+index 9329ee0..e2a41c6 100644
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-17058/django/db/backends/base/schema.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import logging
+ import operator
+ from datetime import datetime
+@@ -129,7 +322,7 @@ class BaseDatabaseSchemaEditor:
+     )
+     sql_create_unique_index = (
+         "CREATE UNIQUE INDEX %(name)s ON %(table)s "
+-        "(%(columns)s)%(include)s%(condition)s"
++        "(%(columns)s)%(include)s%(condition)s%(nulls_distinct)s"
+     )
+     sql_rename_index = "ALTER INDEX %(old_name)s RENAME TO %(new_name)s"
+     sql_delete_index = "DROP INDEX %(name)s"
+@@ -1675,12 +1868,21 @@ class BaseDatabaseSchemaEditor:
+         if deferrable == Deferrable.IMMEDIATE:
+             return " DEFERRABLE INITIALLY IMMEDIATE"
+ 
++    def _unique_index_nulls_distinct_sql(self, nulls_distinct):
++        if nulls_distinct is False:
++            return " NULLS NOT DISTINCT"
++        elif nulls_distinct is True:
++            return " NULLS DISTINCT"
++        return ""
++
++    @inspect_code
+     def _unique_supported(
+         self,
+         condition=None,
+         deferrable=None,
+         include=None,
+         expressions=None,
++        nulls_distinct=None,
+     ):
+         return (
+             (not condition or self.connection.features.supports_partial_indexes)
+@@ -1692,8 +1894,13 @@ class BaseDatabaseSchemaEditor:
+             and (
+                 not expressions or self.connection.features.supports_expression_indexes
+             )
++            and (
++                nulls_distinct is None
++                or self.connection.features.supports_nulls_distinct_unique_constraints
++            )
+         )
+ 
++    @inspect_code
+     def _unique_sql(
+         self,
+         model,
+@@ -1704,17 +1911,26 @@ class BaseDatabaseSchemaEditor:
+         include=None,
+         opclasses=None,
+         expressions=None,
++        nulls_distinct=None,
+     ):
+         if not self._unique_supported(
+             condition=condition,
+             deferrable=deferrable,
+             include=include,
+             expressions=expressions,
++            nulls_distinct=nulls_distinct,
+         ):
+             return None
+-        if condition or include or opclasses or expressions:
+-            # Databases support conditional, covering, and functional unique
+-            # constraints via a unique index.
++
++        if (
++            condition
++            or include
++            or opclasses
++            or expressions
++            or nulls_distinct is not None
++        ):
++            # Databases support conditional, covering, functional unique,
++            # and nulls distinct constraints via a unique index.
+             sql = self._create_unique_sql(
+                 model,
+                 fields,
+@@ -1723,6 +1939,7 @@ class BaseDatabaseSchemaEditor:
+                 include=include,
+                 opclasses=opclasses,
+                 expressions=expressions,
++                nulls_distinct=nulls_distinct,
+             )
+             if sql:
+                 self.deferred_sql.append(sql)
+@@ -1736,6 +1953,7 @@ class BaseDatabaseSchemaEditor:
+             "constraint": constraint,
+         }
+ 
++    @inspect_code
+     def _create_unique_sql(
+         self,
+         model,
+@@ -1746,12 +1964,14 @@ class BaseDatabaseSchemaEditor:
+         include=None,
+         opclasses=None,
+         expressions=None,
++        nulls_distinct=None,
+     ):
+         if not self._unique_supported(
+             condition=condition,
+             deferrable=deferrable,
+             include=include,
+             expressions=expressions,
++            nulls_distinct=nulls_distinct,
+         ):
+             return None
+ 
+@@ -1782,6 +2002,7 @@ class BaseDatabaseSchemaEditor:
+             condition=self._index_condition_sql(condition),
+             deferrable=self._deferrable_constraint_sql(deferrable),
+             include=self._index_include_sql(model, include),
++            nulls_distinct=self._unique_index_nulls_distinct_sql(nulls_distinct),
+         )
+ 
+     def _unique_constraint_name(self, table, columns, quote=True):
+@@ -1804,12 +2025,14 @@ class BaseDatabaseSchemaEditor:
+         include=None,
+         opclasses=None,
+         expressions=None,
++        nulls_distinct=None,
+     ):
+         if not self._unique_supported(
+             condition=condition,
+             deferrable=deferrable,
+             include=include,
+             expressions=expressions,
++            nulls_distinct=nulls_distinct,
+         ):
+             return None
+         if condition or include or opclasses or expressions:
+diff --git a/django/db/backends/postgresql/features.py b/django/db/backends/postgresql/features.py
+index 29b6a4f..12dbc71 100644
+--- a/django/db/backends/postgresql/features.py
++++ b/django/db/backends/postgresql/features.py
+@@ -132,6 +132,13 @@ class DatabaseFeatures(BaseDatabaseFeatures):
+     def is_postgresql_14(self):
+         return self.connection.pg_version >= 140000
+ 
++    @cached_property
++    def is_postgresql_15(self):
++        return self.connection.pg_version >= 150000
++
+     has_bit_xor = property(operator.attrgetter("is_postgresql_14"))
+     supports_covering_spgist_indexes = property(operator.attrgetter("is_postgresql_14"))
+     supports_unlimited_charfield = True
++    supports_nulls_distinct_unique_constraints = property(
++        operator.attrgetter("is_postgresql_15")
++    )
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 0711ec0..c0057ef 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-17058/django/db/models/base.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import copy
+ import inspect
+ import warnings
+@@ -2337,6 +2530,7 @@ class Model(AltersData, metaclass=ModelBase):
+                 yield from cls._get_expr_references(src_expr)
+ 
+     @classmethod
++    @inspect_code
+     def _check_constraints(cls, databases):
+         errors = []
+         for db in databases:
+@@ -2442,6 +2636,29 @@ class Model(AltersData, metaclass=ModelBase):
+                         id="models.W044",
+                     )
+                 )
++            if not (
++                connection.features.supports_nulls_distinct_unique_constraints
++                or (
++                    "supports_nulls_distinct_unique_constraints"
++                    in cls._meta.required_db_features
++                )
++            ) and any(
++                isinstance(constraint, UniqueConstraint)
++                and constraint.nulls_distinct is not None
++                for constraint in cls._meta.constraints
++            ):
++                errors.append(
++                    checks.Warning(
++                        "%s does not support unique constraints with "
++                        "nulls distinct." % connection.display_name,
++                        hint=(
++                            "A constraint won't be created. Silence this "
++                            "warning if you don't care about it."
++                        ),
++                        obj=cls,
++                        id="models.W047",
++                    )
++                )
+             fields = set(
+                 chain.from_iterable(
+                     (*constraint.fields, *constraint.include)
+diff --git a/django/db/models/constraints.py b/django/db/models/constraints.py
+index 0df0782..021fe51 100644
+--- a/django/db/models/constraints.py
++++ b/django/db/models/constraints.py
+@@ -1,3 +1,196 @@
++import inspect
++def recursive_object_seralizer(obj, visited):
++    seralized_dict = {}
++    keys = list(obj.__dict__)
++    for k in keys:
++        if id(obj.__dict__[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(obj.__dict__[k])
++            continue
++        if isinstance(obj.__dict__[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = obj.__dict__[k]
++        elif isinstance(obj.__dict__[k], tuple):
++            ## handle tuple
++            seralized_dict[k] = recursive_tuple_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], set):
++            ## handle set
++            seralized_dict[k] = recursive_set_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], list):
++            ## handle list
++            seralized_dict[k] = recursive_list_seralizer(obj.__dict__[k], visited)
++        elif hasattr(obj.__dict__[k], '__dict__'):
++            ## handle object
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_object_seralizer(obj.__dict__[k], visited)
++        elif isinstance(obj.__dict__[k], dict):
++            visited.append(id(obj.__dict__[k]))
++            seralized_dict[k] = recursive_dict_seralizer(obj.__dict__[k], visited)
++        elif callable(obj.__dict__[k]):
++            ## handle function
++            if hasattr(obj.__dict__[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(obj.__dict__[k].__name__)
++        else:
++            seralized_dict[k] = str(obj.__dict__[k])
++    return seralized_dict
++
++def recursive_dict_seralizer(dictionary, visited):
++    seralized_dict = {}
++    keys = list(dictionary)
++    for k in keys:
++        if id(dictionary[k]) in visited:
++            seralized_dict[k] = "<RECURSIVE {}>".format(dictionary[k])
++            continue
++        # if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++        #     pass
++        # else:
++        #     visited.append(id(dictionary[k]))
++        if isinstance(dictionary[k], (float, int, str, bool, type(None))):
++            seralized_dict[k] = dictionary[k]
++        elif isinstance(dictionary[k], list):
++            seralized_dict[k] = recursive_list_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], tuple):
++            seralized_dict[k] = recursive_tuple_seralizer(dictionary[k], visited)
++        elif isinstance(dictionary[k], set):
++            seralized_dict[k] = recursive_set_seralizer(dictionary[k], visited)        
++        elif hasattr(dictionary[k], '__dict__'):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_object_seralizer(dictionary[k], visited)
++        elif callable(dictionary[k]):
++            if hasattr(dictionary[k], '__name__'):
++                seralized_dict[k] = "<function {}>".format(dictionary[k].__name__)
++        elif isinstance(dictionary[k], dict):
++            visited.append(id(dictionary[k]))
++            seralized_dict[k] = recursive_dict_seralizer(dictionary[k], visited)
++        else:
++            seralized_dict[k] =str(dictionary[k])
++    return seralized_dict   
++
++def recursive_set_seralizer(set_data, visited):
++    new_set = set()
++    for s in set_data:
++        if id(s) in visited:
++            continue 
++        if isinstance(s, (float, int, str, bool, type(None))):
++            new_set.add(s)
++        elif isinstance(s, tuple):
++            new_set.add(recursive_tuple_seralizer(s, visited))
++        elif isinstance(s, list):
++            new_set.add(recursive_list_seralizer(s, visited))
++        elif isinstance(s, set):
++            new_set.add(recursive_set_seralizer(s,visited))
++        elif isinstance(s, dict):
++            visited.append(id(s))
++            new_set.add(recursive_dict_seralizer(s, visited))
++        elif hasattr(s, '__dict__'):
++            visited.append(id(s))
++            new_set.add(str(recursive_object_seralizer(s, visited)))
++        elif callable(s):
++            if hasattr(s, '__name__'):
++                new_set.add("<function {}>".format(s.__name__))
++        else:
++            new_set.add(str(s))
++    return new_set
++    
++
++def recursive_tuple_seralizer(tup, visited):
++    new_tup = ()
++    for t in tup:
++        if id(t) in visited:
++           continue
++        if isinstance(t, (float, int, str, bool, type(None))):
++            new_tup = (*new_tup, t)
++        elif isinstance(t, tuple):
++            new_tup = (*new_tup, recursive_tuple_seralizer(t, visited))
++        elif isinstance(t, list):
++            new_tup = (*new_tup, recursive_list_seralizer(t, visited))
++        elif isinstance(t, set):
++            new_tup = (*new_tup, recursive_set_seralizer(t, visited))
++        elif isinstance(t, dict):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_dict_seralizer(t, visited))
++        elif hasattr(t, '__dict__'):
++            visited.append(id(t))
++            new_tup = (*new_tup, recursive_object_seralizer(t, visited))
++        elif callable(t):
++            if hasattr(t, '__name__'):
++                new_tup = (*new_tup, "<function {}>".format(t.__name__))
++        else:
++            new_tup = (*new_tup, str(t))
++    return new_tup
++
++def recursive_list_seralizer(li, visited):
++    new_list = []
++    for l in li:
++        if id(l) in visited:
++            continue
++        if isinstance(l, (float, int, str, bool, type(None))):
++            new_list.append(l)
++        elif isinstance(l, tuple):
++            new_list.append(recursive_tuple_seralizer(l, visited))
++        elif isinstance(l, list):
++            new_list.append(recursive_list_seralizer(l, visited))
++        elif isinstance(l, set):
++            new_list.append(recursive_set_seralizer(l, visited))
++        elif hasattr(l, '__dict__'):
++            visited.append(id(l))
++            new_list.append(recursive_object_seralizer(l, visited))
++        elif isinstance(l, dict):
++            visited.append(id(l))
++            new_list.append(recursive_dict_seralizer(l, visited))
++        elif callable(l):
++            if hasattr(l, '__name__'):
++                new_list.append("<function {}>".format(l.__name__))
++        else:
++            new_list.append(str(l))       
++
++def inspect_code(func):
++    def wrapper(*args, **kwargs):
++        visited = []
++        filename = "/home/changshu/CODEMIND/scripts/swebench/swebench_playground/obj/django__django-17058/django/db/models/constraints.py"
++        para_dict = {"name": func.__name__}
++        args_names = inspect.getfullargspec(func).args
++        if len(args) > 0 and hasattr(args[0], '__dict__') and args_names[0] == 'self':
++            ## 'self'
++            self_args = args[0]
++            para_dict['self'] = recursive_object_seralizer(self_args, [id(self_args)])
++        else:
++            para_dict['self'] = {}
++        if len(args) > 0 :
++            if args_names[0] == 'self':
++                other_args = {}
++                for m,n in zip(args_names[1:], args[1:]):
++                    other_args[m] = n
++            else:
++                other_args = {}
++                for m,n in zip(args_names, args):
++                    other_args[m] = n
++            para_dict['args'] = recursive_dict_seralizer(other_args, [id(other_args)])
++        else:
++            para_dict['args'] = {}
++        if kwargs:
++            para_dict['kwargs'] = recursive_dict_seralizer(kwargs, [id(kwargs)])
++        else:
++            para_dict['kwargs'] = {}
++            
++        result = func(*args, **kwargs)
++        ## seralize the return value
++        if isinstance(result, tuple):
++            ret = recursive_tuple_seralizer(result, [])
++        elif isinstance(result, (float, int, str)):
++            ret = result
++        elif isinstance(result, list):
++            ret = recursive_list_seralizer(result, [])
++        elif isinstance(result, dict):
++            ret = recursive_dict_seralizer(result, [])
++        elif hasattr(result, '__dict__'):
++            ret = recursive_object_seralizer(result, [])
++        elif callable(result):
++            ret = "<function {}>".format(result.__name__)
++        else:
++            ret = str(result)
++        para_dict["return"] = ret
++        print("@[DATA]@", filename,"[SEP]", para_dict, "[/SEP]")
++        return result
++    return wrapper
+ import warnings
+ from enum import Enum
+ from types import NoneType
+@@ -177,6 +370,7 @@ class Deferrable(Enum):
+ 
+ 
+ class UniqueConstraint(BaseConstraint):
++    @inspect_code
+     def __init__(
+         self,
+         *expressions,
+@@ -186,6 +380,7 @@ class UniqueConstraint(BaseConstraint):
+         deferrable=None,
+         include=None,
+         opclasses=(),
++        nulls_distinct=None,
+         violation_error_code=None,
+         violation_error_message=None,
+     ):
+@@ -216,13 +411,15 @@ class UniqueConstraint(BaseConstraint):
+                 "Use django.contrib.postgres.indexes.OpClass() instead."
+             )
+         if not isinstance(deferrable, (NoneType, Deferrable)):
+-            raise ValueError(
++            raise TypeError(
+                 "UniqueConstraint.deferrable must be a Deferrable instance."
+             )
+         if not isinstance(include, (NoneType, list, tuple)):
+-            raise ValueError("UniqueConstraint.include must be a list or tuple.")
++            raise TypeError("UniqueConstraint.include must be a list or tuple.")
+         if not isinstance(opclasses, (list, tuple)):
+-            raise ValueError("UniqueConstraint.opclasses must be a list or tuple.")
++            raise TypeError("UniqueConstraint.opclasses must be a list or tuple.")
++        if not isinstance(nulls_distinct, (NoneType, bool)):
++            raise TypeError("UniqueConstraint.nulls_distinct must be a bool.")
+         if opclasses and len(fields) != len(opclasses):
+             raise ValueError(
+                 "UniqueConstraint.fields and UniqueConstraint.opclasses must "
+@@ -233,6 +430,7 @@ class UniqueConstraint(BaseConstraint):
+         self.deferrable = deferrable
+         self.include = tuple(include) if include else ()
+         self.opclasses = opclasses
++        self.nulls_distinct = nulls_distinct
+         self.expressions = tuple(
+             F(expression) if isinstance(expression, str) else expression
+             for expression in expressions
+@@ -268,6 +466,7 @@ class UniqueConstraint(BaseConstraint):
+             Query(model, alias_cols=False),
+         )
+ 
++    @inspect_code
+     def constraint_sql(self, model, schema_editor):
+         fields = [model._meta.get_field(field_name) for field_name in self.fields]
+         include = [
+@@ -284,6 +483,7 @@ class UniqueConstraint(BaseConstraint):
+             include=include,
+             opclasses=self.opclasses,
+             expressions=expressions,
++            nulls_distinct=self.nulls_distinct,
+         )
+ 
+     def create_sql(self, model, schema_editor):
+@@ -302,6 +502,7 @@ class UniqueConstraint(BaseConstraint):
+             include=include,
+             opclasses=self.opclasses,
+             expressions=expressions,
++            nulls_distinct=self.nulls_distinct,
+         )
+ 
+     def remove_sql(self, model, schema_editor):
+@@ -318,10 +519,12 @@ class UniqueConstraint(BaseConstraint):
+             include=include,
+             opclasses=self.opclasses,
+             expressions=expressions,
++            nulls_distinct=self.nulls_distinct,
+         )
+ 
++    @inspect_code
+     def __repr__(self):
+-        return "<%s:%s%s%s%s%s%s%s%s%s>" % (
++        return "<%s:%s%s%s%s%s%s%s%s%s%s>" % (
+             self.__class__.__qualname__,
+             "" if not self.fields else " fields=%s" % repr(self.fields),
+             "" if not self.expressions else " expressions=%s" % repr(self.expressions),
+@@ -330,6 +533,11 @@ class UniqueConstraint(BaseConstraint):
+             "" if self.deferrable is None else " deferrable=%r" % self.deferrable,
+             "" if not self.include else " include=%s" % repr(self.include),
+             "" if not self.opclasses else " opclasses=%s" % repr(self.opclasses),
++            (
++                ""
++                if self.nulls_distinct is None
++                else " nulls_distinct=%r" % self.nulls_distinct
++            ),
+             (
+                 ""
+                 if self.violation_error_code is None
+@@ -343,6 +551,7 @@ class UniqueConstraint(BaseConstraint):
+             ),
+         )
+ 
++    @inspect_code
+     def __eq__(self, other):
+         if isinstance(other, UniqueConstraint):
+             return (
+@@ -353,11 +562,13 @@ class UniqueConstraint(BaseConstraint):
+                 and self.include == other.include
+                 and self.opclasses == other.opclasses
+                 and self.expressions == other.expressions
++                and self.nulls_distinct is other.nulls_distinct
+                 and self.violation_error_code == other.violation_error_code
+                 and self.violation_error_message == other.violation_error_message
+             )
+         return super().__eq__(other)
+ 
++    @inspect_code
+     def deconstruct(self):
+         path, args, kwargs = super().deconstruct()
+         if self.fields:
+@@ -370,8 +581,11 @@ class UniqueConstraint(BaseConstraint):
+             kwargs["include"] = self.include
+         if self.opclasses:
+             kwargs["opclasses"] = self.opclasses
++        if self.nulls_distinct is not None:
++            kwargs["nulls_distinct"] = self.nulls_distinct
+         return path, self.expressions, kwargs
+ 
++    @inspect_code
+     def validate(self, model, instance, exclude=None, using=DEFAULT_DB_ALIAS):
+         queryset = model._default_manager.using(using)
+         if self.fields:
+@@ -381,9 +595,15 @@ class UniqueConstraint(BaseConstraint):
+                     return
+                 field = model._meta.get_field(field_name)
+                 lookup_value = getattr(instance, field.attname)
+-                if lookup_value is None or (
+-                    lookup_value == ""
+-                    and connections[using].features.interprets_empty_strings_as_nulls
++                if (
++                    self.nulls_distinct is not False
++                    and lookup_value is None
++                    or (
++                        lookup_value == ""
++                        and connections[
++                            using
++                        ].features.interprets_empty_strings_as_nulls
++                    )
+                 ):
+                     # A composite constraint containing NULL value cannot cause
+                     # a violation since NULL != NULL in SQL.
+diff --git a/tests/constraints/tests.py b/tests/constraints/tests.py
+index 1ed669a..7e3d20e 100644
+--- a/tests/constraints/tests.py
++++ b/tests/constraints/tests.py
+@@ -503,6 +503,27 @@ class UniqueConstraintTests(TestCase):
+         self.assertEqual(constraint, mock.ANY)
+         self.assertNotEqual(constraint, another_constraint)
+ 
++    def test_eq_with_nulls_distinct(self):
++        constraint_1 = models.UniqueConstraint(
++            Lower("title"),
++            nulls_distinct=False,
++            name="book_func_nulls_distinct_uq",
++        )
++        constraint_2 = models.UniqueConstraint(
++            Lower("title"),
++            nulls_distinct=True,
++            name="book_func_nulls_distinct_uq",
++        )
++        constraint_3 = models.UniqueConstraint(
++            Lower("title"),
++            name="book_func_nulls_distinct_uq",
++        )
++        self.assertEqual(constraint_1, constraint_1)
++        self.assertEqual(constraint_1, mock.ANY)
++        self.assertNotEqual(constraint_1, constraint_2)
++        self.assertNotEqual(constraint_1, constraint_3)
++        self.assertNotEqual(constraint_2, constraint_3)
++
+     def test_repr(self):
+         fields = ["foo", "bar"]
+         name = "unique_fields"
+@@ -560,6 +581,18 @@ class UniqueConstraintTests(TestCase):
+             "opclasses=['text_pattern_ops', 'varchar_pattern_ops']>",
+         )
+ 
++    def test_repr_with_nulls_distinct(self):
++        constraint = models.UniqueConstraint(
++            fields=["foo", "bar"],
++            name="nulls_distinct_fields",
++            nulls_distinct=False,
++        )
++        self.assertEqual(
++            repr(constraint),
++            "<UniqueConstraint: fields=('foo', 'bar') name='nulls_distinct_fields' "
++            "nulls_distinct=False>",
++        )
++
+     def test_repr_with_expressions(self):
+         constraint = models.UniqueConstraint(
+             Lower("title"),
+@@ -679,6 +712,24 @@ class UniqueConstraintTests(TestCase):
+             },
+         )
+ 
++    def test_deconstruction_with_nulls_distinct(self):
++        fields = ["foo", "bar"]
++        name = "unique_fields"
++        constraint = models.UniqueConstraint(
++            fields=fields, name=name, nulls_distinct=True
++        )
++        path, args, kwargs = constraint.deconstruct()
++        self.assertEqual(path, "django.db.models.UniqueConstraint")
++        self.assertEqual(args, ())
++        self.assertEqual(
++            kwargs,
++            {
++                "fields": tuple(fields),
++                "name": name,
++                "nulls_distinct": True,
++            },
++        )
++
+     def test_deconstruction_with_expressions(self):
+         name = "unique_fields"
+         constraint = models.UniqueConstraint(Lower("title"), name=name)
+@@ -995,7 +1046,7 @@ class UniqueConstraintTests(TestCase):
+ 
+     def test_invalid_defer_argument(self):
+         message = "UniqueConstraint.deferrable must be a Deferrable instance."
+-        with self.assertRaisesMessage(ValueError, message):
++        with self.assertRaisesMessage(TypeError, message):
+             models.UniqueConstraint(
+                 fields=["name"],
+                 name="name_invalid",
+@@ -1013,7 +1064,7 @@ class UniqueConstraintTests(TestCase):
+ 
+     def test_invalid_include_argument(self):
+         msg = "UniqueConstraint.include must be a list or tuple."
+-        with self.assertRaisesMessage(ValueError, msg):
++        with self.assertRaisesMessage(TypeError, msg):
+             models.UniqueConstraint(
+                 name="uniq_include",
+                 fields=["field"],
+@@ -1022,13 +1073,20 @@ class UniqueConstraintTests(TestCase):
+ 
+     def test_invalid_opclasses_argument(self):
+         msg = "UniqueConstraint.opclasses must be a list or tuple."
+-        with self.assertRaisesMessage(ValueError, msg):
++        with self.assertRaisesMessage(TypeError, msg):
+             models.UniqueConstraint(
+                 name="uniq_opclasses",
+                 fields=["field"],
+                 opclasses="jsonb_path_ops",
+             )
+ 
++    def test_invalid_nulls_distinct_argument(self):
++        msg = "UniqueConstraint.nulls_distinct must be a bool."
++        with self.assertRaisesMessage(TypeError, msg):
++            models.UniqueConstraint(
++                name="uniq_opclasses", fields=["field"], nulls_distinct="NULLS DISTINCT"
++            )
++
+     def test_opclasses_and_fields_same_length(self):
+         msg = (
+             "UniqueConstraint.fields and UniqueConstraint.opclasses must have "
+diff --git a/tests/invalid_models_tests/test_models.py b/tests/invalid_models_tests/test_models.py
+index 9e2a37b..dc52f58 100644
+--- a/tests/invalid_models_tests/test_models.py
++++ b/tests/invalid_models_tests/test_models.py
+@@ -2753,6 +2753,52 @@ class ConstraintsTests(TestCase):
+ 
+         self.assertEqual(Model.check(databases=self.databases), [])
+ 
++    def test_unique_constraint_nulls_distinct(self):
++        class Model(models.Model):
++            name = models.CharField(max_length=10)
++
++            class Meta:
++                constraints = [
++                    models.UniqueConstraint(
++                        fields=["name"],
++                        name="name_uq_distinct_null",
++                        nulls_distinct=True,
++                    ),
++                ]
++
++        warn = Warning(
++            f"{connection.display_name} does not support unique constraints with nulls "
++            "distinct.",
++            hint=(
++                "A constraint won't be created. Silence this warning if you don't care "
++                "about it."
++            ),
++            obj=Model,
++            id="models.W047",
++        )
++        expected = (
++            []
++            if connection.features.supports_nulls_distinct_unique_constraints
++            else [warn]
++        )
++        self.assertEqual(Model.check(databases=self.databases), expected)
++
++    def test_unique_constraint_nulls_distinct_required_db_features(self):
++        class Model(models.Model):
++            name = models.CharField(max_length=10)
++
++            class Meta:
++                constraints = [
++                    models.UniqueConstraint(
++                        fields=["name"],
++                        name="name_uq_distinct_null",
++                        nulls_distinct=True,
++                    ),
++                ]
++                required_db_features = {"supports_nulls_distinct_unique_constraints"}
++
++        self.assertEqual(Model.check(databases=self.databases), [])
++
+     @skipUnlessDBFeature("supports_expression_indexes")
+     def test_func_unique_constraint_expression_custom_lookup(self):
+         class Model(models.Model):
+diff --git a/tests/schema/tests.py b/tests/schema/tests.py
+index 688a9f1..5c20155 100644
+--- a/tests/schema/tests.py
++++ b/tests/schema/tests.py
+@@ -3318,6 +3318,43 @@ class SchemaTests(TransactionTestCase):
+             with self.assertRaises(DatabaseError):
+                 editor.add_constraint(Author, constraint)
+ 
++    @skipUnlessDBFeature("supports_nulls_distinct_unique_constraints")
++    def test_unique_constraint_nulls_distinct(self):
++        with connection.schema_editor() as editor:
++            editor.create_model(Author)
++        nulls_distinct = UniqueConstraint(
++            F("height"), name="distinct_height", nulls_distinct=True
++        )
++        nulls_not_distinct = UniqueConstraint(
++            F("weight"), name="not_distinct_weight", nulls_distinct=False
++        )
++        with connection.schema_editor() as editor:
++            editor.add_constraint(Author, nulls_distinct)
++            editor.add_constraint(Author, nulls_not_distinct)
++        Author.objects.create(name="", height=None, weight=None)
++        Author.objects.create(name="", height=None, weight=1)
++        with self.assertRaises(IntegrityError):
++            Author.objects.create(name="", height=1, weight=None)
++        with connection.schema_editor() as editor:
++            editor.remove_constraint(Author, nulls_distinct)
++            editor.remove_constraint(Author, nulls_not_distinct)
++        constraints = self.get_constraints(Author._meta.db_table)
++        self.assertNotIn(nulls_distinct.name, constraints)
++        self.assertNotIn(nulls_not_distinct.name, constraints)
++
++    @skipIfDBFeature("supports_nulls_distinct_unique_constraints")
++    def test_unique_constraint_nulls_distinct_unsupported(self):
++        # UniqueConstraint is ignored on databases that don't support
++        # NULLS [NOT] DISTINCT.
++        with connection.schema_editor() as editor:
++            editor.create_model(Author)
++        constraint = UniqueConstraint(
++            F("name"), name="func_name_uq", nulls_distinct=True
++        )
++        with connection.schema_editor() as editor, self.assertNumQueries(0):
++            self.assertIsNone(editor.add_constraint(Author, constraint))
++            self.assertIsNone(editor.remove_constraint(Author, constraint))
++
+     @ignore_warnings(category=RemovedInDjango51Warning)
+     def test_index_together(self):
+         """
+diff --git a/tests/validation/models.py b/tests/validation/models.py
+index 8919a69..612a8dd 100644
+--- a/tests/validation/models.py
++++ b/tests/validation/models.py
+@@ -217,3 +217,17 @@ class UniqueConstraintConditionProduct(models.Model):
+                 condition=models.Q(color__isnull=True),
+             ),
+         ]
++
++
++class UniqueConstraintNullsDistinctProduct(models.Model):
++    name = models.CharField(max_length=255, blank=True, null=True)
++
++    class Meta:
++        required_db_features = {"supports_nulls_distinct_unique_constraints"}
++        constraints = [
++            models.UniqueConstraint(
++                fields=["name"],
++                name="name_nulls_not_distinct_uniq",
++                nulls_distinct=False,
++            ),
++        ]
+diff --git a/tests/validation/test_constraints.py b/tests/validation/test_constraints.py
+index 0b1ee65..eea2d0c 100644
+--- a/tests/validation/test_constraints.py
++++ b/tests/validation/test_constraints.py
+@@ -6,6 +6,7 @@ from .models import (
+     ChildUniqueConstraintProduct,
+     Product,
+     UniqueConstraintConditionProduct,
++    UniqueConstraintNullsDistinctProduct,
+     UniqueConstraintProduct,
+ )
+ 
+@@ -93,3 +94,25 @@ class PerformConstraintChecksTest(TestCase):
+         UniqueConstraintConditionProduct.objects.create(name="product")
+         product = UniqueConstraintConditionProduct(name="product")
+         product.full_clean(validate_constraints=False)
++
++    @skipUnlessDBFeature("supports_nulls_distinct_unique_constraints")
++    def test_full_clean_with_nulls_distinct_unique_constraints(self):
++        UniqueConstraintNullsDistinctProduct.objects.create(name=None)
++        product = UniqueConstraintNullsDistinctProduct(name=None)
++        with self.assertRaises(ValidationError) as cm:
++            product.full_clean()
++        self.assertEqual(
++            cm.exception.message_dict,
++            {
++                "name": [
++                    "Unique constraint nulls distinct product with this Name "
++                    "already exists."
++                ]
++            },
++        )
++
++    @skipUnlessDBFeature("supports_nulls_distinct_unique_constraints")
++    def test_full_clean_with_nulls_distinct_unique_constraints_disabled(self):
++        UniqueConstraintNullsDistinctProduct.objects.create(name=None)
++        product = UniqueConstraintNullsDistinctProduct(name=None)
++        product.full_clean(validate_constraints=False)

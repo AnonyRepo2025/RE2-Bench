@@ -1,0 +1,382 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided inputs (between [INPUT] and [\INPUT]) and predict the output of the function. Both input and output are presented in a JSON format. The output structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict output variable values to fill out placeholders XXX in the structure, and print output between [OUTPUT] and [\OUTPUT]. You should maintain the structure when printing output. Do not change anything else. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT].
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._basetemp is not None:
+            return self._basetemp
+
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+
+[/PYTHON]
+
+What will be the output of `mktemp`, given the following input:
+[INPUT]
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+[/INPUT]
+
+[STRUCTURE]
+```
+{ 
+    "strpath": XXX
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]
+1. Inside `mktemp`, since `numbered`=True (default), it calls: p = make_numbered_dir(root=self.getbasetemp(), prefix="world")
+2. Inside `getbasetemp`, since `_basetemp` is None, so basetemp = Path("/tmp/pytest-of-root/pytest-0/test_mktemp0"). Therefore, getbasetemp() returns "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+3. Inside `make_numbered_dir`:
+    root = /tmp/pytest-of-root/pytest-0/test_mktemp0
+    prefix = "world"
+    Since max_existing = -1, new_number = 0, so `new_path` = "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+[/EXAMPLE]
+[PYTHON]
+from __future__ import print_function, division
+import copy
+from collections import defaultdict
+from sympy.core.containers import Dict
+from sympy.core.expr import Expr
+from sympy.core.compatibility import is_sequence, as_int, range
+from sympy.core.logic import fuzzy_and
+from sympy.core.singleton import S
+from sympy.functions import Abs
+from sympy.functions.elementary.miscellaneous import sqrt
+from sympy.utilities.iterables import uniq
+from .matrices import MatrixBase, ShapeError, a2idx
+from .dense import Matrix
+import collections
+from .immutable import ImmutableSparseMatrix
+from sympy.core.numbers import nan, oo
+from sympy.core.numbers import nan, oo
+from sympy.matrices.expressions.matexpr import MatrixElement
+from sympy.matrices.expressions.matexpr import MatrixElement
+
+class MutableSparseMatrix(SparseMatrix, MatrixBase):
+    __hash__ = None
+
+    @classmethod
+    def _new(cls, *args, **kwargs):
+        return cls(*args)
+
+    def col_join(self, other):
+        if self.rows == 0 and self.cols != other.cols:
+            return self._new(0, other.cols, []).col_join(other)
+        A, B = (self, other)
+        if not A.cols == B.cols:
+            raise ShapeError()
+        A = A.copy()
+        if not isinstance(B, SparseMatrix):
+            k = 0
+            b = B._mat
+            for i in range(B.rows):
+                for j in range(B.cols):
+                    v = b[k]
+                    if v:
+                        A._smat[i + A.rows, j] = v
+                    k += 1
+        else:
+            for (i, j), v in B._smat.items():
+                A._smat[i + A.rows, j] = v
+        A.rows += B.rows
+        return A
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.matrices.sparse.SparseMatrix.copy
+
+def copy(self):
+    return self._new(self.rows, self.cols, self._smat)
+
+.sympy.matrices.sparse.SparseMatrix.__new__
+
+def __new__(cls, *args, **kwargs):
+    self = object.__new__(cls)
+    if len(args) == 1 and isinstance(args[0], SparseMatrix):
+        self.rows = args[0].rows
+        self.cols = args[0].cols
+        self._smat = dict(args[0]._smat)
+        return self
+    self._smat = {}
+    if len(args) == 3:
+        self.rows = as_int(args[0])
+        self.cols = as_int(args[1])
+        if isinstance(args[2], collections.Callable):
+            op = args[2]
+            for i in range(self.rows):
+                for j in range(self.cols):
+                    value = self._sympify(op(self._sympify(i), self._sympify(j)))
+                    if value:
+                        self._smat[i, j] = value
+        elif isinstance(args[2], (dict, Dict)):
+            for key in args[2].keys():
+                v = args[2][key]
+                if v:
+                    self._smat[key] = self._sympify(v)
+        elif is_sequence(args[2]):
+            if len(args[2]) != self.rows * self.cols:
+                raise ValueError('List length (%s) != rows*columns (%s)' % (len(args[2]), self.rows * self.cols))
+            flat_list = args[2]
+            for i in range(self.rows):
+                for j in range(self.cols):
+                    value = self._sympify(flat_list[i * self.cols + j])
+                    if value:
+                        self._smat[i, j] = value
+    else:
+        r, c, _list = Matrix._handle_creation_inputs(*args)
+        self.rows = r
+        self.cols = c
+        for i in range(self.rows):
+            for j in range(self.cols):
+                value = _list[self.cols * i + j]
+                if value:
+                    self._smat[i, j] = value
+    return self
+
+.sympy.core.compatibility.as_int
+
+def as_int(n):
+    try:
+        result = int(n)
+        if result != n:
+            raise TypeError
+    except TypeError:
+        raise ValueError('%s is not an integer' % (n,))
+    return result
+
+.sympy.core.sympify.sympify
+
+def sympify(a, locals=None, convert_xor=True, strict=False, rational=False, evaluate=None):
+    if evaluate is None:
+        if global_evaluate[0] is False:
+            evaluate = global_evaluate[0]
+        else:
+            evaluate = True
+    try:
+        if a in sympy_classes:
+            return a
+    except TypeError:
+        pass
+    try:
+        cls = a.__class__
+    except AttributeError:
+        cls = type(a)
+    if cls in sympy_classes:
+        return a
+    if cls is type(None):
+        if strict:
+            raise SympifyError(a)
+        else:
+            return a
+    if type(a).__module__ == 'numpy':
+        import numpy as np
+        if np.isscalar(a):
+            if not isinstance(a, np.floating):
+                func = converter[complex] if np.iscomplex(a) else sympify
+                return func(np.asscalar(a))
+            else:
+                try:
+                    from sympy.core.numbers import Float
+                    prec = np.finfo(a).nmant
+                    a = str(list(np.reshape(np.asarray(a), (1, np.size(a)))[0]))[1:-1]
+                    return Float(a, precision=prec)
+                except NotImplementedError:
+                    raise SympifyError('Translation for numpy float : %s is not implemented' % a)
+    try:
+        return converter[cls](a)
+    except KeyError:
+        for superclass in getmro(cls):
+            try:
+                return converter[superclass](a)
+            except KeyError:
+                continue
+    if isinstance(a, CantSympify):
+        raise SympifyError(a)
+    try:
+        return a._sympy_()
+    except AttributeError:
+        pass
+    if not isinstance(a, string_types):
+        for coerce in (float, int):
+            try:
+                return sympify(coerce(a))
+            except (TypeError, ValueError, AttributeError, SympifyError):
+                continue
+    if strict:
+        raise SympifyError(a)
+    try:
+        from ..tensor.array import Array
+        return Array(a.flat, a.shape)
+    except AttributeError:
+        pass
+    if iterable(a):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a])
+        except TypeError:
+            pass
+    if isinstance(a, dict):
+        try:
+            return type(a)([sympify(x, locals=locals, convert_xor=convert_xor, rational=rational) for x in a.items()])
+        except TypeError:
+            pass
+    try:
+        from .compatibility import unicode
+        a = unicode(a)
+    except Exception as exc:
+        raise SympifyError(a, exc)
+    from sympy.parsing.sympy_parser import parse_expr, TokenError, standard_transformations
+    from sympy.parsing.sympy_parser import convert_xor as t_convert_xor
+    from sympy.parsing.sympy_parser import rationalize as t_rationalize
+    transformations = standard_transformations
+    if rational:
+        transformations += (t_rationalize,)
+    if convert_xor:
+        transformations += (t_convert_xor,)
+    try:
+        a = a.replace('\n', '')
+        expr = parse_expr(a, local_dict=locals, transformations=transformations, evaluate=evaluate)
+    except (TokenError, SyntaxError) as exc:
+        raise SympifyError('could not parse %r' % a, exc)
+    return expr
+
+.sympy.core.numbers.Integer.__hash__
+
+def __hash__(self):
+    return hash(self.p)
+
+.sympy.core.basic.Basic.__hash__
+
+def __hash__(self):
+    h = self._mhash
+    if h is None:
+        h = hash((type(self).__name__,) + self._hashable_content())
+        self._mhash = h
+    return h
+
+
+[/PYTHON]
+What will be the output of `col_join`, given the following input:
+[INPUT]
+```
+{
+    "self": {
+        "_smat": {},
+        "rows": 0,
+        "cols": 0
+    },
+    "args": {
+        "other": {
+            "rows": 2,
+            "cols": 1,
+            "_mat": null
+        }
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+
+[STRUCTURE]
+```
+{
+    "_smat": {
+        "(0, 0)": XXX,
+        "(1, 0)": XXX
+    },
+    "rows": XXX,
+    "cols": XXX
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]

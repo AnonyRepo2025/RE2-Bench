@@ -1,0 +1,154 @@
+def _decode_datetime_with_pandas(flat_num_dates, units, calendar):
+    if calendar not in _STANDARD_CALENDARS:
+        raise OutOfBoundsDatetime('Cannot decode times from a non-standard calendar, {!r}, using pandas.'.format(calendar))
+    delta, ref_date = _unpack_netcdf_time_units(units)
+    delta = _netcdf_to_numpy_timeunit(delta)
+    try:
+        ref_date = pd.Timestamp(ref_date)
+    except ValueError:
+        raise OutOfBoundsDatetime
+    if flat_num_dates.dtype.kind == 'i':
+        flat_num_dates = flat_num_dates.astype(np.int64)
+    flat_num_dates_ns_int = (flat_num_dates * _NS_PER_TIME_DELTA[delta]).astype(np.int64)
+    return (pd.to_timedelta(flat_num_dates_ns_int, 'ns') + ref_date).values
+
+def _unpack_netcdf_time_units(units):
+    matches = re.match('(.+) since (.+)', units)
+    if not matches:
+        raise ValueError(f'invalid time units: {units}')
+    delta_units, ref_date = [s.strip() for s in matches.groups()]
+    ref_date = _ensure_padded_year(ref_date)
+    return (delta_units, ref_date)
+
+def _ensure_padded_year(ref_date):
+    matches_year = re.match('.*\\d{4}.*', ref_date)
+    if matches_year:
+        return ref_date
+    matches_start_digits = re.match('(\\d+)(.*)', ref_date)
+    ref_year, everything_else = [s for s in matches_start_digits.groups()]
+    ref_date_padded = '{:04d}{}'.format(int(ref_year), everything_else)
+    warning_msg = f'Ambiguous reference date string: {ref_date}. The first value is assumed to be the year hence will be padded with zeros to remove the ambiguity (the padded reference date string is: {ref_date_padded}). To remove this message, remove the ambiguity by padding your reference date strings with zeros.'
+    warnings.warn(warning_msg, SerializationWarning)
+    return ref_date_padded
+
+def _netcdf_to_numpy_timeunit(units):
+    units = units.lower()
+    if not units.endswith('s'):
+        units = '%ss' % units
+    return {'nanoseconds': 'ns', 'microseconds': 'us', 'milliseconds': 'ms', 'seconds': 's', 'minutes': 'm', 'hours': 'h', 'days': 'D'}[units]
+
+def _decode_datetime_with_cftime(num_dates, units, calendar):
+    import cftime
+    return np.asarray(cftime.num2date(num_dates, units, calendar, only_use_cftime_datetimes=True))
+
+def cftime_to_nptime(times):
+    times = np.asarray(times)
+    new = np.empty(times.shape, dtype='M8[ns]')
+    for i, t in np.ndenumerate(times):
+        try:
+            dt = pd.Timestamp(t.year, t.month, t.day, t.hour, t.minute, t.second, t.microsecond)
+        except ValueError as e:
+            raise ValueError('Cannot convert date {} to a date in the standard calendar.  Reason: {}.'.format(t, e))
+        new[i] = np.datetime64(dt)
+    return new
+
+def __array__(self, dtype=None):
+    key = BasicIndexer((slice(None),) * self.ndim)
+    return np.asarray(self[key], dtype=dtype)
+
+def ndim(self: Any) -> int:
+    return len(self.shape)
+
+def shape(self: Any) -> Tuple[int]:
+    return self.array.shape
+
+def __init__(self, key):
+    if not isinstance(key, tuple):
+        raise TypeError(f'key must be a tuple: {key!r}')
+    new_key = []
+    for k in key:
+        if isinstance(k, integer_types):
+            k = int(k)
+        elif isinstance(k, slice):
+            k = as_integer_slice(k)
+        else:
+            raise TypeError(f'unexpected indexer type for {type(self).__name__}: {k!r}')
+        new_key.append(k)
+    super().__init__(new_key)
+
+def as_integer_slice(value):
+    start = as_integer_or_none(value.start)
+    stop = as_integer_or_none(value.stop)
+    step = as_integer_or_none(value.step)
+    return slice(start, stop, step)
+
+def as_integer_or_none(value):
+    return None if value is None else operator.index(value)
+
+def __init__(self, key):
+    if type(self) is ExplicitIndexer:
+        raise TypeError('cannot instantiate base ExplicitIndexer objects')
+    self._key = tuple(key)
+
+def __getitem__(self, key):
+    array, key = self._indexing_array_and_key(key)
+    return array[key]
+
+def _indexing_array_and_key(self, key):
+    if isinstance(key, OuterIndexer):
+        array = self.array
+        key = _outer_to_numpy_indexer(key, self.array.shape)
+    elif isinstance(key, VectorizedIndexer):
+        array = nputils.NumpyVIndexAdapter(self.array)
+        key = key.tuple
+    elif isinstance(key, BasicIndexer):
+        array = self.array
+        key = key.tuple + (Ellipsis,)
+    else:
+        raise TypeError('unexpected key type: {}'.format(type(key)))
+    return (array, key)
+
+
+
+import re
+import warnings
+from datetime import datetime, timedelta
+from distutils.version import LooseVersion
+from functools import partial
+import numpy as np
+import pandas as pd
+from pandas.errors import OutOfBoundsDatetime
+from ..core import indexing
+from ..core.common import contains_cftime_datetimes
+from ..core.formatting import first_n_items, format_timestamp, last_item
+from ..core.variable import Variable
+from .variables import SerializationWarning, VariableCoder, lazy_elemwise_func, pop_to, safe_setitem, unpack_for_decoding, unpack_for_encoding
+import cftime
+import cftime
+_STANDARD_CALENDARS = {'standard', 'gregorian', 'proleptic_gregorian'}
+_NS_PER_TIME_DELTA = {'ns': 1, 'us': int(1000.0), 'ms': int(1000000.0), 's': int(1000000000.0), 'm': int(1000000000.0) * 60, 'h': int(1000000000.0) * 60 * 60, 'D': int(1000000000.0) * 60 * 60 * 24}
+_US_PER_TIME_DELTA = {'microseconds': 1, 'milliseconds': 1000, 'seconds': 1000000, 'minutes': 60 * 1000000, 'hours': 60 * 60 * 1000000, 'days': 24 * 60 * 60 * 1000000}
+_NETCDF_TIME_UNITS_CFTIME = ['days', 'hours', 'minutes', 'seconds', 'milliseconds', 'microseconds']
+_NETCDF_TIME_UNITS_NUMPY = _NETCDF_TIME_UNITS_CFTIME + ['nanoseconds']
+TIME_UNITS = frozenset(['days', 'hours', 'minutes', 'seconds', 'milliseconds', 'microseconds', 'nanoseconds'])
+
+def decode_cf_datetime(num_dates, units, calendar=None, use_cftime=None):
+    num_dates = np.asarray(num_dates)
+    flat_num_dates = num_dates.ravel()
+    if calendar is None:
+        calendar = 'standard'
+    if use_cftime is None:
+        try:
+            dates = _decode_datetime_with_pandas(flat_num_dates, units, calendar)
+        except (KeyError, OutOfBoundsDatetime, OverflowError):
+            dates = _decode_datetime_with_cftime(flat_num_dates.astype(float), units, calendar)
+            if dates[np.nanargmin(num_dates)].year < 1678 or dates[np.nanargmax(num_dates)].year >= 2262:
+                if calendar in _STANDARD_CALENDARS:
+                    warnings.warn('Unable to decode time axis into full numpy.datetime64 objects, continuing using cftime.datetime objects instead, reason: dates out of range', SerializationWarning, stacklevel=3)
+            elif calendar in _STANDARD_CALENDARS:
+                dates = cftime_to_nptime(dates)
+    elif use_cftime:
+        dates = _decode_datetime_with_cftime(flat_num_dates, units, calendar)
+    else:
+        dates = _decode_datetime_with_pandas(flat_num_dates, units, calendar)
+    return dates.reshape(num_dates.shape)

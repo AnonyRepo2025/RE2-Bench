@@ -1,0 +1,238 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. The input structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict input variable values to fill out placeholders XXX in the structure, and print input between [INPUT] and [\INPUT]. You should maintain the structure when printing inputs. Do not change anything else. For prediction, simulate the execution of the program step by step and print your reasoning process before arriving at an answer between [THOUGHT] and [/THOUGHT].
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]
+1. To get ".../world0", we need:
+basename == "world", and self.getbasetemp() to be exactly "/tmp/pytest-of-root/pytest-0/test_mktemp0".
+2. Make `getbasetemp()` return that exact base directory.`getbasetemp()` returns `_given_basetemp` if it is not None. So I set `_given_basetemp` to "/tmp/pytest-of-root/pytest-0/test_mktemp0" and _basetemp to None.
+3. Ensure the numbered suffix is 0.
+`make_numbered_dir` scans existing children with the given prefix and picks max_existing + 1. If none exist, it creates <prefix>0. To align with world0, we assume there’s no existing world* folder under the base; thus the first created is world0.
+[/THOUGHT]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+import builtins
+import contextlib
+import enum
+import inspect
+import re
+import sys
+import types
+import typing
+import warnings
+from functools import partial, partialmethod
+from inspect import Parameter, isclass, ismethod, ismethoddescriptor, ismodule
+from io import StringIO
+from typing import Any, Callable, Mapping, List, Optional, Tuple
+from typing import cast
+from sphinx.deprecation import RemovedInSphinx40Warning, RemovedInSphinx50Warning
+from sphinx.pycode.ast import ast
+from sphinx.pycode.ast import unparse as ast_unparse
+from sphinx.util import logging
+from sphinx.util.typing import stringify as stringify_annotation
+from types import ClassMethodDescriptorType, MethodDescriptorType, WrapperDescriptorType
+from functools import singledispatchmethod
+logger = logging.getLogger(__name__)
+memory_address_re = re.compile(' at 0x[0-9a-f]{8,16}(?=>)', re.IGNORECASE)
+
+def signature(subject: Callable, bound_method: bool=False, follow_wrapped: bool=False) -> inspect.Signature:
+    try:
+        try:
+            if _should_unwrap(subject):
+                signature = inspect.signature(subject)
+            else:
+                signature = inspect.signature(subject, follow_wrapped=follow_wrapped)
+        except ValueError:
+            signature = inspect.signature(subject)
+        parameters = list(signature.parameters.values())
+        return_annotation = signature.return_annotation
+    except IndexError:
+        if hasattr(subject, '_partialmethod'):
+            parameters = []
+            return_annotation = Parameter.empty
+        else:
+            raise
+    try:
+        annotations = typing.get_type_hints(subject)
+        for i, param in enumerate(parameters):
+            if isinstance(param.annotation, str) and param.name in annotations:
+                parameters[i] = param.replace(annotation=annotations[param.name])
+        if 'return' in annotations:
+            return_annotation = annotations['return']
+    except Exception:
+        pass
+    if bound_method:
+        if inspect.ismethod(subject):
+            pass
+        elif len(parameters) > 0:
+            parameters.pop(0)
+    return inspect.Signature(parameters, return_annotation=return_annotation)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sphinx.util.inspect._should_unwrap
+
+def _should_unwrap(subject: Callable) -> bool:
+    if safe_getattr(subject, '__globals__', None) and subject.__globals__.get('__name__') == 'contextlib' and (subject.__globals__.get('__file__') == contextlib.__file__):
+        return True
+    return False
+
+.sphinx.util.inspect.safe_getattr
+
+def safe_getattr(obj: Any, name: str, *defargs: Any) -> Any:
+    try:
+        return getattr(obj, name, *defargs)
+    except Exception:
+        try:
+            return obj.__dict__[name]
+        except Exception:
+            pass
+        if defargs:
+            return defargs[0]
+        raise AttributeError(name)
+
+
+[/PYTHON]
+What will be the input of `signature`, given the following output:
+[OUTPUT]
+```
+{
+    "output": "(arg, kwarg=None)"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {},
+    "args": {
+        "subject": {
+            "__signature__": XXX
+        }
+    },
+    "kwargs": {}
+}
+```
+[/STRUCTURE]
+
+[THOUGHT]

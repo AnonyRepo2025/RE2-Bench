@@ -1,0 +1,158 @@
+def _calculate_col_width(col_items):
+    max_name_length = max((len(str(s)) for s in col_items)) if col_items else 0
+    col_width = max(max_name_length, 7) + 6
+    return col_width
+
+def __len__(self) -> int:
+    return len(self._dataset._variables) - len(self._dataset._coord_names)
+
+def __iter__(self) -> Iterator[Hashable]:
+    return (key for key in self._dataset._variables if key not in self._dataset._coord_names)
+
+def _get_boolean_with_default(option, default):
+    global_choice = OPTIONS[option]
+    if global_choice == 'default':
+        return default
+    elif global_choice in [True, False]:
+        return global_choice
+    else:
+        raise ValueError(f"The global option {option} must be one of True, False or 'default'.")
+
+def __getitem__(self, key: Hashable) -> 'DataArray':
+    if key not in self._dataset._coord_names:
+        return cast('DataArray', self._dataset[key])
+    raise KeyError(key)
+
+def __getitem__(self, key: Mapping) -> 'Dataset':
+    ...
+
+def is_dict_like(value: Any) -> bool:
+    return hasattr(value, 'keys') and hasattr(value, '__getitem__')
+
+def hashable(v: Any) -> bool:
+    try:
+        hash(v)
+    except TypeError:
+        return False
+    return True
+
+def _construct_dataarray(self, name: Hashable) -> 'DataArray':
+    from .dataarray import DataArray
+    try:
+        variable = self._variables[name]
+    except KeyError:
+        _, name, variable = _get_virtual_variable(self._variables, name, self._level_coords, self.dims)
+    needed_dims = set(variable.dims)
+    coords: Dict[Hashable, Variable] = {}
+    for k in self._variables:
+        if k in self._coord_names and set(self.variables[k].dims) <= needed_dims:
+            coords[k] = self.variables[k]
+    if self._indexes is None:
+        indexes = None
+    else:
+        indexes = {k: v for k, v in self._indexes.items() if k in coords}
+    return DataArray(variable, coords, name=name, indexes=indexes, fastpath=True)
+
+def dims(self):
+    return self._dims
+
+def variables(self) -> Mapping[Hashable, Variable]:
+    return Frozen(self._variables)
+
+def __init__(self, mapping: Mapping[K, V]):
+    self.mapping = mapping
+
+def __getitem__(self, key: K) -> V:
+    return self.mapping[key]
+
+def __init__(self, data: Any=dtypes.NA, coords: Union[Sequence[Tuple], Mapping[Hashable, Any], None]=None, dims: Union[Hashable, Sequence[Hashable], None]=None, name: Hashable=None, attrs: Mapping=None, indexes: Dict[Hashable, pd.Index]=None, fastpath: bool=False):
+    if fastpath:
+        variable = data
+        assert dims is None
+        assert attrs is None
+    else:
+        if coords is None:
+            if isinstance(data, DataArray):
+                coords = data.coords
+            elif isinstance(data, pd.Series):
+                coords = [data.index]
+            elif isinstance(data, pd.DataFrame):
+                coords = [data.index, data.columns]
+            elif isinstance(data, (pd.Index, IndexVariable)):
+                coords = [data]
+            elif isinstance(data, pdcompat.Panel):
+                coords = [data.items, data.major_axis, data.minor_axis]
+        if dims is None:
+            dims = getattr(data, 'dims', getattr(coords, 'dims', None))
+        if name is None:
+            name = getattr(data, 'name', None)
+        if attrs is None and (not isinstance(data, PANDAS_TYPES)):
+            attrs = getattr(data, 'attrs', None)
+        data = _check_data_shape(data, coords, dims)
+        data = as_compatible_data(data)
+        coords, dims = _infer_coords_and_dims(data.shape, coords, dims)
+        variable = Variable(dims, data, attrs, fastpath=True)
+        indexes = dict(_extract_indexes_from_coords(coords))
+    self._variable = variable
+    assert isinstance(coords, dict)
+    self._coords = coords
+    self._name = name
+    self._indexes = indexes
+    self._close = None
+
+def __setattr__(self, name: str, value: Any) -> None:
+    try:
+        object.__setattr__(self, name, value)
+    except AttributeError as e:
+        if str(e) != '{!r} object has no attribute {!r}'.format(type(self).__name__, name):
+            raise
+        raise AttributeError("cannot set attribute %r on a %r object. Use __setitem__ styleassignment (e.g., `ds['name'] = ...`) instead of assigning variables." % (name, type(self).__name__)) from e
+
+
+
+import contextlib
+import functools
+from datetime import datetime, timedelta
+from itertools import chain, zip_longest
+from typing import Hashable
+import numpy as np
+import pandas as pd
+from pandas.errors import OutOfBoundsDatetime
+from .duck_array_ops import array_equiv
+from .options import OPTIONS, _get_boolean_with_default
+from .pycompat import dask_array_type, sparse_array_type
+from .utils import is_duck_array
+import sparse
+from .variable import IndexVariable
+_KNOWN_TYPE_REPRS = {np.ndarray: 'np.ndarray'}
+EMPTY_REPR = '    *empty*'
+data_vars_repr = functools.partial(_mapping_repr, title='Data variables', summarizer=summarize_datavar, expand_option_name='display_expand_data_vars')
+attrs_repr = functools.partial(_mapping_repr, title='Attributes', summarizer=summarize_attr, expand_option_name='display_expand_attrs')
+diff_coords_repr = functools.partial(_diff_mapping_repr, title='Coordinates', summarizer=summarize_coord)
+diff_data_vars_repr = functools.partial(_diff_mapping_repr, title='Data variables', summarizer=summarize_datavar)
+diff_attrs_repr = functools.partial(_diff_mapping_repr, title='Attributes', summarizer=summarize_attr)
+
+def _mapping_repr(mapping, title, summarizer, expand_option_name, col_width=None, max_rows=None):
+    if col_width is None:
+        col_width = _calculate_col_width(mapping)
+    if max_rows is None:
+        max_rows = OPTIONS['display_max_rows']
+    summary = [f'{title}:']
+    if mapping:
+        len_mapping = len(mapping)
+        if not _get_boolean_with_default(expand_option_name, default=True):
+            summary = [f'{summary[0]} ({len_mapping})']
+        elif len_mapping > max_rows:
+            summary = [f'{summary[0]} ({max_rows}/{len_mapping})']
+            first_rows = max_rows // 2 + max_rows % 2
+            items = list(mapping.items())
+            summary += [summarizer(k, v, col_width) for k, v in items[:first_rows]]
+            if max_rows > 1:
+                last_rows = max_rows // 2
+                summary += [pretty_print('    ...', col_width) + ' ...']
+                summary += [summarizer(k, v, col_width) for k, v in items[-last_rows:]]
+        else:
+            summary += [summarizer(k, v, col_width) for k, v in mapping.items()]
+    else:
+        summary += [EMPTY_REPR]
+    return '\n'.join(summary)

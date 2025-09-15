@@ -1,0 +1,398 @@
+You are given a Python function (between [PYTHON] and [/PYTHON]). For this function, I want you to take the provided output (between [OUTPUT] and [\OUTPUT]) and predict the input of the function. Both input and output are presented in a JSON format. The input structure is defined between [STRUCTURE] and [\STRUCTURE]. You only need to predict input variable values to fill out placeholders XXX in the structure, and print input between [INPUT] and [\INPUT]. You should maintain the structure when printing inputs. Do not change anything else.  ONLY print the input, DO NOT print any reasoning process.
+[EXAMPLE]
+[PYTHON]
+class TempPathFactory(object):
+    _given_basetemp = attr.ib(
+        converter=attr.converters.optional(
+            lambda p: Path(os.path.abspath(six.text_type(p)))
+        )
+    )
+    _trace = attr.ib()
+    _basetemp = attr.ib(default=None)
+
+    def mktemp(self, basename, numbered=True):
+        if not numbered:
+            p = self.getbasetemp().joinpath(basename)
+            p.mkdir()
+        else:
+            p = make_numbered_dir(root=self.getbasetemp(), prefix=basename)
+            self._trace("mktemp", p)
+        return p
+
+    def getbasetemp(self):
+        if self._given_basetemp is not None:
+            basetemp = self._given_basetemp
+            ensure_reset_dir(basetemp)
+            basetemp = basetemp.resolve()
+        else:
+            from_env = os.environ.get("PYTEST_DEBUG_TEMPROOT")
+            temproot = Path(from_env or tempfile.gettempdir()).resolve()
+            user = get_user() or "unknown"
+            rootdir = temproot.joinpath("pytest-of-{}".format(user))
+            rootdir.mkdir(exist_ok=True)
+            basetemp = make_numbered_dir_with_cleanup(
+                prefix="pytest-", root=rootdir, keep=3, lock_timeout=LOCK_TIMEOUT
+            )
+        assert basetemp is not None, basetemp
+        self._basetemp = t = basetemp
+        self._trace("new basetemp", t)
+        return t
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+def parse_num(maybe_num):
+    try:
+        return int(maybe_num)
+    except ValueError:
+        return -1
+
+def extract_suffixes(iter, prefix):
+    p_len = len(prefix)
+    for p in iter:
+        yield p.name[p_len:]
+
+
+def find_suffixes(root, prefix):
+    return extract_suffixes(find_prefixed(root, prefix), prefix)
+
+def make_numbered_dir(root, prefix):
+    for i in range(10):
+        # try up to 10 times to create the folder
+        max_existing = _max(map(parse_num, find_suffixes(root, prefix)), default=-1)
+        new_number = max_existing + 1
+        new_path = root.joinpath("{}{}".format(prefix, new_number))
+        try:
+            new_path.mkdir()
+        except Exception:
+            pass
+        else:
+            _force_symlink(root, prefix + "current", new_path)
+            return new_path
+    else:
+        raise EnvironmentError(
+            "could not create numbered dir with prefix "
+            "{prefix} in {root} after 10 tries".format(prefix=prefix, root=root)
+        )
+[/PYTHON]
+What will be the input of `mktemp`, given the following output:
+[OUTPUT]
+```
+{
+    "strpath": "/tmp/pytest-of-root/pytest-0/test_mktemp0/world0"
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": XXX,
+            "_trace": XXX,
+            "_basetemp": XXX
+        }
+    },
+    "args": {
+        "basename": XXX
+    },
+    "kwargs": XXX
+}
+```
+[/STRUCTURE]
+
+[INPUT]
+```
+{
+    "self": {
+        "_tmppath_factory": {
+            "_given_basetemp": "/tmp/pytest-of-root/pytest-0/test_mktemp0",
+            "_trace": {},
+            "_basetemp": null
+        }
+    },
+    "args": {
+        "basename": "world"
+    },
+    "kwargs": {}
+}
+```
+[/INPUT]
+[/EXAMPLE]
+[PYTHON]
+from sympy.core import sympify
+from sympy.core.compatibility import ordered
+from sympy.core.evalf import pure_complex
+from sympy.polys.domains import ZZ, QQ, ZZ_I, QQ_I, EX
+from sympy.polys.domains.complexfield import ComplexField
+from sympy.polys.domains.realfield import RealField
+from sympy.polys.polyoptions import build_options
+from sympy.polys.polyutils import parallel_dict_from_basic
+from sympy.utilities import public
+from sympy.polys.numberfields import primitive_element
+
+def _construct_simple(coeffs, opt):
+    rationals = floats = complexes = algebraics = False
+    float_numbers = []
+    if opt.extension is True:
+        is_algebraic = lambda coeff: coeff.is_number and coeff.is_algebraic
+    else:
+        is_algebraic = lambda coeff: False
+    for coeff in coeffs:
+        if coeff.is_Rational:
+            if not coeff.is_Integer:
+                rationals = True
+        elif coeff.is_Float:
+            if algebraics:
+                return False
+            else:
+                floats = True
+                float_numbers.append(coeff)
+        else:
+            is_complex = pure_complex(coeff)
+            if is_complex:
+                complexes = True
+                x, y = is_complex
+                if x.is_Rational and y.is_Rational:
+                    if not (x.is_Integer and y.is_Integer):
+                        rationals = True
+                    continue
+                else:
+                    floats = True
+                    if x.is_Float:
+                        float_numbers.append(x)
+                    if y.is_Float:
+                        float_numbers.append(y)
+            elif is_algebraic(coeff):
+                if floats:
+                    return False
+                algebraics = True
+            else:
+                return None
+    max_prec = max((c._prec for c in float_numbers)) if float_numbers else 53
+    if algebraics:
+        domain, result = _construct_algebraic(coeffs, opt)
+    else:
+        if floats and complexes:
+            domain = ComplexField(prec=max_prec)
+        elif floats:
+            domain = RealField(prec=max_prec)
+        elif rationals or opt.field:
+            domain = QQ_I if complexes else QQ
+        else:
+            domain = ZZ_I if complexes else ZZ
+        result = [domain.from_sympy(coeff) for coeff in coeffs]
+    return (domain, result)
+[/PYTHON]
+
+Functions called during the execution:
+[PYTHON]
+.sympy.polys.polyoptions.OptionType.getter
+
+def getter(self):
+    try:
+        return self[cls.option]
+    except KeyError:
+        return cls.default()
+
+.sympy.polys.domains.rationalfield.RationalField.from_sympy
+
+def from_sympy(self, a):
+    if a.is_Rational:
+        return MPQ(a.p, a.q)
+    elif a.is_Float:
+        from sympy.polys.domains import RR
+        return MPQ(*map(int, RR.to_rational(a)))
+    else:
+        raise CoercionFailed('expected `Rational` object, got %s' % a)
+
+.sympy.external.pythonmpq.PythonMPQ.__new__
+
+def __new__(cls, numerator, denominator=None):
+    if denominator is not None:
+        if isinstance(numerator, int) and isinstance(denominator, int):
+            divisor = gcd(numerator, denominator)
+            numerator //= divisor
+            denominator //= divisor
+            return cls._new_check(numerator, denominator)
+    else:
+        if isinstance(numerator, int):
+            return cls._new(numerator, 1)
+        elif isinstance(numerator, PythonMPQ):
+            return cls._new(numerator.numerator, numerator.denominator)
+        if isinstance(numerator, (Decimal, float, str)):
+            numerator = Fraction(numerator)
+        if isinstance(numerator, Fraction):
+            return cls._new(numerator.numerator, numerator.denominator)
+    raise TypeError('PythonMPQ() requires numeric or string argument')
+
+.sympy.external.pythonmpq.PythonMPQ._new_check
+
+def _new_check(cls, numerator, denominator):
+    if not denominator:
+        raise ZeroDivisionError(f'Zero divisor {numerator}/{denominator}')
+    elif denominator < 0:
+        numerator = -numerator
+        denominator = -denominator
+    return cls._new(numerator, denominator)
+
+.sympy.external.pythonmpq.PythonMPQ._new
+
+def _new(cls, numerator, denominator):
+    obj = super().__new__(cls)
+    obj.numerator = numerator
+    obj.denominator = denominator
+    return obj
+
+.sympy.core.evalf.pure_complex
+
+def pure_complex(v, or_real=False):
+    h, t = v.as_coeff_Add()
+    if not t:
+        if or_real:
+            return (h, t)
+        return
+    c, i = t.as_coeff_Mul()
+    if i is S.ImaginaryUnit:
+        return (h, c)
+
+.sympy.core.expr.Expr.as_coeff_Add
+
+def as_coeff_Add(self, rational=False):
+    return (S.Zero, self)
+
+.sympy.core.mul.Mul.as_coeff_Mul
+
+def as_coeff_Mul(self, rational=False):
+    coeff, args = (self.args[0], self.args[1:])
+    if coeff.is_Number:
+        if not rational or coeff.is_Rational:
+            if len(args) == 1:
+                return (coeff, args[0])
+            else:
+                return (coeff, self._new_rawargs(*args))
+        elif coeff.is_extended_negative:
+            return (S.NegativeOne, self._new_rawargs(*(-coeff,) + args))
+    return (S.One, self)
+
+.sympy.core.basic.Basic.args
+
+def args(self):
+    return self._args
+
+.sympy.polys.domains.gaussiandomains.GaussianDomain.from_sympy
+
+def from_sympy(self, a):
+    r, b = a.as_coeff_Add()
+    x = self.dom.from_sympy(r)
+    if not b:
+        return self.new(x, 0)
+    r, b = b.as_coeff_Mul()
+    y = self.dom.from_sympy(r)
+    if b is I:
+        return self.new(x, y)
+    else:
+        raise CoercionFailed('{} is not Gaussian'.format(a))
+
+.sympy.polys.domains.domain.Domain.new
+
+def new(self, *args):
+    return self.dtype(*args)
+
+.sympy.polys.domains.gaussiandomains.GaussianElement.__new__
+
+def __new__(cls, x, y=0):
+    conv = cls.base.convert
+    return cls.new(conv(x), conv(y))
+
+.sympy.polys.domains.domain.Domain.convert
+
+def convert(self, element, base=None):
+    if _not_a_coeff(element):
+        raise CoercionFailed('%s is not in any domain' % element)
+    if base is not None:
+        return self.convert_from(element, base)
+    if self.of_type(element):
+        return element
+    from sympy.polys.domains import ZZ, QQ, RealField, ComplexField
+    if ZZ.of_type(element):
+        return self.convert_from(element, ZZ)
+    if isinstance(element, int):
+        return self.convert_from(ZZ(element), ZZ)
+    if HAS_GMPY:
+        integers = ZZ
+        if isinstance(element, integers.tp):
+            return self.convert_from(element, integers)
+        rationals = QQ
+        if isinstance(element, rationals.tp):
+            return self.convert_from(element, rationals)
+    if isinstance(element, float):
+        parent = RealField(tol=False)
+        return self.convert_from(parent(element), parent)
+    if isinstance(element, complex):
+        parent = ComplexField(tol=False)
+        return self.convert_from(parent(element), parent)
+    if isinstance(element, DomainElement):
+        return self.convert_from(element, element.parent())
+    if self.is_Numerical and getattr(element, 'is_ground', False):
+        return self.convert(element.LC())
+    if isinstance(element, Basic):
+        try:
+            return self.from_sympy(element)
+        except (TypeError, ValueError):
+            pass
+    elif not is_sequence(element):
+        try:
+            element = sympify(element, strict=True)
+            if isinstance(element, Basic):
+                return self.from_sympy(element)
+        except (TypeError, ValueError):
+            pass
+    raise CoercionFailed("can't convert %s of type %s to %s" % (element, type(element), self))
+
+.sympy.polys.polyutils._not_a_coeff
+
+def _not_a_coeff(expr):
+    if type(expr) in illegal_types or expr in finf:
+        return True
+    if type(expr) is float and float(expr) != expr:
+        return True
+    return
+
+.sympy.external.pythonmpq.PythonMPQ.__eq__
+
+def __eq__(self, other):
+    if isinstance(other, PythonMPQ):
+        return self.numerator == other.numerator and self.denominator == other.denominator
+    elif isinstance(other, self._compatible_types):
+        return self.__eq__(PythonMPQ(other))
+    else:
+        return NotImplemented
+
+
+[/PYTHON]
+What will be the input of `_construct_simple`, given the following output:
+[OUTPUT]
+```
+{
+    "output": [
+        {},
+        null
+    ]
+}
+```
+[/OUTPUT]
+
+[STRUCTURE]
+```
+{
+    "self": {},
+    "args": {
+        "coeffs": XXX,
+        "opt": {}
+    },
+    "kwargs": {}
+}
+```
+[/STRUCTURE]
