@@ -101,6 +101,8 @@ class Migration(migrations.Migration):
     operations = [
     ]
 ```
+Explanation:  
+DeepSeek-R1 failed to apply the format-mapping API correctly, even though it accurately identified the variables to populate the template.
 
 ## Structural Complexity Oversight(ClassEval_EightPuzzle)
 
@@ -183,5 +185,5 @@ Reasoning Process:
 6. Therefore, the output of `move` will be the same as the input state, because the blank space in the state to be moved can't move to the left.
 ```
 
-Explain:  
+Explanation:  
 Due to the comlpexity in the `state`, the model could not correctly simulate the execution of `i, j = self.find_blank(state)`, which results in the incorrect output prediction.
